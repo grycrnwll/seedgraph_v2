@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Dashboard · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Dashboard · {{ slug }}</h1>
+<nav class="subnav">
+  <a href="/ui/projects/{{ slug }}/corpus">Corpus</a>
+  <a href="/ui/projects/{{ slug }}/plan">Plan</a>
+  <a href="/ui/projects/{{ slug }}/ask">Ask</a>
+  <a href="/ui/projects/{{ slug }}/lenses">Lenses</a>
+  <a href="/ui/projects/{{ slug }}/review">Review</a>
+  <a href="/ui/projects/{{ slug }}/graph">Graph</a>
+  <a href="/ui/projects/{{ slug }}/settings">Settings</a>
+</nav>
+
+<section class="card">
+  <h2>Corpus</h2>
+  <ul class="kv">
+    {% for status, n in dash.status_counts.items() %}
+    <li><span>{{ status }}</span><strong>{{ n }}</strong></li>
+    {% endfor %}
+    <li><span>total</span><strong>{{ dash.corpus_total }}</strong></li>
+  </ul>
+  <p>Extraction coverage:
+     <strong>{{ dash.extraction.works_covered }}/{{ dash.extraction.works_included }}</strong>
+     ({{ dash.extraction.coverage_pct }}%)</p>
+</section>
+
+<section class="card">
+  <h2>Overlay</h2>
+  <ul class="kv">
+    <li><span>concepts</span><strong>{{ dash.concepts }}</strong></li>
+    <li><span>claims</span><strong>{{ dash.claims }}</strong></li>
+    <li><span>lenses</span><strong>{{ dash.lenses }}</strong></li>
+    <li><span>open reviews</span><strong>{{ dash.open_reviews }}</strong></li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Models</h2>
+  <table class="table">
+    <thead><tr><th>task</th><th>profile</th><th>kind</th><th>available</th></tr></thead>
+    <tbody>
+      {% for m in dash.models %}
+      <tr>
+        <td>{{ m.task }}</td>
+        <td>{{ m.preferred_profile }}</td>
+        <td>{{ 'local' if m.local else 'external' }}</td>
+        <td>{{ 'yes' if m.available else 'no' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>Budget: monthly spend <strong>${{ '%.4f' | format(dash.budget.monthly_spend_usd) }}</strong>
+     {% if dash.budget.monthly_soft_limit_usd is not none %}
+     / soft limit ${{ dash.budget.monthly_soft_limit_usd }}{% endif %}
+     ({{ dash.budget.year_month }})</p>
+</section>
+
+<section class="card">
+  <h2>Diagnostics
+    {% if dash.doctor.ok %}<span class="badge badge--ok">healthy</span>
+    {% else %}<span class="badge badge--fail">{{ dash.doctor.n_fail }} failing</span>{% endif %}
+    {% if dash.doctor.n_warn %}<span class="badge badge--warn">{{ dash.doctor.n_warn }} warn</span>{% endif %}
+  </h2>
+</section>
+
+<section class="card">
+  <h2>Runs ({{ dash.runs | length }})</h2>
+  {% if dash.runs %}
+  <ul class="run-list">
+    {% for run in dash.runs %}
+    <li><a href="/ui/projects/{{ slug }}/runs/{{ run.run_id }}">{{ run.run_id }}</a>
+        <span class="muted">{{ run.status or 'no events' }}</span>
+        <a class="muted" href="/ui/projects/{{ slug }}/runs/{{ run.run_id }}/graph">graph</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No runs yet.</p>{% endif %}
+</section>
+<p><a href="/ui">&larr; back to projects</a></p>
+{% endblock %}

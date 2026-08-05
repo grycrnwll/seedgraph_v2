@@ -1,0 +1,16 @@
+{
+  "answer_id": "ans_00000000000000000000000000000001",
+  "question": "What is the parallel trends assumption?",
+  "query_type": "factual",
+  "answer_category": "source_grounded",
+  "answer_text": "The parallel trends assumption is central to identification in difference-in-differences designs.",
+  "citations": [],
+  "recommendations": [],
+  "cited_work_ids": ["work_p1"],
+  "cited_span_ids": ["span_p1"],
+  "insufficient_evidence": false,
+  "retrieved_item_ids": ["span_p1", "span_p2"],
+  "warnings": [],
+  "mode": "project_only",
+  "llm_provenance": null
+}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Run · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Run progress · {{ slug }}</h1>
+<nav class="subnav">
+  <a href="/ui/projects/{{ slug }}">Dashboard</a>
+  <a href="/ui/projects/{{ slug }}/runs/{{ run_id }}/graph">Graph</a>
+  <a href="/ui/projects/{{ slug }}/plan">Plan</a>
+</nav>
+
+<p>Run <code>{{ run_id }}</code>
+  <span id="run-status" class="badge">{{ status or 'pending' }}</span></p>
+
+<section class="card">
+  <h2>Events</h2>
+  <ul id="event-log" class="run-list">
+    {% for e in events %}
+    <li data-seq="{{ e.seq }}"><span class="muted">{{ e.event }}</span> {{ e.message }}
+      {%- if e.data and e.data.done is defined and e.data.total %}
+      <progress class="run-bar" max="{{ [e.data.done, e.data.total] | max }}" value="{{ e.data.done }}"></progress>
+      <span class="badge">{{ e.data.done }}/{{ e.data.total }}</span>
+      {%- endif %}</li>
+    {% else %}
+    <li class="empty">Waiting for the first event…</li>
+    {% endfor %}
+  </ul>
+</section>
+
+{% if envelope %}
+<section class="card answer">
+  <h2>Answer
+    <span class="badge">{{ envelope.answer_category }}</span>
+    {% if envelope.insufficient_evidence %}<span class="badge badge--warn">insufficient evidence</span>{% endif %}
+  </h2>
+  {% if envelope.answer_text %}
+  <p class="answer-text">{{ envelope.answer_text }}</p>
+  {% else %}
+  <p class="empty">No prose generated (retrieval-only). Cited evidence is listed below.</p>
+  {% endif %}
+  {% if envelope.warnings %}
+  <ul class="warnings">{% for w in envelope.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+  {% endif %}
+  <h3>Citations ({{ envelope.citations | length }})</h3>
+  {% if envelope.citations %}
+  <ul class="citations">
+    {% for c in envelope.citations %}
+    <li><a href="/ui/projects/{{ slug }}/corpus/{{ c.work_id }}">{{ c.title or c.work_id }}</a>
+        <span class="access access--{{ c.access_class or 'unknown' }}">{{ c.access_class or 'unknown' }}</span></li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No in-corpus citations.</p>{% endif %}
+  {% if trace_url %}
+  <p class="trace-link"><a href="{{ trace_url }}">View answer trace →</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
+<script src="/static/js/poll.js" defer></script>
+<script>
+  (function () {
+    var initial = {{ status | tojson }};
+    var terminal = initial === "finished" || initial === "failed";
+    if (terminal || !window.SeedgraphPoll) return;
+    var url = "/api/projects/{{ slug }}/runs/{{ run_id }}/events";
+    var log = document.getElementById("event-log");
+    var statusEl = document.getElementById("run-status");
+    window.SeedgraphPoll.watchRun(url, {
+      onEvents: function (events) {
+        events.forEach(function (e) {
+          var li = document.createElement("li");
+          li.setAttribute("data-seq", e.seq);
+          li.innerHTML = "<span class='muted'></span> ";
+          li.firstChild.textContent = e.event;
+          li.appendChild(document.createTextNode(" " + (e.message || "")));
+          // N/M progress badge when the event carries done/total in its data.
+          var d = e.data;
+          if (d && typeof d.done === "number" && d.total) {
+            var bar = document.createElement("progress");
+            bar.className = "run-bar";
+            bar.max = Math.max(d.done, d.total);
+            bar.value = d.done;
+            li.appendChild(document.createTextNode(" "));
+            li.appendChild(bar);
+            var badge = document.createElement("span");
+            badge.className = "badge";
+            badge.textContent = d.done + "/" + d.total;
+            li.appendChild(document.createTextNode(" "));
+            li.appendChild(badge);
+          }
+          log.appendChild(li);
+        });
+      },
+      onStatus: function (s) { if (s) statusEl.textContent = s; },
+      // On the first terminal status, reload so the server re-renders the final
+      // state (including a saved answer envelope) for this run.
+      onTerminal: function () { window.location.reload(); }
+    });
+  })();
+</script>
+{% endblock %}

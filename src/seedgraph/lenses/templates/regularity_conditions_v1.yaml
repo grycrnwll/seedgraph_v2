@@ -1,0 +1,80 @@
+# Built-in lens template (phase_6, plan §4.5). Verbatim from docs/06_project_lenses.md §4
+# — the single shipped example and the sole phase-6 success criterion. Copied by
+# `seedgraph lens new --from-template regularity_conditions_v1` into
+# projects/{slug}/lenses/regularity_conditions_v1.yaml.
+#
+# NOTE (D2 mapping): the output_schema field `stated_or_inferred` below is the
+# verbatim doc-06 field name; on projection onto extracted_claims the runner maps
+# its value to the D2-canonical `assertion_status` column (stated|inferred). See
+# the deviation note in the phase-6 scaffold result.
+lens_id: regularity_conditions_v1
+name: Regularity Conditions
+scope: project
+description: >
+  Extract technical assumptions imposed for identification, consistency,
+  asymptotic normality, convergence, existence, uniqueness, or validity
+  of theoretical results.
+
+object_type: assumption
+
+positive_anchors:
+  - regularity condition
+  - assumption
+  - compact parameter space
+  - full rank
+  - nonsingular
+  - bounded moments
+  - uniform convergence
+  - stationarity
+  - ergodicity
+  - mixing
+  - overlap
+  - smoothness
+  - differentiability
+  - identification
+  - invertibility
+  - Lipschitz
+  - continuity
+
+negative_anchors:
+  - informal motivation
+  - related literature summary
+  - robustness check not tied to identification or theory
+  - empirical caveat not used as a formal condition
+
+output_schema:
+  condition_text_verbatim: string
+  normalized_condition_label: string
+  condition_type:
+    type: array
+    allowed_values:
+      - compactness
+      - rank
+      - moment
+      - smoothness
+      - dependence
+      - identification
+      - support_overlap
+      - convergence
+      - invertibility
+      - stationarity
+      - ergodicity
+      - mixing
+      - other
+  attached_result: string
+  section: string
+  equation_or_assumption_number: string_or_null
+  stated_or_inferred:
+    allowed_values:
+      - stated
+      - inferred
+  evidence_span_ids:
+    type: array
+  confidence: number
+  notes: string
+
+evidence_policy:
+  require_evidence_span: true
+  allow_inferred: true
+  inferred_requires_explanation: true
+  record_not_found: true

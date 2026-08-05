@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Corpus · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Corpus · {{ slug }}</h1>
+<nav class="subnav">
+  <a href="/ui/projects/{{ slug }}">Dashboard</a>
+  {% for s in statuses %}
+  <a href="/ui/projects/{{ slug }}/corpus?status={{ s }}"
+     class="{{ 'active' if filter_status == s else '' }}">{{ s }}</a>
+  {% endfor %}
+  <a href="/ui/projects/{{ slug }}/corpus">all</a>
+</nav>
+
+{% if request.query_params.get('queued') is not none %}
+<p class="banner banner--info">
+  Queued {{ request.query_params.get('queued') }} file(s) for conversion.
+  {% if request.query_params.get('failed','0') != '0' %}
+  {{ request.query_params.get('failed') }} skipped (not a PDF).
+  {% endif %}
+</p>
+{% endif %}
+
+{% if conversion is defined and (conversion.total or conversion.failed) %}
+<div class="conv-progress" data-conv-progress>
+  <progress data-conv-bar max="{{ [conversion.converted, conversion.total] | max }}"
+            value="{{ conversion.converted }}"></progress>
+  <span data-conv-counts>
+    {{ conversion.converted }}/{{ conversion.total }} converted
+    {%- if conversion.converting %} · {{ conversion.converting }} converting{% endif %}
+    {%- if conversion.queued %} · {{ conversion.queued }} queued{% endif %}
+    {%- if conversion.failed %} · {{ conversion.failed }} failed{% endif %}
+  </span>
+</div>
+{% endif %}
+{% if request.query_params.get('matched') is not none %}
+<p class="banner banner--info">
+  Auto-matched {{ request.query_params.get('matched') }} file(s).
+  {% if request.query_params.get('promoted','0') != '0' %}
+  Promoted {{ request.query_params.get('promoted') }} new work(s).
+  {% endif %}
+  {% if request.query_params.get('review','0') != '0' %}
+  {{ request.query_params.get('review') }} routed to review.
+  {% endif %}
+  {% if request.query_params.get('failed','0') != '0' %}
+  {{ request.query_params.get('failed') }} failed (not a PDF / conversion).
+  {% endif %}
+</p>
+{% endif %}
+
+<form class="upload" method="post" action="/ui/projects/{{ slug }}/upload" enctype="multipart/form-data">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="dropzone" data-dropzone data-input="seed-files">
+    <span class="dropzone__hint">Drag &amp; drop PDF seed files here, or choose:</span>
+    <input id="seed-files" type="file" name="files" multiple accept="application/pdf,.pdf">
+    <span class="dropzone__count" data-dropzone-count></span>
+  </div>
+  <button type="submit">Upload seed PDFs</button>
+</form>
+
+<form class="upload" method="post" action="/ui/projects/{{ slug }}/ingest-folder" enctype="multipart/form-data">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="dropzone" data-dropzone data-input="match-files">
+    <span class="dropzone__hint">Bulk-ingest &amp; auto-match PDFs (DOI / title) to pending works, or choose:</span>
+    <input id="match-files" type="file" name="files" multiple accept="application/pdf,.pdf">
+    <span class="dropzone__count" data-dropzone-count></span>
+  </div>
+  <button type="submit">Ingest &amp; auto-match</button>
+</form>
+
+{% if rows %}
+<table class="table corpus" data-corpus-slug="{{ slug }}">
+  <thead>
+    <tr>
+      <th>work</th><th>year</th><th>inclusion</th><th>access</th>
+      <th>acquisition</th><th>conversion</th><th>flags</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr data-work-id="{{ r.work_id }}">
+      <td><a href="/ui/projects/{{ slug }}/corpus/{{ r.work_id }}">{{ r.title or r.work_id }}</a></td>
+      <td>{{ r.year or '' }}</td>
+      <td>{{ r.inclusion_status }}</td>
+      <td class="access access--{{ r.access_status or 'unknown' }}">{{ r.access_status or '—' }}</td>
+      <td>{{ r.acquisition_state }}</td>
+      {% set qs = queue_status.get(r.work_id) if queue_status else none %}
+      {% set cstate = qs.state if qs else ('converted' if r.has_markdown else 'none') %}
+      <td class="conv conv--{{ cstate }}" data-conv-status data-state="{{ cstate }}">
+        {%- if qs and qs.state == 'failed' and qs.detail %}failed: {{ qs.detail }}
+        {%- elif qs %}{{ qs.state }}
+        {%- elif r.has_markdown %}converted
+        {%- else %}—{%- endif %}
+      </td>
+      <td class="flags">
+        {% if r.has_citations %}<span class="flag">cite</span>{% endif %}
+        {% if r.has_extraction %}<span class="flag">extract</span>{% endif %}
+        {% if r.has_concepts %}<span class="flag">concept</span>{% endif %}
+        {% if r.has_review %}<span class="flag flag--review">review</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No works in this view.</p>
+{% endif %}
+
+{# Build D ch12 — missing-paper frontier pane (gap scan §5.6 gaps 2+3): the
+   park-and-drop triage surface. Rows arrive pre-sorted server-side per the v1
+   _KLASS_RANK triage order (paywalled/unknown first, available_open_access
+   last). Graph building never blocks on these. #}
+{% if provided_counts is defined and provided_counts.total %}
+<section class="frontier" id="frontier-pane">
+  <h2>Missing papers</h2>
+  <p class="frontier-count"><strong>{{ provided_counts.provided }}</strong> of <strong>{{ provided_counts.total }}</strong> provided</p>
+  {% if frontier_rows %}
+  <p class="note">These works have no full text yet. Follow a link to obtain the PDF
+    lawfully, then drop it on its row — unprovided papers stay flagged stubs and you
+    can build at any time.</p>
+  <table class="table frontier-table">
+    <thead>
+      <tr><th>paper</th><th>state</th><th>links</th><th>PDF</th></tr>
+    </thead>
+    <tbody>
+      {% for r in frontier_rows %}
+      <tr data-frontier-work-id="{{ r.work_id }}">
+        {# title-or-work_id — becomes Build B's derive_label one-liner when it lands #}
+        <td><a href="/ui/projects/{{ slug }}/corpus/{{ r.work_id }}">{{ r.title or r.work_id }}</a></td>
+        <td><span class="badge badge--{{ r.acquisition_state }}">{{ r.acquisition_state }}</span></td>
+        <td class="frontier-links">
+          {% for label, url in r.links %}
+          <a href="{{ url }}" target="_blank" rel="noopener">{{ label }}</a>
+          {% endfor %}
+          {% if not r.links %}<span class="muted">&mdash;</span>{% endif %}
+        </td>
+        <td>
+          <form class="inline-form" method="post" enctype="multipart/form-data"
+                action="/ui/projects/{{ slug }}/corpus/{{ r.work_id }}/upload">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="file" name="pdf" accept="application/pdf,.pdf" required>
+            <button type="submit">upload</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Every non-excluded work in this view has its full text.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<p class="note">Full text opens in the gated drawer. Upload seed PDFs with the form above.</p>
+<p><a href="/ui/projects/{{ slug }}">&larr; dashboard</a></p>
+{% endblock %}

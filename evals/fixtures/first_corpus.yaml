@@ -1,0 +1,268 @@
+# PROPOSED — confirm papers, fetch PDFs, and verify gold edges/claims before relying on this as the acceptance fixture.
+#
+# Seedgraph v2 — first evaluation corpus / gold fixture (D-first-corpus).
+# Theme (doc 01): dynamic difference-in-differences — staggered adoption, event
+# study, heterogeneous treatment effects, parallel trends, serial correlation.
+#
+# Purpose & wiring (doc 09 / phase_9_evaluation.md):
+#   - `papers`                    -> the small, familiar test corpus (doc 10 §16: 5-10 papers,
+#                                    known relationships, shared citations, technical assumptions,
+#                                    some tables/equations). Drives phase_1 acquisition + phase_5b
+#                                    identifier resolution.
+#   - `expected_citation_edges`   -> gold `cites` edges (doc 07 §5) for citation-resolution audit
+#                                    and the MVP §12 "included-paper citation edges present" check.
+#   - `expected_claims`           -> per-work identifying assumptions / methods asserted as Claim /
+#                                    IdentificationAssumption nodes (doc 07 §8); each must resolve to
+#                                    >=1 EvidenceSpan or an explicit not_found record (MVP §12).
+#   - `leakage_test_questions`    -> out-of-corpus probes (doc 09 §9). Answerable from general model
+#                                    memory but NOT present in this corpus; the harness MUST abstain
+#                                    (insufficient_evidence=true). Feeds evals .../leakage_probes.jsonl.
+#
+# STATUS: every identifier, access_class, edge, and claim below is an AUTHOR PROPOSAL and must be
+# verified against the fetched PDFs before this file gates CI. access_class follows doc 03 / doc 12
+# vocab: open_access | metadata_only | user_supplied_private. Published-journal DOIs are often
+# paywalled (metadata_only); an open preprint (arXiv / NBER / author site) is preferred as the
+# acquired manifestation and is listed under identifiers when known.
+
+schema_version: 1
+corpus_id: did_dynamic_v1
+title: "Dynamic difference-in-differences — staggered adoption & heterogeneous effects"
+theme: dynamic_difference_in_differences
+status: PROPOSED
+notes: >
+  Hand-authored gold fixture. Confirm bibliographic identifiers, fetch open manifestations,
+  then verify edges and claims against extracted spans before treating as the acceptance set.
+
+# ---------------------------------------------------------------------------
+# 1. PAPERS — the corpus (8 works; doc 10 §16 "5-10 papers")
+# ---------------------------------------------------------------------------
+papers:
+  - work_id: goodmanbacon2021
+    title: "Difference-in-differences with variation in treatment timing"
+    authors: ["Goodman-Bacon, Andrew"]
+    year: 2021
+    venue: "Journal of Econometrics, 225(2)"
+    identifiers:
+      doi: "10.1016/j.jeconom.2021.03.014"
+      nber: "w25018"            # open working-paper manifestation (NBER WP 25018, 2018)
+    access_class: open_access    # acquire NBER WP; published JoE DOI is metadata_only
+    role: foundational_decomposition
+
+  - work_id: callawaysantanna2021
+    title: "Difference-in-differences with multiple time periods"
+    authors: ["Callaway, Brantly", "Sant'Anna, Pedro H. C."]
+    year: 2021
+    venue: "Journal of Econometrics, 225(2)"
+    identifiers:
+      doi: "10.1016/j.jeconom.2020.12.001"
+      arxiv: "1803.09015"
+    access_class: open_access
+    role: group_time_estimator
+
+  - work_id: sunabraham2021
+    title: "Estimating dynamic treatment effects in event studies with heterogeneous treatment effects"
+    authors: ["Sun, Liyang", "Abraham, Sarah"]
+    year: 2021
+    venue: "Journal of Econometrics, 225(2)"
+    identifiers:
+      doi: "10.1016/j.jeconom.2020.09.006"
+      arxiv: "1804.05785"
+    access_class: open_access
+    role: interaction_weighted_estimator
+
+  - work_id: dechaisemartin2020
+    title: "Two-way fixed effects estimators with heterogeneous treatment effects"
+    authors: ["de Chaisemartin, Clément", "D'Haultfœuille, Xavier"]
+    year: 2020
+    venue: "American Economic Review, 110(9)"
+    identifiers:
+      doi: "10.1257/aer.20181169"
+    access_class: metadata_only   # AER paywalled; CONFIRM whether an open WP version exists to upgrade
+    role: twfe_negative_weights
+
+  - work_id: borusyakjaravelspiess2024
+    title: "Revisiting event-study designs: robust and efficient estimation"
+    authors: ["Borusyak, Kirill", "Jaravel, Xavier", "Spiess, Jann"]
+    year: 2024
+    venue: "Review of Economic Studies (online 2024)"
+    identifiers:
+      arxiv: "2108.12419"
+      doi: "10.1093/restud/rdae007"
+    access_class: open_access     # acquire arXiv manifestation
+    role: imputation_estimator
+
+  - work_id: roth2022
+    title: "Pretest with caution: event-study estimates after testing for parallel trends"
+    authors: ["Roth, Jonathan"]
+    year: 2022
+    venue: "American Economic Review: Insights, 4(3)"
+    identifiers:
+      doi: "10.1257/aeri.20210236"
+    access_class: open_access     # author-hosted open WP; CONFIRM url, else downgrade to metadata_only
+    role: pretrends_inference
+
+  - work_id: atheyimbens2022
+    title: "Design-based analysis in difference-in-differences settings with staggered adoption"
+    authors: ["Athey, Susan", "Imbens, Guido W."]
+    year: 2022
+    venue: "Journal of Econometrics, 226(1)"
+    identifiers:
+      doi: "10.1016/j.jeconom.2020.10.012"
+      arxiv: "1808.05293"
+    access_class: open_access
+    role: design_based_inference
+
+  - work_id: rothsantannabilinskipoe2023
+    title: "What's trending in difference-in-differences? A synthesis of the recent econometrics literature"
+    authors: ["Roth, Jonathan", "Sant'Anna, Pedro H. C.", "Bilinski, Alyssa", "Poe, John"]
+    year: 2023
+    venue: "Journal of Econometrics, 235(2)"
+    identifiers:
+      doi: "10.1016/j.jeconom.2023.03.008"
+      arxiv: "2201.01194"
+    access_class: open_access
+    role: survey_hub          # cites essentially all of the above -> dense citation target
+
+# ---------------------------------------------------------------------------
+# 2. EXPECTED CITATION EDGES — gold `cites` graph (doc 07 §5)
+#    relation = "cites" (no endorsement implied, doc 07 §5).
+#    confidence reflects author certainty BEFORE PDF verification; verify against
+#    each work's reference section (phase_3b) before gating.
+# ---------------------------------------------------------------------------
+expected_citation_edges:
+  # The survey is the densest hub — it cites every other work in the set.
+  - {citing: rothsantannabilinskipoe2023, cited: goodmanbacon2021,        confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: callawaysantanna2021,    confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: sunabraham2021,          confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: dechaisemartin2020,      confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: borusyakjaravelspiess2024, confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: roth2022,                confidence: high}
+  - {citing: rothsantannabilinskipoe2023, cited: atheyimbens2022,         confidence: high}
+
+  # Sun & Abraham build directly on the TWFE-bias and group-time literature.
+  - {citing: sunabraham2021, cited: callawaysantanna2021,  confidence: high}
+  - {citing: sunabraham2021, cited: dechaisemartin2020,    confidence: high}
+  - {citing: sunabraham2021, cited: goodmanbacon2021,      confidence: high}
+  - {citing: sunabraham2021, cited: atheyimbens2022,       confidence: medium}
+  - {citing: sunabraham2021, cited: borusyakjaravelspiess2024, confidence: medium}  # cites BJS working-paper version
+
+  # Callaway & Sant'Anna (published 2021) cross-cite the contemporaneous TWFE-bias work.
+  - {citing: callawaysantanna2021, cited: goodmanbacon2021,   confidence: high}
+  - {citing: callawaysantanna2021, cited: dechaisemartin2020, confidence: high}
+  - {citing: callawaysantanna2021, cited: sunabraham2021,     confidence: medium}
+  - {citing: callawaysantanna2021, cited: atheyimbens2022,    confidence: medium}
+
+  # Goodman-Bacon (published version) references the heterogeneity-robust estimators.
+  - {citing: goodmanbacon2021, cited: dechaisemartin2020,   confidence: medium}
+  - {citing: goodmanbacon2021, cited: callawaysantanna2021, confidence: medium}
+
+  # Borusyak, Jaravel & Spiess situate the imputation estimator against prior estimators.
+  - {citing: borusyakjaravelspiess2024, cited: callawaysantanna2021, confidence: high}
+  - {citing: borusyakjaravelspiess2024, cited: sunabraham2021,       confidence: high}
+  - {citing: borusyakjaravelspiess2024, cited: dechaisemartin2020,   confidence: high}
+  - {citing: borusyakjaravelspiess2024, cited: goodmanbacon2021,     confidence: medium}
+
+  # Roth (pre-trends) cites the event-study / heterogeneity estimators it analyzes.
+  - {citing: roth2022, cited: borusyakjaravelspiess2024, confidence: high}
+  - {citing: roth2022, cited: sunabraham2021,            confidence: medium}
+  - {citing: roth2022, cited: callawaysantanna2021,      confidence: medium}
+
+  # Athey & Imbens reference the staggered-adoption estimators.
+  - {citing: atheyimbens2022, cited: dechaisemartin2020,   confidence: medium}
+  - {citing: atheyimbens2022, cited: callawaysantanna2021, confidence: medium}
+  - {citing: atheyimbens2022, cited: goodmanbacon2021,     confidence: medium}
+
+# ---------------------------------------------------------------------------
+# 3. EXPECTED CLAIMS — per-work identifying assumptions / methods / results
+#    claim_type: identification_assumption | method | result
+#    Each claim must, after extraction (phase_4), resolve to >=1 EvidenceSpan
+#    OR carry an explicit not_found record (MVP §12). Spans filled post-fetch.
+# ---------------------------------------------------------------------------
+expected_claims:
+  goodmanbacon2021:
+    - {claim_id: gb_decomp,        claim_type: result,                    text: "The two-way fixed-effects DiD estimator equals a weighted average of all possible 2x2 DiD estimators across timing groups (the Bacon decomposition)."}
+    - {claim_id: gb_negweight,     claim_type: result,                    text: "Already-treated units serve as controls for later-treated units, which can produce negative weights and bias TWFE under treatment-effect heterogeneity over time."}
+    - {claim_id: gb_vwa,           claim_type: method,                    text: "Estimand is a variance-weighted average treatment effect; weights depend on group sizes and treatment-timing variance."}
+
+  callawaysantanna2021:
+    - {claim_id: cs_attgt,         claim_type: method,                    text: "Defines group-time average treatment effects ATT(g,t) as the building block for staggered designs."}
+    - {claim_id: cs_cpt,           claim_type: identification_assumption, text: "Identification rests on a conditional (covariate-adjusted) parallel-trends assumption."}
+    - {claim_id: cs_nyt,           claim_type: identification_assumption, text: "Either never-treated or not-yet-treated units may serve as the valid comparison group."}
+    - {claim_id: cs_dr,            claim_type: method,                    text: "Estimation via doubly-robust / inverse-probability-weighting / outcome-regression estimators, then aggregation into event-study or overall summaries."}
+
+  sunabraham2021:
+    - {claim_id: sa_contamination, claim_type: result,                    text: "Under heterogeneous effects, TWFE event-study (lead/lag) coefficients are contaminated by effects from other relative periods."}
+    - {claim_id: sa_catt,          claim_type: method,                    text: "Defines cohort-specific average treatment effects on the treated, CATT(e,l), by cohort and relative period."}
+    - {claim_id: sa_iw,            claim_type: method,                    text: "Proposes the interaction-weighted (IW) estimator using saturated cohort-by-relative-period interactions weighted by cohort shares."}
+
+  dechaisemartin2020:
+    - {claim_id: dc_weights,       claim_type: result,                    text: "The TWFE regression coefficient is a weighted sum of treatment effects across cells, and some weights can be negative."}
+    - {claim_id: dc_robust,        claim_type: method,                    text: "Proposes the DID_M estimator, valid under heterogeneous and time-varying treatment effects."}
+    - {claim_id: dc_diagnostic,    claim_type: method,                    text: "Provides a diagnostic for the number/share of negative weights underlying a given TWFE estimate."}
+
+  borusyakjaravelspiess2024:
+    - {claim_id: bjs_imputation,   claim_type: method,                    text: "Imputation estimator: fit unit and period effects on untreated observations only, then impute counterfactual untreated outcomes for treated observations."}
+    - {claim_id: bjs_efficient,    claim_type: result,                    text: "The imputation estimator is efficient under homoskedasticity and avoids the negative-weighting problem of TWFE."}
+    - {claim_id: bjs_underid,      claim_type: identification_assumption, text: "Event-study designs are under-identified without restrictions; estimands require explicitly specified parallel-trends and no-anticipation assumptions."}
+
+  roth2022:
+    - {claim_id: roth_pretest,     claim_type: result,                    text: "Conditioning event-study estimates on having passed a pre-trends test induces selection bias and distorts inference."}
+    - {claim_id: roth_power,       claim_type: result,                    text: "Pre-trends tests often have low power against the kinds of violations that most bias the treatment-effect estimate."}
+    - {claim_id: roth_anticip,     claim_type: identification_assumption, text: "Analysis assumes parallel trends with no anticipation; the pre-period is used to assess that assumption's plausibility."}
+
+  atheyimbens2022:
+    - {claim_id: ai_designbased,   claim_type: method,                    text: "Adopts a design-based (randomization) framework treating the staggered adoption dates as the source of randomness."}
+    - {claim_id: ai_assignment,    claim_type: identification_assumption, text: "Identification relies on an assumption that adoption timing is (conditionally) as-good-as-random, rather than on a sampling-based parallel-trends model."}
+    - {claim_id: ai_finitepop,     claim_type: result,                    text: "Derives finite-population exact and asymptotic variance expressions for staggered-adoption estimators."}
+
+  rothsantannabilinskipoe2023:
+    - {claim_id: rs_synthesis,     claim_type: result,                    text: "Synthesizes the recent DiD literature: TWFE is biased under heterogeneous, dynamic treatment effects, and several heterogeneity-robust estimators have been proposed."}
+    - {claim_id: rs_recommend,     claim_type: method,                    text: "Offers practical recommendations: use heterogeneity-robust estimators, report event-study plots, and conduct sensitivity analysis for parallel-trends violations."}
+
+# ---------------------------------------------------------------------------
+# 4. LEAKAGE TEST QUESTIONS — out-of-corpus abstention probes (doc 09 §9)
+#    Answerable from general model memory but NOT present in this corpus.
+#    Expected harness behavior: insufficient_evidence = true (abstain).
+#    Authoring rule: each targets a DiD-adjacent method or fact deliberately
+#    EXCLUDED from the 8 papers above. Confirm exclusion after PDFs are fetched.
+# ---------------------------------------------------------------------------
+leakage_test_questions:
+  - id: leak_syntheticcontrol
+    question: "What is the synthetic control estimator of Abadie, Diamond, and Hainmueller (2010), and how are donor-pool weights chosen?"
+    rationale: "Synthetic control is a distinct method; Abadie-Diamond-Hainmueller is not in the corpus. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_synthdid
+    question: "How does the synthetic difference-in-differences estimator of Arkhangelsky et al. (2021) combine unit and time weights?"
+    rationale: "Synth-DiD (Arkhangelsky et al.) is not among the 8 corpus papers. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_honestdid
+    question: "What sensitivity-analysis bounds for parallel-trends violations does the Rambachan and Roth (2023) 'honest' approach propose?"
+    rationale: "HonestDiD (Rambachan & Roth 2023) is adjacent but NOT in the corpus (Roth 2022 pre-trends is a different paper). Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_clustering
+    question: "What is the Bertrand, Duflo, and Mullainathan (2004) finding on serial correlation and standard errors in difference-in-differences?"
+    rationale: "Serial-correlation/clustering classic (BDM 2004) is on-theme but not in the corpus. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_didpackage
+    question: "What command-line arguments does the R package 'did' expose for estimating group-time ATTs?"
+    rationale: "Software/package implementation details are not full-text content of any corpus paper. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_rdd
+    question: "What local-polynomial bandwidth selector do Calonico, Cattaneo, and Titiunik (2014) recommend for regression discontinuity designs?"
+    rationale: "Regression discontinuity is an unrelated identification strategy absent from the corpus. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_nobel
+    question: "Who was awarded the 2021 Nobel Memorial Prize in Economic Sciences and for what contribution?"
+    rationale: "General-knowledge fact in model memory but absent from corpus full text. Must abstain."
+    expect: {insufficient_evidence: true}
+
+  - id: leak_callaway_minwage
+    question: "What hourly minimum-wage threshold does the U.S. federal Fair Labor Standards Act currently set?"
+    rationale: "World-knowledge fact unrelated to corpus content (avoids overlap with any empirical application). Must abstain."
+    expect: {insufficient_evidence: true}

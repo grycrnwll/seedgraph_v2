@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · no runs · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>{{ slug }}</h1>
+<p class="empty">
+  This project has no runs yet, so there is no graph to show. Build a citation graph
+  (e.g. <code>seedgraph cite run --project {{ slug }}</code>), then reload.
+</p>
+<p><a href="/ui">&larr; back to projects</a></p>
+{% endblock %}

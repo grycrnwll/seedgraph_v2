@@ -1,0 +1,91 @@
+# Build F ch8 — the one required gate on every push/PR. Offline by construction:
+# pyproject addopts deselect every real-integration marker (marker/network/
+# llm_network/browser), so the suite is keyless and network-free.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Cassette secret grep
+        # Self-enforcing version of the pre-commit scrub check (F ch11): committed
+        # provider cassettes must carry no auth headers and only REDACTED values
+        # for the scrubbed query params. Passes trivially while the fixtures dir
+        # holds no cassettes.
+        run: |
+          dir=tests/fixtures/provider_cassettes
+          if grep -riE 'x-api-key|authorization' "$dir" --include='*.json'; then
+            echo "auth header material found in a committed cassette"; exit 1
+          fi
+          if grep -rioE '(mailto|email|api_key|apikey)=[^&"]*' "$dir" --include='*.json' | grep -v '=REDACTED$'; then
+            echo "unredacted scrubbed-param value found in a committed cassette"; exit 1
+          fi
+          echo "cassette secret grep OK"
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install (with dev extra)
+        run: pip install -e ".[dev]"
+
+      - name: Cross-phase contract import guard
+        # Same pinned symbol list as tests/conftest.py's module-level guard
+        # (Build F ch7); fails before pytest even collects. A deliberate rename
+        # updates BOTH lists in the same PR.
+        run: |
+          python - <<'PY'
+          import importlib
+
+          SYMBOLS = (
+              ("seedgraph.spans.store", "ensure_span"),
+              ("seedgraph.citation.edges", "write_edge"),
+              ("seedgraph.citation.bib_parser", "parse_references"),
+              ("seedgraph.sections.parser", "parse_sections"),
+              ("seedgraph.llm.executor", "run_llm"),
+              ("seedgraph.llm.secrets", "resolve_named_secret"),
+              ("seedgraph.project.identity", "upsert_work"),
+              ("seedgraph.project.identity", "merge_decision"),
+              ("seedgraph.doctor", "collect_checks"),
+          )
+          missing = [
+              f"{mod}.{sym}"
+              for mod, sym in SYMBOLS
+              if not hasattr(importlib.import_module(mod), sym)
+          ]
+          if missing:
+              raise SystemExit(
+                  f"cross-phase contract symbol(s) missing: {missing!r}"
+              )
+          print("contract import guard OK")
+          PY
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Doctor --json smoke
+        # Parse the LAST non-empty stdout line as JSON — v1 live-caught scar: an
+        # import-time banner once prefixed stdout and broke json.loads over the
+        # whole stream. Second v1 scar, carried as policy: if a future step needs
+        # this JSON, pass it via an env var (as below), never a stdin pipe.
+        run: |
+          out="$(seedgraph doctor --json)"
+          echo "$out"
+          DOCTOR_JSON="$(printf '%s\n' "$out" | awk 'NF{line=$0} END{print line}')" \
+          python - <<'PY'
+          import json
+          import os
+
+          doc = json.loads(os.environ["DOCTOR_JSON"])
+          assert isinstance(doc, dict) and "checks" in doc and "ok" in doc, doc
+          assert doc["ok"] is True, doc
+          print(f"doctor --json smoke OK ({len(doc['checks'])} checks)")
+          PY

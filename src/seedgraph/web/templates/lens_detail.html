@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ lens_id }} · Lens · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Lens · {{ lens_id }}</h1>
+<nav class="subnav">
+  <a href="/ui/projects/{{ slug }}/lenses">All lenses</a>
+  <a href="/ui/projects/{{ slug }}/lenses/{{ lens_id }}?status=found"
+     class="{{ 'active' if status == 'found' else '' }}">found</a>
+  <a href="/ui/projects/{{ slug }}/lenses/{{ lens_id }}?status=not_found"
+     class="{{ 'active' if status == 'not_found' else '' }}">not found</a>
+  <a href="/ui/projects/{{ slug }}/lenses/{{ lens_id }}?status=all"
+     class="{{ 'active' if status == 'all' else '' }}">all</a>
+</nav>
+
+<section class="card">
+  <h2>Coverage <span class="badge">{{ staleness.status }}</span></h2>
+  <ul class="kv">
+    <li><span>found</span><strong>{{ staleness.found }}</strong></li>
+    <li><span>not found</span><strong>{{ staleness.not_found }}</strong></li>
+    <li><span>ambiguous</span><strong>{{ staleness.ambiguous }}</strong></li>
+    <li><span>extraction failed</span><strong>{{ staleness.extraction_failed }}</strong></li>
+    <li><span>works covered</span><strong>{{ staleness.works_covered }}/{{ staleness.works_total }}</strong></li>
+    <li><span>skipped (no markdown)</span><strong>{{ staleness.skipped_no_markdown }}</strong></li>
+    <li><span>stale runs</span><strong>{{ staleness.stale_count }}</strong></li>
+  </ul>
+  {% if staleness.stale_count %}
+  <p class="badge badge--warn">{{ staleness.stale_count }} stale run(s) — re-run the lens to refresh.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Results ({{ results | length }})</h2>
+  {% if results %}
+  <table class="table">
+    <thead><tr><th>work</th><th>status</th><th>label</th><th>section</th><th>quote</th><th>spans</th></tr></thead>
+    <tbody>
+      {% for r in results %}
+      <tr>
+        <td><a href="/ui/projects/{{ slug }}/corpus/{{ r.work_id }}">{{ r.work_id }}</a></td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.normalized_label or '' }}</td>
+        <td>{{ r.section or '' }}</td>
+        <td>{{ r.claim_text or '' }}</td>
+        <td>{{ r.span_ids | length }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No results for this status.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Definition (validate &amp; save)</h2>
+  <form method="post"
+        action="/ui/projects/{{ slug }}/lenses/{{ lens_id }}/validate"
+        class="stack-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <textarea name="yaml" rows="20" spellcheck="false">{{ yaml_text }}</textarea>
+    <button type="submit">validate &amp; save</button>
+  </form>
+  <p class="note">The YAML is validated (same as <code>lens validate</code>) before it is written; an invalid document is rejected and nothing is saved.</p>
+</section>
+<p><a href="/ui/projects/{{ slug }}/lenses">&larr; all lenses</a></p>
+{% endblock %}

@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>seedgraph - two-plane 3D concept view ({{ run_id }})</title>
+<style>
+  html, body { margin:0; height:100%; background:#0b0f1a; overflow:hidden;
+               font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  /* full-bleed scene (plan: #graph{inset:0}) */
+  #graph { position:absolute; inset:0; }
+  #toast { position:absolute; bottom:18px; left:50%; transform:translateX(-50%);
+           z-index:20; background:rgba(16,22,38,0.94); color:#e7ecf5;
+           border:1px solid #2a3550; border-radius:8px; padding:8px 14px;
+           font-size:12.5px; box-shadow:0 6px 24px rgba(0,0,0,0.5);
+           opacity:0; transition:opacity .25s; pointer-events:none; }
+  #panel {
+    position:absolute; top:12px; left:12px; z-index:10;
+    background:rgba(16,22,38,0.86); color:#e7ecf5;
+    border:1px solid #2a3550; border-radius:10px;
+    padding:12px 14px; width:250px;
+    font-size:12.5px; line-height:1.45;
+    box-shadow:0 6px 24px rgba(0,0,0,0.45);
+    user-select:none;
+  }
+  #panel h1 { font-size:13.5px; margin:0 0 2px; letter-spacing:.2px; }
+  #panel .sub { color:#90a0c0; font-size:11px; margin-bottom:9px; }
+  #panel .sec { margin-top:10px; border-top:1px solid #243049; padding-top:8px; }
+  #panel .sec:first-of-type { border-top:none; padding-top:0; }
+  .legrow { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .glyph { width:15px; text-align:center; font-size:14px; line-height:1; flex:0 0 auto; }
+  .line { width:18px; height:0; border-top-width:3px; border-top-style:solid; flex:0 0 auto; }
+  .note { color:#90a0c0; font-size:10.5px; margin:2px 0 5px; }
+  label.tog { display:flex; align-items:center; gap:7px; margin:4px 0; cursor:pointer; }
+  label.tog input { accent-color:#7aa2ff; cursor:pointer; }
+  .hint { color:#7e8db0; font-size:10.5px; margin-top:9px; }
+  code { color:#cdd8f0; }
+  /* search box + reset button (control panel extras) */
+  #panel input[type=text].search { width:100%; box-sizing:border-box; margin-bottom:6px;
+      background:#0e1626; color:#e7ecf5; border:1px solid #2a3550; border-radius:6px;
+      padding:5px 8px; font-size:12px; }
+  #panel .ctl { display:flex; gap:6px; margin-top:6px; }
+  #panel button.btn { background:#1b2742; color:#cdd8f0; border:1px solid #2a3550;
+      border-radius:6px; padding:4px 10px; font-size:12px; cursor:pointer; }
+  #panel button.btn:hover { background:#243049; color:#e7ecf5; }
+  #backlinks {
+    position:absolute; top:12px; right:314px; z-index:10;
+    background:rgba(16,22,38,0.86); color:#e7ecf5;
+    border:1px solid #2a3550; border-radius:10px;
+    padding:8px 12px; font-size:12px; line-height:1.6;
+    box-shadow:0 6px 24px rgba(0,0,0,0.45);
+  }
+  #backlinks a { color:#8fb4ff; text-decoration:none; display:block; }
+  #backlinks a:hover { color:#cdd8f0; }
+  #panel .slabel { display:flex; justify-content:space-between; align-items:baseline;
+      color:#cdd8f0; margin:7px 0 2px; }
+  #panel .slabel .val { color:#8fb4ff; font-variant-numeric:tabular-nums; font-size:11.5px; }
+  #panel input[type=range].slider { width:100%; accent-color:#7aa2ff; cursor:pointer; margin:0; }
+  #panel .sechead { font-weight:600; margin-bottom:2px; }
+  #pane {
+    position:absolute; top:12px; right:12px; bottom:12px; z-index:10;
+    background:rgba(16,22,38,0.86); color:#e7ecf5;
+    border:1px solid #2a3550; border-radius:10px;
+    padding:12px 12px; width:290px; box-sizing:border-box;
+    font-size:12.5px; line-height:1.4;
+    box-shadow:0 6px 24px rgba(0,0,0,0.45);
+    display:flex; flex-direction:column;
+  }
+  #pane h1 { font-size:13.5px; margin:0 0 2px; letter-spacing:.2px; }
+  #pane .sub { color:#90a0c0; font-size:11px; margin-bottom:9px; }
+  #pane .filter { border-top:1px solid #243049; padding-top:8px; margin-bottom:6px; }
+  #pane .filter label { color:#cdd8f0; display:block; margin-bottom:5px; }
+  #pane .filter .row { display:flex; align-items:center; gap:8px; }
+  #pane .filter input[type=number] { width:54px; background:#0e1626; color:#e7ecf5;
+      border:1px solid #2a3550; border-radius:5px; padding:2px 5px; font-size:12px; }
+  #pane .filter input[type=range] { flex:1 1 auto; accent-color:#7aa2ff; }
+  #pane-list { overflow-y:auto; flex:1 1 auto; margin-top:4px; padding-right:4px; }
+  #pane-list::-webkit-scrollbar { width:9px; }
+  #pane-list::-webkit-scrollbar-thumb { background:#2a3550; border-radius:5px; }
+  .grp { margin-top:9px; }
+  .grp:first-child { margin-top:2px; }
+  .grp-head { display:flex; align-items:center; gap:7px; font-weight:600;
+      padding:3px 0; border-bottom:1px solid #243049; }
+  .grp-head .glyph { width:15px; text-align:center; font-size:14px; line-height:1; flex:0 0 auto; }
+  .grp-head .cnt { color:#90a0c0; font-weight:400; }
+  .grp-rows { margin:3px 0 0 4px; }
+  .crow { display:flex; align-items:center; gap:6px; margin:2px 0; cursor:pointer; }
+  .crow input { accent-color:#7aa2ff; cursor:pointer; flex:0 0 auto; }
+  .crow .dot { width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  .crow .nm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .crow .dg { color:#7e8db0; font-size:10.5px; flex:0 0 auto; }
+  #pane input[type=checkbox] { accent-color:#7aa2ff; cursor:pointer; }
+  .pane-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  #pane-collapse { background:none; border:none; color:#90a0c0; cursor:pointer;
+      font-size:14px; line-height:1; padding:2px 4px; border-radius:5px; }
+  #pane-collapse:hover { color:#e7ecf5; background:#243049; }
+  #pane-body { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; }
+  #pane.collapsed { bottom:auto; width:auto; }
+  #pane.collapsed #pane-body { display:none; }
+  .crow .caret { width:11px; flex:0 0 auto; color:#90a0c0; cursor:pointer;
+      font-size:9px; user-select:none; text-align:center; transition:transform .12s; }
+  .crow .caret.open { transform:rotate(90deg); }
+  .crow .caret.spacer { visibility:hidden; cursor:default; }
+  .grp-head .caret { width:11px; flex:0 0 auto; color:#90a0c0; cursor:pointer;
+      font-size:9px; user-select:none; text-align:center; transition:transform .12s; }
+  .grp-head .caret.open { transform:rotate(90deg); }
+  .crow .nm { cursor:pointer; }
+  .paper-rows { margin:1px 0 4px 20px; border-left:1px solid #243049; padding-left:7px; }
+  .prow { display:flex; align-items:center; gap:6px; margin:2px 0; font-size:11.5px;
+      color:#cdd8f0; cursor:pointer; }
+  .prow:hover { color:#fff; }
+  .prow .pico { flex:0 0 auto; font-size:10px; width:12px; text-align:center; }
+  .prow .pnm { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .prow.nodoc { color:#6b7794; cursor:default; }
+  .prow.nodoc:hover { color:#6b7794; }
+
+  /* ===== provenance drawer (bottom-left, opens on node / edge click) ===== */
+  #drawer {
+    position:absolute; left:12px; bottom:12px; z-index:15;
+    width:340px; max-height:48vh; display:none; flex-direction:column;
+    background:rgba(16,22,38,0.96); color:#e7ecf5;
+    border:1px solid #2a3550; border-radius:10px;
+    box-shadow:0 8px 28px rgba(0,0,0,0.55); font-size:12px;
+  }
+  #drawer .dhead { display:flex; align-items:center; justify-content:space-between;
+      gap:8px; padding:9px 12px; border-bottom:1px solid #243049; }
+  #drawer-title { font-weight:600; font-size:12.5px; }
+  #drawer-close { background:none; border:none; color:#90a0c0; cursor:pointer;
+      font-size:16px; line-height:1; padding:0 3px; }
+  #drawer-close:hover { color:#fff; }
+  #drawer-body { overflow-y:auto; padding:10px 12px; line-height:1.45; }
+  #drawer-body::-webkit-scrollbar { width:9px; }
+  #drawer-body::-webkit-scrollbar-thumb { background:#2a3550; border-radius:5px; }
+  .dh { font-size:13px; font-weight:600; margin-bottom:3px; }
+  .dmeta { color:#90a0c0; font-size:11px; margin-bottom:6px; }
+  .ddef { color:#d6deef; font-style:italic; margin:4px 0 6px;
+      border-left:2px solid #3a4566; padding-left:8px; }
+  .dsec { margin-top:9px; font-weight:600; color:#aebbd8;
+      border-top:1px solid #243049; padding-top:6px; }
+  .dchips, .dbtns { display:flex; flex-wrap:wrap; gap:5px; margin:5px 0; }
+  .chip { background:#1b2742; border:1px solid #2a3550; border-radius:10px;
+      padding:1px 8px; font-size:11px; }
+  .dbtn { background:#23407a; color:#fff; border:none; border-radius:6px;
+      padding:4px 10px; font-size:11.5px; cursor:pointer; }
+  .dbtn:hover { background:#2c4f96; }
+  .dwork { margin-top:6px; }
+  .dwt { font-weight:600; color:#e7ecf5; }
+  .dclaim { margin:4px 0 4px 8px; border-left:1px solid #243049; padding-left:8px; }
+  .dct { color:#d6deef; }
+  .dspan { margin:3px 0 3px 6px; color:#cdd8f0; }
+  .dloc { color:#7e8db0; font-size:10.5px; margin-top:1px; }
+  .drun { color:#7e8db0; font-size:10.5px; margin-top:2px; }
+  .didrow { margin:2px 0; }
+  .dk { color:#7e8db0; }
+  .dim { color:#7e8db0; }
+  .badge { display:inline-block; border-radius:9px; padding:0 7px; font-size:10px;
+      margin-left:3px; vertical-align:middle; }
+  .badge.ok { background:#1f3a2a; color:#7fdc97; }
+  .badge.priv { background:#3a1f24; color:#ff9aa6; }
+  .badge.seed { background:#3a3413; color:#ffe08a; }
+  /* structural-only banner for concept-concept edges (no span evidence) */
+  .banner { background:#2a2410; border:1px solid #5a4a18; color:#ffd98a;
+      border-radius:7px; padding:7px 9px; margin:4px 0 6px; font-size:11.5px;
+      line-height:1.4; }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+
+<div id="panel">
+  <h1>seedgraph &mdash; 3D concept view</h1>
+  <div class="sub">two z-locked planes: papers below, concepts above<br>click a node &rarr; provenance &middot; right-click a paper &rarr; open its PDF</div>
+
+  <div class="sec">
+    <div class="note">shape = concept category</div>
+    <div class="legrow"><span class="glyph" style="color:#4e79a7">&#9679;</span> paper (blue) &middot; sphere</div>
+    <div class="legrow"><span class="glyph" style="color:#e6c200">&#9679;</span> seed paper (gold) &middot; sphere</div>
+    <div class="legrow"><span class="glyph" style="color:#f28e2b">&#9670;</span> concept (orange) &middot; octahedron</div>
+    <div class="legrow"><span class="glyph" style="color:#59a14f">&#9650;</span> method (green) &middot; cone</div>
+    <div class="legrow"><span class="glyph" style="color:#b07aa1">&#9632;</span> dataset (purple) &middot; cube</div>
+  </div>
+
+  <div class="sec">
+    <div class="legrow"><span class="line" style="border-top-color:#6aa0d8"></span> citation (paper&ndash;paper)</div>
+    <div class="legrow"><span class="line" style="border-top-color:#f0a44e"></span> concept (concept&ndash;concept)</div>
+    <div class="legrow"><span class="line" style="border-top-color:#7fdc97"></span> strut (paper&ndash;concept)</div>
+  </div>
+
+  <div class="sec">
+    <label class="tog"><input type="checkbox" id="t-citation" checked> citation edges</label>
+    <label class="tog"><input type="checkbox" id="t-concept" checked> concept edges</label>
+    <label class="tog"><input type="checkbox" id="t-strut" checked> struts (the cage)</label>
+    <label class="tog"><input type="checkbox" id="t-labels" checked> concept labels</label>
+    <label class="tog"><input type="checkbox" id="t-rotate"> auto-rotate</label>
+  </div>
+
+  <div class="sec">
+    <input type="text" class="search" id="search" placeholder="search nodes by name&hellip;" autocomplete="off" />
+    <label class="tog"><input type="checkbox" id="t-evidence"> only nodes with evidence</label>
+    <div class="ctl">
+      <button class="btn" id="btn-reset" title="reset the camera to the default view">reset camera</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sechead">Layout forces</div>
+
+    <div class="slabel"><span>Repulsion</span><span class="val" id="rep-val">120</span></div>
+    <input type="range" class="slider" id="s-repulsion" min="10" max="400" step="1" value="120">
+
+    <div class="slabel"><span>Link length</span><span class="val" id="len-val">30</span></div>
+    <input type="range" class="slider" id="s-linklen" min="10" max="120" step="1" value="30">
+
+    <div class="slabel"><span>Node spacing</span><span class="val" id="col-val">1.0</span></div>
+    <input type="range" class="slider" id="s-collide" min="0" max="2" step="0.05" value="1">
+  </div>
+
+  <div class="hint">drag to orbit &middot; scroll to zoom &middot; click a node for provenance</div>
+</div>
+
+<div id="backlinks">
+  <a href="/ui">&larr; Projects</a>
+  <a href="/ui/projects/{{ slug }}/runs/{{ run_id }}/graph?view=table">table view &rarr;</a>
+</div>
+
+<div id="pane">
+  <div class="pane-head">
+    <h1>details</h1>
+    <button id="pane-collapse" title="collapse / expand the filter pane">&#9650;</button>
+  </div>
+  <div id="pane-body">
+    <div class="sub">toggle nodes &middot; filter by degree<br>&#9656; expand a concept to list its papers</div>
+    <div class="filter">
+      <label>Hide nodes with degree &lt; <span id="deg-val">0</span></label>
+      <div class="row">
+        <input type="number" id="deg-num" min="0" step="1" value="0">
+        <input type="range" id="deg-range" min="0" step="1" value="0">
+      </div>
+    </div>
+    <div id="pane-list"></div>
+  </div>
+</div>
+
+<!-- provenance drawer: opens on left-click of a node (Work / Concept) or an edge
+     (strut span evidence / concept-concept structural / citation). Fetches the
+     local-session-gated provenance endpoints; concept-concept shows a STRUCTURAL
+     banner because those edges carry no span-level evidence. -->
+<div id="drawer">
+  <div class="dhead">
+    <span id="drawer-title">details</span>
+    <button id="drawer-close" title="close">&times;</button>
+  </div>
+  <div id="drawer-body"></div>
+</div>
+
+<!-- UMD bundles, vendored locally (local-first: no CDN at view time).
+     IMPORTANT: load `three` as a GLOBAL first so our meshes use the SAME THREE
+     instance the graph renders with -> no silent fallback to default spheres. -->
+<script src="/static/vendor/three.min.js"></script>
+<script src="/static/vendor/three-spritetext.min.js"></script>
+<script src="/static/vendor/3d-force-graph.min.js"></script>
+<!-- 3D forces. d3-octree MUST load BEFORE d3-force-3d — the standalone d3-force-3d
+     UMD does NOT bundle it, and forceCollide()/many-body call octree() internally
+     (else "e.octree is not a function" on the first tick balls everything up). -->
+<script src="/static/vendor/d3-octree.min.js"></script>
+<script src="/static/vendor/d3-force-3d.min.js"></script>
+
+<script>
+(async function(){
+// ===== run-scoped API base (all routes are require_local_session-gated) =====
+const RUN_BASE = '/api/projects/{{ slug }}/runs/{{ run_id }}';
+const WORK_BASE = '/api/projects/{{ slug }}/works';
+
+// ===== data: fetched live from the run's transformed semantic graph =====
+const GRAPH = await fetch(RUN_BASE + '/graph3d.json').then(r => r.json());
+const CONCEPT_LABEL_THRESHOLD = GRAPH.threshold;  // label concept nodes with deg >= this
+
+// control state read by the visibility accessors (declared up front: the force
+// engine may call isVisible() during the very first tick).
+let evidenceOnly = false;
+let searchTerm = '';
+
+const C_PAPER   = '#4e79a7';
+const C_SEED    = '#e6c200';
+const C_CONCEPT = '#f28e2b';
+const C_METHOD  = '#59a14f';
+const C_DATASET = '#b07aa1';
+const L_CITATION = 'rgba(106,160,216,0.28)';
+const L_CONCEPT  = 'rgba(240,164,78,0.30)';
+const L_STRUT    = 'rgba(127,220,151,0.13)';
+
+const PAPER_Z = 0, CONCEPT_Z = 400;
+
+// v2: concepts carry `concept_type`; bucket it into the legend's 3 shape classes.
+function catOf(n){
+  const c = n.concept_type;
+  if (c === 'method')  return 'method';
+  if (c === 'dataset') return 'dataset';
+  return 'concept';
+}
+
+// citation-community palette (Build B chunk 3): papers are colored by their
+// deterministic Louvain community when present; seeds keep the gold override.
+const COMMUNITY_PALETTE = ['#4e79a7','#e15759','#76b7b2','#59a14f','#edc949',
+                           '#af7aa1','#ff9da7','#9c755f','#bab0ab','#86bcb6'];
+function nodeColor(n){
+  if (n.type === 'paper'){
+    if (n.seed) return C_SEED;
+    if (n.community != null) return COMMUNITY_PALETTE[n.community % COMMUNITY_PALETTE.length];
+    return C_PAPER;
+  }
+  const c = catOf(n);
+  if (c === 'method')  return C_METHOD;
+  if (c === 'dataset') return C_DATASET;
+  return C_CONCEPT;
+}
+function nodeTip(n){
+  const kind = n.type === 'paper' ? (n.seed ? 'seed paper' : 'paper') : catOf(n);
+  let tip = `${escapeHtml(n.name)}<br><i>${kind}</i> &middot; deg ${n.deg}`;
+  if (n.type === 'paper' && n.community != null) tip += ` &middot; community ${n.community}`;
+  if (n.is_god_node) tip += ' &middot; <b>god-node</b>';
+  if (n.is_bridge)   tip += ' &middot; <b>bridge</b>';
+  return tip;
+}
+function nodeRadius(n){
+  const base = Math.sqrt(Math.max(n.deg, 1)) * 1.7;
+  return n.seed ? base * 1.8 + 3 : base;
+}
+function shouldLabel(n){
+  if (n.type === 'concept') return n.deg >= CONCEPT_LABEL_THRESHOLD;
+  return n.seed;
+}
+function nodeGeometry(n, r){
+  if (n.type === 'paper')      return new THREE.SphereGeometry(r, 14, 12);
+  const c = catOf(n);
+  if (c === 'method')          return new THREE.ConeGeometry(r * 1.15, r * 2.2, 16);
+  if (c === 'dataset')         return new THREE.BoxGeometry(r * 1.6, r * 1.6, r * 1.6);
+  return new THREE.OctahedronGeometry(r * 1.25);
+}
+
+let labelsOn = true;
+function makeNodeObject(n){
+  const group = new THREE.Group();
+  const r = nodeRadius(n);
+  const geom = nodeGeometry(n, r);
+  const mat = new THREE.MeshLambertMaterial({ color: nodeColor(n), transparent: true, opacity: 0.92 });
+  const mesh = new THREE.Mesh(geom, mat);
+  group.add(mesh);
+  // god-node / bridge markers (Build B chunk 3): a gold wireframe halo for the
+  // top-centrality god-nodes; a white halo for community-bridge papers.
+  if (n.is_god_node || n.is_bridge){
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(r * 1.6, 12, 10),
+      new THREE.MeshBasicMaterial({ color: n.is_god_node ? '#ffd700' : '#ffffff',
+                                    wireframe: true, transparent: true, opacity: 0.35 }));
+    group.add(halo);
+  }
+  if (labelsOn && shouldLabel(n) && isVisible(n)){
+    const t = new SpriteText(n.name);
+    t.color = (n.type === 'concept') ? '#ffe6c2' : '#fff2b0';
+    t.fontFace = 'system-ui, sans-serif';
+    t.textHeight = (n.type === 'concept') ? 7 : 6;
+    t.fontWeight = (n.type === 'concept') ? '600' : '500';
+    t.backgroundColor = 'rgba(8,12,22,0.55)';
+    t.padding = 1.5;
+    t.position.y = r + 7;
+    group.add(t);
+  }
+  return group;
+}
+
+// initial camera frame (reused by the "reset camera" button).
+const INIT_CAM = { x: 260, y: 140, z: 920 };
+const INIT_TGT = { x: 0, y: 0, z: PAPER_Z + (CONCEPT_Z - PAPER_Z) / 2 };
+
+const elem = document.getElementById('graph');
+const Graph = ForceGraph3D()(elem)
+  .backgroundColor('#0b0f1a')
+  .graphData(GRAPH)
+  .nodeId('id')
+  .nodeLabel(nodeTip)
+  .nodeThreeObjectExtend(false)
+  .nodeThreeObject(makeNodeObject)
+  .linkColor(l => l.type==='citation' ? L_CITATION : l.type==='concept' ? L_CONCEPT : L_STRUT)
+  .linkLabel(linkTip)
+  .linkWidth(l => l.type==='strut' ? 0.4 : (l.is_bridge ? 1.6 : 0.8))
+  .linkOpacity(1)
+  .nodeVisibility(isVisible)
+  .linkVisibility(linkVisible)
+  .linkDirectionalParticles(0)
+  .onNodeClick(openNodeDrawer)
+  .onLinkClick(openEdgeDrawer)
+  .onNodeRightClick(openPaperDoc)
+  .warmupTicks(60)
+  .cooldownTicks(220);
+
+// right-click a paper node -> open its PDF (or notes md). node.pdf / node.md are
+// booleans; the gated source route serves the bytes only to the local session.
+function openPaperDoc(node){
+  if (!node || node.type !== 'paper') return;
+  let url = null;
+  if (node.pdf)      url = WORK_BASE + '/' + encodeURIComponent(node.id) + '/pdf';
+  else if (node.md)  url = WORK_BASE + '/' + encodeURIComponent(node.id) + '/markdown';
+  if (url){ window.open(url, '_blank'); }
+  else { toast('No PDF or markdown on disk for "' + (node.name || node.id) + '"'); }
+}
+
+let _toastT = null;
+function toast(msg){
+  let el = document.getElementById('toast');
+  if (!el){ el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
+  el.textContent = msg; el.style.opacity = '1';
+  clearTimeout(_toastT);
+  _toastT = setTimeout(() => { el.style.opacity = '0'; }, 2800);
+}
+
+function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// edge tooltip: type + strength; a build-flagged community bridge says so
+// explicitly ("flagged" = stamped by annotate_citation_communities at build,
+// as opposed to a bridge re-derived at query time).
+function linkTip(l){
+  let tip = `<i>${escapeHtml(l.edge_type || l.type)}</i>`;
+  if (l.is_bridge) tip += ' &middot; <b>bridge (flagged)</b>';
+  if (l.confidence != null) tip += ` &middot; confidence ${escapeHtml(l.confidence)}`;
+  if (l.shared_count != null) tip += ` &middot; shared ${escapeHtml(l.shared_count)} paper(s)`;
+  return tip;
+}
+
+// ===== provenance drawer =====================================================
+const drawerEl = document.getElementById('drawer');
+const drawerTitle = document.getElementById('drawer-title');
+const drawerBody = document.getElementById('drawer-body');
+document.getElementById('drawer-close').addEventListener('click', () => { drawerEl.style.display = 'none'; });
+
+function showDrawer(title){ drawerTitle.textContent = title; drawerEl.style.display = 'flex'; drawerBody.innerHTML = '<div class="dim">loading&hellip;</div>'; }
+
+function accessBadge(ac){
+  if (!ac) return '';
+  const priv = ac !== 'open_access';
+  return `<span class="badge ${priv ? 'priv' : 'ok'}">${escapeHtml(ac)}</span>`;
+}
+function spanHtml(sp){
+  let html = `<div class="dspan">&ldquo;${escapeHtml(sp.exact_quote)}&rdquo;`;
+  const loc = [];
+  if (sp.heading_path) loc.push(escapeHtml(sp.heading_path));
+  if (sp.page_start != null){
+    let pg = 'p.' + sp.page_start;
+    if (sp.page_end != null && sp.page_end !== sp.page_start) pg += '&ndash;' + sp.page_end;
+    loc.push(pg);
+  }
+  if (loc.length) html += `<div class="dloc">${loc.join(' &middot; ')}</div>`;
+  return html + `</div>`;
+}
+function claimHtml(cl, runs){
+  let html = `<div class="dclaim"><div class="dct">${escapeHtml(cl.claim_text || cl.claim_id)} <span class="badge ok">${escapeHtml(cl.claim_type || 'claim')}</span></div>`;
+  (cl.spans || []).forEach(sp => { html += spanHtml(sp); });
+  const rm = runs && cl.extraction_run_id ? runs[cl.extraction_run_id] : null;
+  if (rm){
+    const bits = [rm.model_name, rm.provider, rm.access_mode].filter(Boolean).map(escapeHtml);
+    if (bits.length) html += `<div class="drun">${bits.join(' &middot; ')}</div>`;
+  }
+  return html + `</div>`;
+}
+
+async function openNodeDrawer(node){
+  if (!node) return;
+  showDrawer(node.type === 'paper' ? 'Paper' : 'Concept');
+  try {
+    const r = await fetch(RUN_BASE + '/nodes/' + encodeURIComponent(node.id) + '/provenance');
+    if (!r.ok){ drawerBody.innerHTML = `<div class="dim">no provenance (${r.status})</div>`; return; }
+    const data = await r.json();
+    if (data.node_type === 'Concept') renderConceptDrawer(data);
+    else renderWorkDrawer(data);
+  } catch (e) { drawerBody.innerHTML = '<div class="dim">failed to load provenance</div>'; }
+}
+
+async function openEdgeDrawer(link){
+  if (!link) return;
+  const s = endpointNode(link.source), t = endpointNode(link.target);
+  const sid = s ? s.id : link.source, tid = t ? t.id : link.target;
+  showDrawer('Edge');
+  try {
+    let u = RUN_BASE + '/edges/provenance?source=' + encodeURIComponent(sid) + '&target=' + encodeURIComponent(tid);
+    if (link.edge_type) u += '&edge_type=' + encodeURIComponent(link.edge_type);
+    const r = await fetch(u);
+    if (!r.ok){ drawerBody.innerHTML = `<div class="dim">no edge provenance (${r.status})</div>`; return; }
+    const data = await r.json();
+    if (data.evidence_mode === 'structural')   renderConceptConceptDrawer(data);
+    else if (data.evidence_mode === 'spans')   renderStrutDrawer(data);
+    else                                       renderCitationDrawer(data);
+  } catch (e) { drawerBody.innerHTML = '<div class="dim">failed to load edge provenance</div>'; }
+}
+
+function renderConceptDrawer(data){
+  const c = data.concept || {};
+  let html = `<div class="dh">${escapeHtml(c.canonical_label || c.normalized_label || c.concept_id)}</div>`;
+  html += `<div class="dmeta">${escapeHtml(c.concept_type || 'concept')}`;
+  if (c.epistemic_type) html += ` &middot; ${escapeHtml(c.epistemic_type)}`;
+  html += ` ${accessBadge(c.access_class)}</div>`;
+  if (c.definition) html += `<div class="ddef">${escapeHtml(c.definition)}</div>`;
+  const aliases = data.aliases || [];
+  if (aliases.length){
+    html += `<div class="dsec">aliases</div><div class="dchips">` +
+      aliases.map(a => `<span class="chip">${escapeHtml(a.alias_label)}</span>`).join('') + `</div>`;
+  }
+  const works = data.works || [];
+  html += `<div class="dsec">evidence &middot; ${works.length} paper(s)</div>`;
+  if (!works.length) html += `<div class="dim">no claim / span evidence</div>`;
+  works.forEach(w => {
+    html += `<div class="dwork"><div class="dwt">${escapeHtml(w.title || w.work_id)}${w.year ? (' (' + escapeHtml(w.year) + ')') : ''}</div>`;
+    (w.claims || []).forEach(cl => { html += claimHtml(cl, data.extraction_runs); });
+    html += `</div>`;
+  });
+  drawerBody.innerHTML = html;
+}
+
+function renderWorkDrawer(data){
+  const w = data.work || {}, d = data.document || {};
+  let html = `<div class="dh">${escapeHtml(w.title || w.work_id)}${w.year ? (' (' + escapeHtml(w.year) + ')') : ''}</div>`;
+  html += `<div class="dmeta">`;
+  if (w.is_seed) html += `<span class="badge seed">seed</span> `;
+  if (w.inclusion_status) html += escapeHtml(w.inclusion_status);
+  html += ` ${accessBadge(d.access_class)}</div>`;
+  const ids = w.identifiers || {};
+  const idRows = Object.keys(ids).filter(k => ids[k])
+    .map(k => `<div class="didrow"><span class="dk">${escapeHtml(k)}</span> ${escapeHtml(ids[k])}</div>`).join('');
+  if (idRows) html += `<div class="dsec">identifiers</div>${idRows}`;
+  html += `<div class="dsec">source</div><div class="dbtns">`;
+  if (d.has_pdf)      html += `<button class="dbtn" data-open="pdf">open PDF</button>`;
+  if (d.has_markdown) html += `<button class="dbtn" data-open="markdown">open markdown</button>`;
+  if (!d.has_pdf && !d.has_markdown) html += `<span class="dim">no source on disk</span>`;
+  html += `</div>`;
+  drawerBody.innerHTML = html;
+  drawerBody.querySelectorAll('.dbtn[data-open]').forEach(b => {
+    b.addEventListener('click', () => {
+      window.open(WORK_BASE + '/' + encodeURIComponent(w.work_id) + '/' + b.dataset.open, '_blank');
+    });
+  });
+}
+
+function renderStrutDrawer(data){
+  let html = `<div class="dh">paper &harr; concept</div>`;
+  html += `<div class="dmeta">${escapeHtml(data.work_id)} &middot; ${escapeHtml(data.concept_id)} <span class="badge ok">span evidence</span></div>`;
+  const claims = data.claims || [];
+  html += `<div class="dsec">${claims.length} claim(s)</div>`;
+  if (!claims.length) html += `<div class="dim">no claim / span evidence</div>`;
+  claims.forEach(cl => { html += claimHtml(cl, null); });
+  drawerBody.innerHTML = html;
+}
+
+function renderConceptConceptDrawer(data){
+  const shared = data.shared_works || [];
+  let html = `<div class="dh">concept &harr; concept</div>`;
+  html += `<div class="banner"><b>Structural co-occurrence only.</b> These concepts share ${shared.length} paper(s). Concept&ndash;concept edges carry no span-level evidence (no <code>edge_spans</code> producer).</div>`;
+  html += `<div class="dsec">shared papers</div>`;
+  if (!shared.length) html += `<div class="dim">none</div>`;
+  shared.forEach(w => {
+    html += `<div class="dwork"><div class="dwt">${escapeHtml(w.title || w.work_id)}${w.year ? (' (' + escapeHtml(w.year) + ')') : ''}</div></div>`;
+  });
+  drawerBody.innerHTML = html;
+}
+
+function renderCitationDrawer(data){
+  let html = `<div class="dh">citation</div>`;
+  html += `<div class="dmeta">${escapeHtml(data.source)} &rarr; ${escapeHtml(data.target)} <span class="badge ok">citation</span></div>`;
+  if (data.provenance) html += `<div class="dsec">provenance</div><div class="ddef">${escapeHtml(data.provenance)}</div>`;
+  if (data.confidence != null) html += `<div class="dmeta">confidence ${escapeHtml(data.confidence)}</div>`;
+  drawerBody.innerHTML = html;
+}
+
+// ===== Z-LOCK the two planes =====
+GRAPH.nodes.forEach(n => { n.fz = (n.type === 'paper') ? PAPER_Z : CONCEPT_Z; });
+
+let inPlaneDist  = 30;
+let collideScale = 1.0;
+const STRUT_DIST = 120;
+
+Graph.d3Force('link')
+  .strength(l => l.type === 'strut' ? 0.03 : (l.k || 0.1))
+  .distance(l => l.type === 'strut' ? STRUT_DIST : inPlaneDist);
+Graph.d3Force('charge').strength(-120);
+
+const D3F = (typeof d3 !== 'undefined' && d3 && d3.forceCollide) ? d3 : null;
+function applyCollide(){
+  if (!D3F || collideScale <= 0){
+    Graph.d3Force('collide', null);
+  } else {
+    Graph.d3Force('collide',
+      D3F.forceCollide().radius(n => nodeRadius(n) * collideScale + 4).strength(0.9));
+  }
+}
+applyCollide();
+
+setTimeout(() => {
+  try {
+    const ns = GRAPH.nodes;
+    const span = sel => { const v = ns.map(sel); return Math.round(Math.max(...v) - Math.min(...v)); };
+    console.log('[seedgraph-3d] d3 global:', typeof d3, '| forceCollide present:', !!D3F);
+    console.log('[seedgraph-3d] settled x-span:', span(n => n.x), ' y-span:', span(n => n.y));
+  } catch (e) { console.error('[seedgraph-3d] diag failed', e); }
+}, 6000);
+
+Graph.cameraPosition(INIT_CAM, INIT_TGT, 0);
+
+const rowOn = {};
+const groupOn = { concept:true, method:true, dataset:true };
+let degMin = 0;
+GRAPH.nodes.forEach(n => { if (n.type === 'concept') rowOn[n.id] = true; });
+
+// a node "has evidence" when it is backed by provenance: a concept with >=1
+// paper/claim/span, or a paper with a source document (pdf/markdown) on disk.
+function hasEvidence(n){
+  if (n.type === 'concept'){
+    const p = n.prov || {};
+    return (p.papers || 0) > 0 || (p.claims || 0) > 0 || (p.spans || 0) > 0;
+  }
+  return !!(n.pdf || n.md);
+}
+
+function isVisible(n){
+  if (n.deg < degMin) return false;
+  if (evidenceOnly && !hasEvidence(n)) return false;
+  if (searchTerm && !String(n.name).toLowerCase().includes(searchTerm)) return false;
+  if (n.type === 'concept') return !!rowOn[n.id] && !!groupOn[catOf(n)];
+  return true;
+}
+
+function endpointNode(ep){
+  if (ep && typeof ep === 'object') return ep;
+  return nodeById[ep];
+}
+const nodeById = {};
+GRAPH.nodes.forEach(n => { nodeById[n.id] = n; });
+
+const papersByConcept = {};
+GRAPH.links.forEach(l => {
+  if (l.type !== 'strut') return;
+  const a = endpointNode(l.source), b = endpointNode(l.target);
+  if (!a || !b) return;
+  const concept = a.type === 'concept' ? a : (b.type === 'concept' ? b : null);
+  const paper   = a.type === 'paper'   ? a : (b.type === 'paper'   ? b : null);
+  if (!concept || !paper) return;
+  (papersByConcept[concept.id] = papersByConcept[concept.id] || []).push(paper);
+});
+Object.values(papersByConcept).forEach(arr => arr.sort((x, y) =>
+  (y.seed?1:0) - (x.seed?1:0) ||
+  ((y.pdf||y.md)?1:0) - ((x.pdf||x.md)?1:0) ||
+  String(x.name).localeCompare(String(y.name))
+));
+
+function linkVisible(l){
+  let on;
+  if (l.type === 'citation')      on = document.getElementById('t-citation').checked;
+  else if (l.type === 'concept')  on = document.getElementById('t-concept').checked;
+  else                            on = document.getElementById('t-strut').checked;
+  if (!on) return false;
+  const s = endpointNode(l.source), t = endpointNode(l.target);
+  if (!s || !t) return false;
+  return isVisible(s) && isVisible(t);
+}
+
+function refresh(){
+  Graph.nodeVisibility(isVisible).linkVisibility(linkVisible).nodeThreeObject(makeNodeObject);
+}
+
+const CAT_ORDER = ['concept', 'method', 'dataset'];
+const CAT_GLYPH = { concept:'◆', method:'▲', dataset:'■' };
+const CAT_COLOR = { concept:C_CONCEPT, method:C_METHOD, dataset:C_DATASET };
+const CAT_NAME  = { concept:'concept', method:'method', dataset:'dataset' };
+
+(function buildPane(){
+  const list = document.getElementById('pane-list');
+  const byCat = {};
+  GRAPH.nodes.forEach(n => {
+    if (n.type !== 'concept') return;
+    const c = catOf(n);
+    (byCat[c] = byCat[c] || []).push(n);
+  });
+  CAT_ORDER.forEach(cat => {
+    const items = (byCat[cat] || []).slice().sort((a,b) => b.deg - a.deg);
+    if (!items.length) return;
+
+    const grp = document.createElement('div');
+    grp.className = 'grp';
+
+    const head = document.createElement('div');
+    head.className = 'grp-head';
+    const gcaret = document.createElement('span');
+    gcaret.className = 'caret'; gcaret.textContent = '▸';
+    const gcb = document.createElement('input');
+    gcb.type = 'checkbox'; gcb.checked = true;
+    const glyph = document.createElement('span');
+    glyph.className = 'glyph'; glyph.style.color = CAT_COLOR[cat];
+    glyph.textContent = CAT_GLYPH[cat];
+    const gname = document.createElement('span');
+    gname.style.color = CAT_COLOR[cat]; gname.style.cursor = 'pointer';
+    gname.textContent = CAT_NAME[cat];
+    const gcnt = document.createElement('span');
+    gcnt.className = 'cnt'; gcnt.textContent = '(' + items.length + ')';
+    head.append(gcaret, gcb, glyph, gname, gcnt);
+    grp.appendChild(head);
+
+    const rows = document.createElement('div');
+    rows.className = 'grp-rows';
+    rows.style.display = 'none';
+    function toggleGroup(){
+      const show = rows.style.display === 'none';
+      rows.style.display = show ? 'block' : 'none';
+      gcaret.classList.toggle('open', show);
+    }
+    gcaret.addEventListener('click', toggleGroup);
+    gname.addEventListener('click', toggleGroup);
+    const rowChecks = [];
+
+    items.forEach(n => {
+      const papers = papersByConcept[n.id] || [];
+      const row = document.createElement('div');
+      row.className = 'crow';
+      row.title = n.name + ' · deg ' + n.deg + ' · ' + papers.length + ' paper(s)';
+
+      const caret = document.createElement('span');
+      caret.className = 'caret' + (papers.length ? '' : ' spacer');
+      caret.textContent = '▸';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = true;
+      cb.addEventListener('change', () => { rowOn[n.id] = cb.checked; refresh(); });
+      rowChecks.push(cb);
+      const dot = document.createElement('span');
+      dot.className = 'dot'; dot.style.background = CAT_COLOR[cat];
+      const nm = document.createElement('span');
+      nm.className = 'nm'; nm.textContent = n.name;
+      const dg = document.createElement('span');
+      dg.className = 'dg'; dg.textContent = '· ' + papers.length + 'p';
+      row.append(caret, cb, dot, nm, dg);
+      rows.appendChild(row);
+
+      // click the name -> open the concept's provenance drawer (in addition to
+      // expanding its paper list via the caret).
+      nm.addEventListener('click', () => openNodeDrawer(n));
+
+      let prows = null, open = false;
+      function toggle(){
+        if (!papers.length) return;
+        open = !open;
+        caret.classList.toggle('open', open);
+        if (open && !prows){
+          prows = document.createElement('div');
+          prows.className = 'paper-rows';
+          papers.forEach(p => {
+            const hasDoc = !!(p.pdf || p.md);
+            const pr = document.createElement('div');
+            pr.className = 'prow' + (hasDoc ? '' : ' nodoc');
+            pr.title = p.name + (hasDoc ? ' — open PDF' : ' — no PDF/markdown on disk');
+            const ico = document.createElement('span');
+            ico.className = 'pico'; ico.textContent = hasDoc ? '\u{1F4C4}' : '—';
+            const pnm = document.createElement('span');
+            pnm.className = 'pnm'; pnm.textContent = p.name + (p.seed ? '  ★' : '');
+            pr.append(ico, pnm);
+            pr.addEventListener('click', () => openPaperDoc(p));
+            prows.appendChild(pr);
+          });
+          row.after(prows);
+        }
+        if (prows) prows.style.display = open ? 'block' : 'none';
+      }
+      caret.addEventListener('click', toggle);
+    });
+
+    gcb.addEventListener('change', () => {
+      groupOn[cat] = gcb.checked;
+      rowChecks.forEach((cb, i) => { cb.checked = gcb.checked; rowOn[items[i].id] = gcb.checked; });
+      refresh();
+    });
+
+    grp.appendChild(rows);
+    list.appendChild(grp);
+  });
+})();
+
+(function(){
+  const pane = document.getElementById('pane');
+  const btn = document.getElementById('pane-collapse');
+  btn.addEventListener('click', () => {
+    const collapsed = pane.classList.toggle('collapsed');
+    btn.innerHTML = collapsed ? '▼' : '▲';
+    btn.title = (collapsed ? 'expand' : 'collapse') + ' the filter pane';
+  });
+})();
+
+const degNum = document.getElementById('deg-num');
+const degRange = document.getElementById('deg-range');
+const degVal = document.getElementById('deg-val');
+const MAX_DEG = GRAPH.nodes.reduce((m,n) => Math.max(m, n.deg), 0);
+degRange.max = MAX_DEG; degNum.max = MAX_DEG;
+function setDeg(v){
+  v = Math.max(0, Math.min(MAX_DEG, Math.round(Number(v) || 0)));
+  degMin = v;
+  degNum.value = v; degRange.value = v; degVal.textContent = v;
+  refresh();
+}
+degNum.addEventListener('input', () => setDeg(degNum.value));
+degRange.addEventListener('input', () => setDeg(degRange.value));
+
+const sRep = document.getElementById('s-repulsion');
+const repVal = document.getElementById('rep-val');
+sRep.addEventListener('input', () => {
+  const v = Number(sRep.value);
+  repVal.textContent = v;
+  Graph.d3Force('charge').strength(-v);
+  Graph.d3ReheatSimulation();
+});
+
+const sLen = document.getElementById('s-linklen');
+const lenVal = document.getElementById('len-val');
+sLen.addEventListener('input', () => {
+  inPlaneDist = Number(sLen.value);
+  lenVal.textContent = inPlaneDist;
+  Graph.d3Force('link').distance(l => l.type === 'strut' ? STRUT_DIST : inPlaneDist);
+  Graph.d3ReheatSimulation();
+});
+
+const sCol = document.getElementById('s-collide');
+const colVal = document.getElementById('col-val');
+sCol.addEventListener('input', () => {
+  collideScale = Number(sCol.value);
+  colVal.textContent = collideScale.toFixed(2).replace(/0$/, '');
+  applyCollide();
+  Graph.d3ReheatSimulation();
+});
+
+['t-citation','t-concept','t-strut'].forEach(id => {
+  document.getElementById(id).addEventListener('change', refresh);
+});
+document.getElementById('t-labels').addEventListener('change', e => {
+  labelsOn = e.target.checked;
+  refresh();
+});
+
+// search: narrow node visibility by name substring (purely a visibility filter,
+// so the layout never collapses — hidden nodes keep their simulated positions).
+document.getElementById('search').addEventListener('input', e => {
+  searchTerm = e.target.value.trim().toLowerCase();
+  refresh();
+});
+// only-nodes-with-evidence: hide nodes lacking claim/span (concept) or source (paper).
+document.getElementById('t-evidence').addEventListener('change', e => {
+  evidenceOnly = e.target.checked;
+  refresh();
+});
+// reset camera: stop any auto-rotate and fly back to the default framing.
+document.getElementById('btn-reset').addEventListener('click', () => {
+  rotating = false;
+  const rc = document.getElementById('t-rotate'); if (rc) rc.checked = false;
+  Graph.cameraPosition(INIT_CAM, INIT_TGT, 600);
+});
+
+let rotating = false, angle = 0;
+const ORBIT_R = 980, CENTER_Z = PAPER_Z + (CONCEPT_Z-PAPER_Z)/2;
+document.getElementById('t-rotate').addEventListener('change', e => { rotating = e.target.checked; });
+(function tick(){
+  if (rotating){
+    angle += 0.0016;
+    Graph.cameraPosition({
+      x: ORBIT_R * Math.sin(angle),
+      y: 150,
+      z: CENTER_Z + ORBIT_R * Math.cos(angle)
+    }, { x:0, y:0, z: CENTER_Z }, 0);
+  }
+  requestAnimationFrame(tick);
+})();
+
+window.addEventListener('resize', () => {
+  Graph.width(window.innerWidth).height(window.innerHeight);
+});
+Graph.width(window.innerWidth).height(window.innerHeight);
+})();
+</script>
+</body>
+</html>

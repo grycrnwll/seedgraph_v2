@@ -1,0 +1,52 @@
+{
+  "answer_category": "unresolved",
+  "answer_id": "ans_00000000000000000000000000000000",
+  "answer_text": "",
+  "citations": [
+    {
+      "assertion_status": null,
+      "epistemic_type": "deterministic",
+      "quote": null,
+      "section": null,
+      "span_ids": [],
+      "title": "Paper A: Difference-in-Differences",
+      "work_id": "work_a",
+      "year": 2020
+    },
+    {
+      "assertion_status": null,
+      "epistemic_type": "deterministic",
+      "quote": null,
+      "section": null,
+      "span_ids": [],
+      "title": "Paper B: Linear IV",
+      "work_id": "work_b",
+      "year": 2020
+    }
+  ],
+  "cited_span_ids": [],
+  "cited_work_ids": [
+    "work_a",
+    "work_b"
+  ],
+  "insufficient_evidence": false,
+  "llm_provenance": null,
+  "mode": "retrieval_only",
+  "query_type": "citation_search",
+  "question": "Which works are cited by Paper A?",
+  "recommendations": [
+    {
+      "action_hint": "upload the PDF to extract evidence and cite this work",
+      "reason": "connected to a retrieved work via the project citation graph; no extracted full text",
+      "status": "metadata_only",
+      "title": "Paper C: Foundational (metadata only)",
+      "work_id": "work_c",
+      "year": 2020
+    }
+  ],
+  "retrieved_item_ids": [
+    "work_a",
+    "work_b"
+  ],
+  "warnings": []
+}

@@ -1,0 +1,27 @@
+{
+  "answer_category": "unresolved",
+  "answer_id": "ans_00000000000000000000000000000000",
+  "answer_text": "",
+  "citations": [],
+  "cited_span_ids": [],
+  "cited_work_ids": [],
+  "insufficient_evidence": true,
+  "llm_provenance": null,
+  "mode": "project_only",
+  "query_type": "concept_explanation",
+  "question": "What is the capital of France?",
+  "recommendations": [
+    {
+      "action_hint": "upload the PDF to extract evidence and cite this work",
+      "reason": "present in the corpus as metadata-only (no extracted full text)",
+      "status": "metadata_only",
+      "title": "Paper C: Foundational (metadata only)",
+      "work_id": "work_c",
+      "year": 2020
+    }
+  ],
+  "retrieved_item_ids": [],
+  "warnings": [
+    "empty_corpus"
+  ]
+}

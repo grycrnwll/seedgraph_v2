@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Trace · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Answer trace · {{ slug }}</h1>
+<nav class="subnav">
+  <a href="{{ back_url }}">← Back</a>
+  <a href="/ui/projects/{{ slug }}">Dashboard</a>
+</nav>
+
+<section class="card">
+  <p class="empty">No trace is available for answer <code>{{ answer_id }}</code>.</p>
+  <p class="note">Answers asked before answer-tracing was enabled have an envelope but
+  no trace artifact, and traces are never backfilled. Ask the question again to generate
+  a fresh trace.</p>
+</section>
+{% endblock %}

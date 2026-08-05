@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seedgraph"
+version = "0.1.0"
+description = "Seedgraph v2 — local-first citation/knowledge graph substrate (Phase 0 foundation)"
+requires-python = ">=3.11"
+dependencies = [
+    "typer",
+    # click>=8.2 changed flag handling and breaks Typer's option construction
+    # ("Secondary flag is not valid for non-boolean flag") — pin until Typer's
+    # pinned click range is known-good against 8.2+. Without this a fresh install
+    # resolves click 8.2+ and `seedgraph` / `doctor` crash at CLI build time.
+    "click>=8.1,<8.2",
+    "fastapi",
+    "pydantic>=2",
+    "pyyaml",
+    "sqlmodel",
+    # phase_5b: the provider chain's one genuine runtime network dep (settled per
+    # the plan). Lazy-imported inside provider/fetch method bodies so the package
+    # still imports without a live network; promoted from [dev] to a runtime dep
+    # because the network phase needs it at runtime.
+    "httpx",
+    # phase_2: the citation-graph view + node-link export runtime dep (settled per
+    # the plan §5/§6). Lazy-imported inside graph/* function bodies so the package
+    # still imports without it; the offline edge projector itself needs no network.
+    "networkx",
+    # Track 2 (local web UI): the `seedgraph serve` FastAPI app renders Jinja2
+    # templates (the Jinja2Templates env is built at app construction in web/ui.py)
+    # and is run under uvicorn (lazy-imported only inside the `serve` CLI command).
+    # Both are runtime deps so the app imports and the suite can construct it offline.
+    "jinja2",
+    "uvicorn",
+    # FastAPI/Starlette form parsing: every mutating UI POST (ask, inclusion edits,
+    # plan launch, lenses, settings) goes through `await request.form()`, which
+    # raises at runtime without this. Required, not optional.
+    "python-multipart",
+    # ADR-0001: the OS-native secret store (Windows Credential Manager / macOS
+    # Keychain / SecretService) behind `key_source: auto|system_keyring`. Required,
+    # not an extra — it is the designated primary secret backend; lazy-imported in
+    # llm/secrets.py so import time stays offline, and a missing OS backend
+    # (headless CI) degrades to the env-var fallback, never an install-state branch.
+    "keyring",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",
+]
+# Heavy / optionally-GPU PDF->markdown converter. Tests use FakeMarkerBackend and
+# never require this; install with `pip install -e .[marker]` to run the opt-in
+# `-m marker` smoke test against the real LocalMarkerBackend.
+marker = [
+    "marker-pdf",
+]
+# Opt-in browser-driver for the `-m browser` Playwright smoke tests (Track 2/3,
+# deselected by default). Dev-only; not installed/run as part of the offline suite.
+# Install with `pip install -e .[browser]` then `playwright install` to run them.
+browser = [
+    "playwright",
+]
+# MCP server surface (`seedgraph mcp serve`). Base `mcp` SDK only — NOT `mcp[cli]`,
+# whose CLI extra pulls typer/click and would fight the `click>=8.1,<8.2` pin above.
+# Lazy-imported inside `seedgraph/mcp/*` and behind the `mcp serve` command body so
+# the base package still imports offline/keyless without the SDK. Floor pinned to the
+# version whose FastMCP + in-memory-transport surface chunk 0 verified against.
+mcp = [
+    "mcp>=1.28.1",
+]
+
+[project.scripts]
+seedgraph = "seedgraph.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+seedgraph = [
+    "llm_capabilities.yaml",
+    "agent_setup/*.md",
+    "db/schema/cache/*.sql",
+    "db/schema/project/*.sql",
+    # Track 2 web UI assets shipped inside the wheel (recursive: templates + the
+    # static css/js/vendor tree).
+    "web/templates/**/*",
+    "web/static/**/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The opt-in real-Marker smoke test is marked `marker` and deselected by default;
+# it also self-skips on ImportError. Run it explicitly with `pytest -m marker`
+# after `pip install -e .[marker]`.
+addopts = "-m 'not marker and not network and not llm_network and not browser and not corpus and not mcp_client'"
+markers = [
+    "marker: opt-in slow test that requires the real marker-pdf extra (deselected by default)",
+    "network: opt-in real-network smoke test (phase_5b; deselected by default). Run with `pytest -m network`.",
+    "llm_network: opt-in real-LLM smoke test (Track 1: live Ollama/Anthropic; deselected by default). Run with `pytest -m llm_network`.",
+    "browser: opt-in Playwright browser test (Track 2/3; deselected by default). Run with `pytest -m browser`.",
+    "corpus: opt-in real-corpus bibliography-overlap regression gate (Build F chunk 4; v1 criterion 11; deselected by default — the machine-local paper_library never leaves the dev box, so it never runs in CI). Run with `pytest -m corpus`.",
+    "mcp_client: opt-in real-transport MCP smoke — SPAWNS `python -m seedgraph mcp serve` as a subprocess and speaks stdio JSON-RPC to it (MCP plan 01 risk 6: Windows CRLF/encoding on stdio pipes). Deselected by default because the suite's posture is offline/keyless/NO SUBPROCESS; every other MCP test uses the SDK in-memory transport. Run with `pytest -m mcp_client` (needs the `[mcp]` extra).",
+]

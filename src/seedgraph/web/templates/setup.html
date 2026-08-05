@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}First-run setup · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>First-run setup</h1>
+<p class="lede">Home: <code>{{ config.home }}</code> · log level <code>{{ config.log_level }}</code></p>
+
+<section class="card">
+  <h2>Configuration</h2>
+  <ul class="kv">
+    <li><span>Profiles</span><strong>{{ config.n_profiles }}</strong></li>
+    <li><span>Routes</span><strong>{{ config.n_routes }}</strong></li>
+    <li><span>Private full text may leave machine</span>
+        <strong>{{ config.external_llm_for_private_full_text }}</strong></li>
+    <li><span>Private fragments for answers may leave machine</span>
+        <strong>{{ config.external_llm_for_answer_generation }}</strong></li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Diagnostics {% if n_fail %}<span class="badge badge--fail">{{ n_fail }} failing</span>
+      {% else %}<span class="badge badge--ok">healthy</span>{% endif %}</h2>
+  <table class="table">
+    <thead><tr><th>check</th><th>result</th><th>detail</th></tr></thead>
+    <tbody>
+      {% for c in checks %}
+      <tr class="row--{{ 'pass' if c.ok else c.severity }}">
+        <td>{{ c.name }}</td>
+        <td>{{ 'PASS' if c.ok else (c.severity | upper) }}</td>
+        <td>{{ c.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Save setup</h2>
+  <form method="post" action="/ui/setup" class="stack-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label class="check">
+      <input type="checkbox" name="external_llm_for_private_full_text"
+             {{ 'checked' if config.external_llm_for_private_full_text else '' }}>
+      Allow private full text to leave the machine for an external LLM
+    </label>
+    <label class="check">
+      <input type="checkbox" name="external_llm_for_answer_generation"
+             {{ 'checked' if config.external_llm_for_answer_generation else '' }}>
+      Allow private fragments to leave the machine for answer generation
+    </label>
+    <label>Log level <input type="text" name="log_level" value="{{ config.log_level }}"></label>
+    <label>Monthly soft budget (USD) <input type="text" name="monthly_soft_limit_usd" placeholder="(optional)"></label>
+    <button type="submit">save &amp; re-run doctor</button>
+  </form>
+  <p class="note">Writes <code>config.yaml</code> via <code>write_global_config</code>
+  (env-var NAMES only — never a raw key) and re-runs diagnostics.</p>
+</section>
+<p><a href="/ui">&larr; back to projects</a></p>
+{% endblock %}

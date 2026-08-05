@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.claude/
+
+# local working notes — kept on disk, excluded from the public repo
+build_plans/
+archive/
+PROJECT_STATE.md
+CONTEXT.md
+TODO.md
+second_test_*
+docs/*
+!docs/QUICKSTART.md
+!docs/USER_HANDBOOK.md

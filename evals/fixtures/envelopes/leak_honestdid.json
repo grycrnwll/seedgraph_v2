@@ -1,0 +1,16 @@
+{
+  "answer_id": "ans_00000000000000000000000000000013",
+  "question": "What sensitivity bounds does the Rambachan and Roth honest approach propose?",
+  "query_type": "factual",
+  "answer_category": "outside_corpus",
+  "answer_text": "",
+  "citations": [],
+  "recommendations": [],
+  "cited_work_ids": [],
+  "cited_span_ids": [],
+  "insufficient_evidence": true,
+  "retrieved_item_ids": [],
+  "warnings": ["out-of-corpus probe: abstaining"],
+  "mode": "project_only",
+  "llm_provenance": null
+}

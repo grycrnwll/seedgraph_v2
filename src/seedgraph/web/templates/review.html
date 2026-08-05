@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Review · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Review queue · {{ slug }}</h1>
+<nav class="subnav"><a href="/ui/projects/{{ slug }}">Dashboard</a></nav>
+
+{% if items %}
+<table class="table">
+  <thead><tr><th>type</th><th>question</th><th>decision</th><th>resolve</th><th>item</th></tr></thead>
+  <tbody>
+    {% for it in items %}
+    <tr>
+      <td>{{ it.item_type }}</td>
+      {# The question this row is asking (per item_type, from review_action_menu) —
+         WHAT is being decided, not just an opaque pair. #}
+      <td><strong>{{ it.menu.question or "Resolve this item." }}</strong></td>
+      {# The human decision line (merge pair / citation fields); falls back to
+         target_id for item types without a dedicated rendering. #}
+      <td>{{ it.decision or '—' }}</td>
+      <td>
+        <form method="post"
+              action="/ui/projects/{{ slug }}/review/{{ it.item_id }}/resolve"
+              class="stack-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          {# Only the actions valid for this item_type (review_action_menu) —
+             not the full six-value ReviewAction surface on every row. #}
+          {% for a in it.menu.actions %}
+          <label class="check">
+            <input type="radio" name="action" value="{{ a.value }}"{% if loop.first %} checked{% endif %}>
+            {{ a.label }}{% if a.effect %} <span class="note">({{ a.effect }})</span>{% endif %}
+          </label>
+          {% endfor %}
+          {# Optional applier knobs (Build A ch7/8) — only the ones this
+             item_type's resolve() branch reads; blank keeps its default and
+             the handler strips empties to None. #}
+          {% for inp in it.menu.inputs %}
+          <input type="text" name="{{ inp.name }}" size="14" placeholder="{{ inp.placeholder }}">
+          {% endfor %}
+          <button type="submit">resolve</button>
+        </form>
+      </td>
+      {# item_id stays visible (dim, trailing) — resolve takes it. #}
+      <td><code>{{ it.item_id }}</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No open review items.</p>
+{% endif %}
+<p><a href="/ui/projects/{{ slug }}">&larr; dashboard</a></p>
+{% endblock %}

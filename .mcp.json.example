@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Project-scoped MCP registration for the seedgraph server. Copy to `.mcp.json`",
+    "at the root of the working directory you want the server available in, then",
+    "edit `command` and the `--root` value for your machine.",
+    "",
+    "PREREQUISITE: `pip install -e \".[mcp]\"` in the SAME interpreter named by",
+    "`command` below. Without the extra the command exits 1 with an install hint.",
+    "",
+    "`command` must be the interpreter that has the extra. Backslashes are doubled",
+    "because this is JSON. A venv python is the usual answer on Windows.",
+    "",
+    "`--root` pins the seedgraph projects home. Prefer this flag over a SEEDGRAPH_HOME",
+    "env var: MCP hosts pass a filtered environment to the child process, so an env",
+    "var may not survive; the flag always does. Omit it to use the default home.",
+    "",
+    "Add \"--redact-private\" to `args` to blank full-text-derived fields (span and",
+    "claim text, `ask` citation quotes) for non-shareable works. Best-effort valve,",
+    "not the load-bearing access gate. See docs/USER_HANDBOOK.md section 10.",
+    "",
+    "Remove this _comment key before use if your host is strict about unknown fields."
+  ],
+  "mcpServers": {
+    "seedgraph": {
+      "command": "D:\\documents\\research\\seedgraph_v2\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "seedgraph",
+        "mcp",
+        "serve",
+        "--root",
+        "C:\\Users\\<you>\\.seedgraph"
+      ]
+    }
+  }
+}

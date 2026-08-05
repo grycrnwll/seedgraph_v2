@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · graph (table) · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>{{ slug }} &mdash; graph (table view)</h1>
+<p class="sub">
+  Run <code>{{ run_id }}</code> &middot;
+  {{ counts.works }} work(s), {{ counts.concepts }} concept(s) &middot;
+  {{ counts.citation_links }} citation / {{ counts.concept_links }} concept /
+  {{ counts.strut_links }} strut edges.
+  <a href="/ui/projects/{{ slug }}/runs/{{ run_id }}/graph?view=3d">open 3D view &rarr;</a>
+</p>
+
+{% if warnings %}
+<ul class="warnings">
+  {% for w in warnings %}<li class="warn">{{ w }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<h2>Nodes <span class="muted">({{ nodes|length }})</span></h2>
+<table class="graph-table" id="nodes-table">
+  <thead>
+    <tr>
+      <th scope="col">id</th>
+      <th scope="col">name</th>
+      <th scope="col">type</th>
+      <th scope="col">deg</th>
+      <th scope="col">access</th>
+      <th scope="col">provenance</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for n in nodes %}
+    <tr>
+      <td><code>{{ n.id }}</code></td>
+      <td>{{ n.name }}</td>
+      <td>{{ n.type }}</td>
+      <td>{{ n.deg }}</td>
+      <td>{{ n.access_class or "" }}</td>
+      <td>
+        <a href="/api/projects/{{ slug }}/runs/{{ run_id }}/nodes/{{ n.id | urlencode }}/provenance">
+          provenance
+        </a>
+        {% if n.type == "paper" and n.pdf %}
+        &middot; <a href="/api/projects/{{ slug }}/works/{{ n.id | urlencode }}/pdf">pdf</a>
+        {% endif %}
+        {% if n.type == "paper" and n.md %}
+        &middot; <a href="/api/projects/{{ slug }}/works/{{ n.id | urlencode }}/markdown">md</a>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Edges <span class="muted">({{ links|length }})</span></h2>
+<table class="graph-table" id="edges-table">
+  <thead>
+    <tr>
+      <th scope="col">source</th>
+      <th scope="col">target</th>
+      <th scope="col">type</th>
+      <th scope="col">edge_type</th>
+      <th scope="col">confidence</th>
+      <th scope="col">provenance</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for l in links %}
+    <tr>
+      <td><code>{{ l.source }}</code></td>
+      <td><code>{{ l.target }}</code></td>
+      <td>{{ l.type }}</td>
+      <td>{{ l.edge_type or "" }}</td>
+      <td>{{ "%.3f"|format(l.confidence) if l.confidence is not none else "" }}</td>
+      <td>
+        <a href="/api/projects/{{ slug }}/runs/{{ run_id }}/edges/provenance?source={{ l.source | urlencode }}&amp;target={{ l.target | urlencode }}{% if l.edge_type %}&amp;edge_type={{ l.edge_type | urlencode }}{% endif %}">
+          provenance
+        </a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><a href="/ui">&larr; back to projects</a></p>
+{% endblock %}

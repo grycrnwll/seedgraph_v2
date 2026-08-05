@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+{% block title %}Settings{% if slug %} · {{ slug }}{% endif %} · {{ nav.brand }}{% endblock %}
+
+{% macro override_field(f, group) %}
+<div class="override-row">
+  <label class="check">
+    <input type="checkbox" name="override_{{ f.field }}" {{ 'checked' if f.overridden else '' }}>
+    override
+  </label>
+  {% if f.type == 'bool' %}
+  <input type="checkbox" name="{{ f.field }}" {{ 'checked' if f.effective else '' }}>
+  {% else %}
+  <input type="text" name="{{ f.field }}"
+         value="{{ f.effective if f.overridden else '' }}"
+         placeholder="{{ f['global'] if f['global'] is not none else '—' }}">
+  {% endif %}
+  <span class="field-name">{{ f.field }}{% if f.ceiling %} <small>(ceiling · may only tighten)</small>{% endif %}</span>
+  {% if f.overridden %}
+  <span class="overridden">overridden to {{ f.effective }}</span>
+  <button type="submit" name="revert" value="{{ group }}:{{ f.field }}" formnovalidate>revert to global</button>
+  {% else %}
+  <span class="inherit">inheriting {{ f['global'] if f['global'] is not none else '—' }}</span>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{% block content %}
+<h1>Settings{% if slug %} · {{ slug }}{% endif %}</h1>
+<p class="lede">Scope: <strong>{{ view.scope }}</strong></p>
+
+<section class="card">
+  <h2>Routes</h2>
+  <table class="table">
+    <thead><tr><th>task</th><th>preferred</th><th>fallback</th><th>kind</th><th>available</th></tr></thead>
+    <tbody>
+      {% for r in view.routes %}
+      <tr>
+        <td>{{ r.task }}</td>
+        <td>{{ r.preferred_profile }}</td>
+        <td>{{ r.fallback_profile or '—' }}</td>
+        <td>{{ 'local' if r.preferred_local else 'external' }}</td>
+        <td>{{ 'yes' if r.preferred_available else 'no' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Profiles &amp; keys</h2>
+  <table class="table">
+    <thead><tr><th>profile</th><th>provider</th><th>model</th><th>env var</th><th>key present</th><th>available</th></tr></thead>
+    <tbody>
+      {% for p in view.profiles %}
+      <tr>
+        <td>{{ p.profile_id }}</td>
+        <td>{{ p.provider }}</td>
+        <td>{{ p.model or '—' }}</td>
+        <td>{{ p.env_var or '—' }}</td>
+        <td>{{ 'yes' if p.key_present else ('n/a' if p.is_local else 'no') }}</td>
+        <td>{{ 'yes' if p.available else 'no' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">Key references are shown by env-var NAME only — secret values are never stored or shown{% if slug %}, and API keys are never editable per project{% endif %}.</p>
+</section>
+
+{% if not slug %}
+{# =========================== GLOBAL editors =========================== #}
+<section class="card">
+  <h2>Privacy &amp; budget</h2>
+  <ul class="kv">
+    {% for k, v in view.privacy.items() %}
+    <li><span>{{ k }}</span><strong>{{ v }}</strong></li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="/ui/settings" class="stack-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="_has_answer_policy" value="1">
+    <label class="check">
+      <input type="checkbox" name="external_llm_for_private_full_text"
+             {{ 'checked' if view.privacy.external_llm_for_private_full_text else '' }}>
+      Allow private full text to leave the machine for an external LLM
+    </label>
+    <label class="check">
+      <input type="checkbox" name="external_llm_for_answer_generation"
+             {{ 'checked' if view.privacy.external_llm_for_answer_generation else '' }}>
+      Allow private fragments to leave the machine for answer generation
+    </label>
+    <label>Monthly soft budget (USD)
+      <input type="text" name="monthly_soft_limit_usd"
+             value="{{ view.budget.monthly_soft_limit_usd or '' }}"></label>
+    <label>USD limit
+      <input type="text" name="usd_limit" value="{{ view.budget.usd_limit or '' }}"></label>
+    <label>Per-run soft limit (USD)
+      <input type="text" name="per_run_soft_limit_usd"
+             value="{{ view.budget.per_run_soft_limit_usd or '' }}"></label>
+
+    <h3>Routing (profile choice)</h3>
+    <p class="note">Choose among the machine-global profiles for each task. Endpoints
+      and API keys stay machine-global and are never edited here.</p>
+    {% for r in view.routes %}
+    <label>{{ r.task }} · preferred
+      <select name="route_{{ r.task }}_preferred">
+        {% for pid in view.profile_ids %}
+        <option value="{{ pid }}" {{ 'selected' if pid == r.preferred_profile else '' }}>{{ pid }}</option>
+        {% endfor %}
+      </select></label>
+    <label>{{ r.task }} · fallback
+      <select name="route_{{ r.task }}_fallback">
+        <option value="">— none —</option>
+        {% for pid in view.profile_ids %}
+        <option value="{{ pid }}" {{ 'selected' if pid == r.fallback_profile else '' }}>{{ pid }}</option>
+        {% endfor %}
+      </select></label>
+    {% endfor %}
+
+    <h3>Answer &amp; retrieval</h3>
+    {% for k, v in view.answer.items() %}
+    <label>{{ k }}
+      <input type="text" name="{{ k }}" value="{{ v }}"></label>
+    {% endfor %}
+    <label class="check">
+      <input type="checkbox" name="require_project_sources"
+             {{ 'checked' if view.answer_policy.require_project_sources else '' }}>
+      Require project sources for answers
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_external_search_by_default"
+             {{ 'checked' if view.answer_policy.allow_external_search_by_default else '' }}>
+      Allow external search by default
+    </label>
+    <label class="check">
+      <input type="checkbox" name="distinguish_source_claims_from_synthesis"
+             {{ 'checked' if view.answer_policy.distinguish_source_claims_from_synthesis else '' }}>
+      Distinguish source claims from synthesis
+    </label>
+
+    <button type="submit">save global settings</button>
+  </form>
+  <p class="note">Writes <code>config.yaml</code> via <code>write_global_config</code> — env-var NAMES only.</p>
+</section>
+{% endif %}
+
+{% if slug and project_cfg %}
+{# ================= PROJECT inherit / override editors ================= #}
+<section class="card">
+  <h2>Project settings · {{ slug }}</h2>
+  <p class="note">Global settings are project <strong>defaults</strong> with live
+    inheritance. Leave a field on <em>inherit</em> to track the current global value;
+    check <em>override</em> to pin a project-specific value. Ceilings may only be
+    tightened. Use <em>revert to global</em> to drop an override.</p>
+  <form method="post" action="/ui/projects/{{ slug }}/settings" class="stack-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Project name
+      <input type="text" name="project_name" value="{{ project_cfg.project_name }}"></label>
+    <label>Description
+      <input type="text" name="description" value="{{ project_cfg.description or '' }}"></label>
+
+    <h3>Answer policy</h3>
+    <label class="check">
+      <input type="checkbox" name="require_project_sources"
+             {{ 'checked' if project_cfg.answer_policy.require_project_sources else '' }}>
+      Require project sources for answers
+    </label>
+    <label class="check">
+      <input type="checkbox" name="allow_external_search_by_default"
+             {{ 'checked' if project_cfg.answer_policy.allow_external_search_by_default else '' }}>
+      Allow external search by default
+    </label>
+    <label class="check">
+      <input type="checkbox" name="distinguish_source_claims_from_synthesis"
+             {{ 'checked' if project_cfg.answer_policy.distinguish_source_claims_from_synthesis else '' }}>
+      Distinguish source claims from synthesis
+    </label>
+
+    {% if view.overrides %}
+    <h3>Privacy (inherit or override)</h3>
+    {% for f in view.overrides.content_policy %}
+    {{ override_field(f, 'content_policy') }}
+    {% endfor %}
+
+    <h3>Budget (inherit or override)</h3>
+    {% for f in view.overrides.budget %}
+    {{ override_field(f, 'budget') }}
+    {% endfor %}
+
+    <h3>Answer tunables (inherit or override)</h3>
+    {% for f in view.overrides.answer %}
+    {{ override_field(f, 'answer') }}
+    {% endfor %}
+
+    <h3>Routing (inherit or override)</h3>
+    {% for r in view.overrides.routes %}
+    <div class="override-row">
+      <label class="check">
+        <input type="checkbox" name="override_route_{{ r.task }}"
+               {{ 'checked' if r.preferred.overridden or r.fallback.overridden else '' }}>
+        override
+      </label>
+      <span class="field-name">{{ r.task }}</span>
+      <label>preferred
+        <select name="route_{{ r.task }}_preferred">
+          {% for pid in view.profile_ids %}
+          <option value="{{ pid }}" {{ 'selected' if pid == r.preferred.effective else '' }}>{{ pid }}</option>
+          {% endfor %}
+        </select></label>
+      <label>fallback
+        <select name="route_{{ r.task }}_fallback">
+          <option value="">— none —</option>
+          {% for pid in view.profile_ids %}
+          <option value="{{ pid }}" {{ 'selected' if pid == r.fallback.effective else '' }}>{{ pid }}</option>
+          {% endfor %}
+        </select></label>
+      {% if r.preferred.overridden or r.fallback.overridden %}
+      <span class="overridden">overridden to {{ r.preferred.effective }}</span>
+      <button type="submit" name="revert" value="route:{{ r.task }}" formnovalidate>revert to global</button>
+      {% else %}
+      <span class="inherit">inheriting {{ r.preferred['global'] if r.preferred['global'] is not none else '—' }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <button type="submit">save project settings</button>
+  </form>
+  <p class="note">Identity + answer policy write <code>projects/{{ slug }}/project.yaml</code>
+    via the overlay-preserving <code>write_project_config</code>; override groups write a
+    thin overlay via <code>write_project_overrides</code> — never a full-dump clobber.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Budget</h2>
+  <ul class="kv">
+    <li><span>monthly spend ({{ view.budget.year_month }})</span>
+        <strong>${{ '%.4f' | format(view.budget.monthly_spend_usd) }}</strong></li>
+    <li><span>monthly soft limit</span><strong>{{ view.budget.monthly_soft_limit_usd or '—' }}</strong></li>
+    <li><span>per-run soft limit</span><strong>{{ view.budget.per_run_soft_limit_usd or '—' }}</strong></li>
+    <li><span>confirm above</span><strong>{{ view.budget.require_confirmation_above_usd or '—' }}</strong></li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Pricing snapshot</h2>
+  <p>{{ view.pricing_snapshot.snapshot_date or 'unavailable' }}
+     {% if view.pricing_snapshot.age_days is not none %}
+     ({{ view.pricing_snapshot.age_days }} days old —
+     {{ 'fresh' if view.pricing_snapshot.fresh else 'stale' }}){% endif %}</p>
+  <p>Ollama hint: <code>{{ view.ollama.base_url }}</code> — {{ view.ollama.hint }}</p>
+</section>
+
+<section class="card">
+  <h2>Diagnostics
+    {% if view.doctor.ok %}<span class="badge badge--ok">healthy</span>
+    {% else %}<span class="badge badge--fail">{{ view.doctor.n_fail }} failing</span>{% endif %}
+    {% if view.doctor.n_warn %}<span class="badge badge--warn">{{ view.doctor.n_warn }} warn</span>{% endif %}
+  </h2>
+</section>
+<p><a href="/ui">&larr; back to projects</a></p>
+{% endblock %}

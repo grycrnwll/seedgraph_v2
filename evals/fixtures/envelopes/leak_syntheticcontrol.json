@@ -1,0 +1,16 @@
+{
+  "answer_id": "ans_00000000000000000000000000000011",
+  "question": "What is the synthetic control estimator of Abadie, Diamond, and Hainmueller?",
+  "query_type": "factual",
+  "answer_category": "outside_corpus",
+  "answer_text": "",
+  "citations": [],
+  "recommendations": [],
+  "cited_work_ids": [],
+  "cited_span_ids": [],
+  "insufficient_evidence": true,
+  "retrieved_item_ids": [],
+  "warnings": ["out-of-corpus probe: abstaining"],
+  "mode": "project_only",
+  "llm_provenance": null
+}

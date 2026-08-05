@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ row.work_id }} · Document detail · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Document detail</h1>
+<p class="lede">{{ row.title or row.work_id }}</p>
+<ul class="kv">
+  <li><span>work_id</span><strong>{{ row.work_id }}</strong></li>
+  <li><span>year</span><strong>{{ row.year or '—' }}</strong></li>
+  <li><span>inclusion</span><strong>{{ row.inclusion_status }}</strong></li>
+  <li><span>access class</span><strong class="access access--{{ access_class or row.access_status or 'unknown' }}">
+      {{ access_class or row.access_status or 'unknown' }}</strong></li>
+</ul>
+
+<section class="card">
+  <h2>Inclusion status</h2>
+  <form method="post"
+        action="/ui/projects/{{ slug }}/corpus/{{ row.work_id }}/status"
+        class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>status
+      <select name="status">
+        {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if row.inclusion_status == s else '' }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>reason <input type="text" name="reason" placeholder="(optional)"></label>
+    <button type="submit">update</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Full text {% if access_class %}<span class="badge">{{ access_class }}</span>{% endif %}</h2>
+  {% if has_markdown and full_text %}
+  <pre class="fulltext">{{ full_text }}</pre>
+  {% else %}
+  <p class="empty">No extracted markdown for this work yet
+     (acquire / upload a source to populate full text).</p>
+  {% endif %}
+</section>
+<p><a href="/ui/projects/{{ slug }}/corpus">&larr; back to corpus</a></p>
+{% endblock %}

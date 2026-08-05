@@ -1,0 +1,215 @@
+# Seedgraph v2 — LLM capability & pricing snapshot (reviewer requirement D9)
+#
+# DETERMINISTIC, STATIC SNAPSHOT. This file is the single source of truth for
+# per-task LLM routing decisions (access profiles + per-task routing + no-LLM
+# fallback). It is intentionally hand-pinned so that builds are reproducible.
+#
+# IMPORTANT — pricing is a STATIC SNAPSHOT. Treat every *_usd_per_mtok value as
+# provisional and RE-VERIFY against the provider's published pricing BEFORE any
+# budget enforcement / cost-gating goes live. Rows whose pricing is not
+# independently confirmed carry `pricing_status: unverified`.
+#
+# context_window_tokens is the LOAD-BEARING field: it gates phase_4 oversize
+# detection (full-text-derived artifacts that exceed a model's window) and the
+# phase_8 routing/packing decisions. Keep it accurate and conservative. The
+# Anthropic "standard" profiles are pinned to 200k by project convention; the
+# explicit `[1m]` variant id exposes the 1M context window when a task needs it.
+# (Anthropic's published windows for some of these models are larger than the
+# 200k pinned here; the standard profiles deliberately gate at 200k for
+# cost/latency control. Use the `[1m]` profile to opt into the full window.)
+#
+# Embeddings / local models: max_output_tokens and structured-output fields do
+# not apply and are null. nomic-embed-text runs locally via Ollama (no per-token
+# cost); input_usd_per_mtok is 0.0 with pricing_status: not_applicable.
+
+snapshot_date: 2026-07-02
+schema_version: 1
+
+models:
+
+  # --- Anthropic (verified against official pricing, 2026-07-02) --------------
+
+  claude-opus-4-8:
+    provider: anthropic
+    context_window_tokens: 200000          # standard profile; see [1m] variant for full window
+    max_output_tokens: 128000
+    input_usd_per_mtok: 5.00
+    output_usd_per_mtok: 25.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      Default high-capability Claude profile. Adaptive thinking only
+      (no budget_tokens). 200k window is a project gating convention; use
+      claude-opus-4-8[1m] for the 1M context window (Anthropic's published
+      window is 1M). Verified 2026-07-02 against
+      https://platform.claude.com/docs/en/about-claude/pricing and
+      https://platform.claude.com/docs/en/about-claude/models/overview.
+
+  "claude-opus-4-8[1m]":
+    provider: anthropic
+    context_window_tokens: 1000000         # 1M-context variant — gates phase_4 oversize differently
+    max_output_tokens: 128000
+    input_usd_per_mtok: 5.00
+    output_usd_per_mtok: 25.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      1M-context variant of Opus 4.8. Anthropic bills the full 1M window at
+      standard per-token pricing (no long-context premium). Route
+      oversize-context phase_4/phase_8 tasks here. Verified 2026-07-02 against
+      https://platform.claude.com/docs/en/about-claude/pricing (long-context
+      pricing section) and
+      https://platform.claude.com/docs/en/about-claude/models/overview.
+
+  claude-sonnet-4-6:
+    provider: anthropic
+    context_window_tokens: 200000          # standard profile (project gating convention; published window is 1M)
+    max_output_tokens: 128000              # corrected from 64000 (official max output for Sonnet 4.6)
+    input_usd_per_mtok: 3.00
+    output_usd_per_mtok: 15.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      Balanced speed/intelligence profile for high-volume per-task routing.
+      Model id is ACTIVE but now legacy-tier: Anthropic's current Sonnet is
+      claude-sonnet-5 (same $3/$15 standard price; $2/$10 introductory through
+      2026-08-31, plus a new ~30% denser tokenizer) — re-evaluate this row when
+      Sonnet 4.6 is deprecated (dead-id risk). Verified 2026-07-02 against
+      https://platform.claude.com/docs/en/about-claude/pricing and
+      https://platform.claude.com/docs/en/about-claude/models/overview.
+
+  claude-haiku-4-5:
+    provider: anthropic
+    context_window_tokens: 200000
+    max_output_tokens: 64000
+    input_usd_per_mtok: 1.00
+    output_usd_per_mtok: 5.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      Fastest / cheapest Claude profile for simple classification & extraction.
+      Verified 2026-07-02 against
+      https://platform.claude.com/docs/en/about-claude/pricing and
+      https://platform.claude.com/docs/en/about-claude/models/overview
+      (published window 200k / max output 64k — matches the pinned values).
+
+  # --- OpenAI (verified against official pricing, 2026-07-01) ----------------
+
+  gpt-5.5:
+    provider: openai
+    context_window_tokens: 1000000
+    max_output_tokens: 128000
+    input_usd_per_mtok: 5.00
+    output_usd_per_mtok: 30.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      OpenAI flagship (premium tier). Verified 2026-07-01 against
+      https://developers.openai.com/api/docs/pricing (standard processing) and
+      https://developers.openai.com/api/docs/models (1M window / 128K output).
+      Hosted API rejects `max_tokens` + non-default temperature; the adapter
+      sends `max_completion_tokens` and omits temperature.
+
+  gpt-5.4-mini:
+    provider: openai
+    context_window_tokens: 400000
+    max_output_tokens: 128000
+    input_usd_per_mtok: 0.75
+    output_usd_per_mtok: 4.50
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      OpenAI cheap/fast tier — the default model for the openai_api_default
+      profile (extraction-shaped tasks). Verified 2026-07-01 against
+      https://developers.openai.com/api/docs/pricing and
+      https://developers.openai.com/api/docs/models.
+
+  # --- Gemini (verified against official pricing, 2026-07-01) ----------------
+
+  gemini-3.1-pro-preview:
+    provider: gemini
+    context_window_tokens: 1048576
+    max_output_tokens: 65536
+    input_usd_per_mtok: 2.00               # <=200k-token tier; >200k tier is 4.00/18.00
+    output_usd_per_mtok: 12.00             # <=200k-token tier
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      Gemini pro class (premium tier). PREVIEW model id — Google has no stable
+      3-series pro yet; re-check this id when the GA model lands (dead-id risk).
+      Tiered long-context pricing: values here are the <=200k tier; >200k costs
+      4.00/18.00 usd_per_mtok. Verified 2026-07-01 against
+      https://ai.google.dev/gemini-api/docs/pricing and
+      https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview.
+
+  gemini-3.5-flash:
+    provider: gemini
+    context_window_tokens: 1048576
+    max_output_tokens: 65536
+    input_usd_per_mtok: 1.50
+    output_usd_per_mtok: 9.00
+    supports_structured_output: true
+    access_modes: [api_key]
+    pricing_status: verified
+    notes: >-
+      Gemini flash class, stable — the default model for the gemini_api_default
+      profile (cheap/fast tier; flat pricing, no long-context tiers). Verified
+      2026-07-01 against https://ai.google.dev/gemini-api/docs/pricing and
+      https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash.
+
+  # --- Local (Ollama) generative model ---------------------------------------
+
+  llama3:
+    provider: ollama
+    context_window_tokens: 8192             # LOAD-BEARING: gates phase_4 oversize for the local-first default profile
+    max_output_tokens: 2048
+    input_usd_per_mtok: 0.0                 # runs locally; no per-token cost
+    output_usd_per_mtok: 0.0
+    supports_structured_output: false       # JSON is parsed/validated app-side, not via a native structured-output API
+    access_modes: [local]
+    pricing_status: not_applicable
+    notes: >-
+      Local generative model served via Ollama; the model behind the local-first
+      `local_ollama_default` profile (Llama 3 8B). The 8192-token window is the
+      LOAD-BEARING field that gates phase_4 oversize detection for the default
+      local route — without it the oversize gate would fail open. No per-token cost.
+
+  "qwen3.5:latest":
+    provider: ollama
+    context_window_tokens: 262144           # LOAD-BEARING: trained context length reported by `ollama show qwen3.5:latest`
+    max_output_tokens: 8192                 # practical serving budget; thinking model needs headroom beyond the JSON answer (must-fix #3c)
+    input_usd_per_mtok: 0.0                 # runs locally; no per-token cost
+    output_usd_per_mtok: 0.0
+    supports_structured_output: false       # JSON is parsed/validated app-side, not via a native structured-output API
+    access_modes: [local]
+    pricing_status: not_applicable
+    notes: >-
+      Local generative model served via Ollama (qwen35 architecture, 9.7B
+      params, Q4_K_M quant; completion/vision/tools/thinking capabilities).
+      Context length 262144 verified locally on 2026-07-02 via
+      `ollama show qwen3.5:latest` (Ollama 0.31.1). Note the effective serving
+      window is Ollama's num_ctx, which may be configured lower than the
+      trained window. Zero cost fields per local-model convention (mirrors
+      llama3); the USD pricing gate is irrelevant for locals.
+
+  # --- Local (Ollama) embedding model ----------------------------------------
+
+  nomic-embed-text:
+    provider: ollama
+    context_window_tokens: 8192
+    max_output_tokens: null                 # embedding model — no generative output
+    input_usd_per_mtok: 0.0                 # runs locally; no per-token cost
+    output_usd_per_mtok: 0.0
+    supports_structured_output: null        # not applicable to an embedding model
+    access_modes: [local]
+    pricing_status: not_applicable
+    notes: >-
+      Local embedding model served via Ollama. Supports the no-LLM / local-first
+      fallback path for vectorization. Dimension 768; context ~8192 tokens.

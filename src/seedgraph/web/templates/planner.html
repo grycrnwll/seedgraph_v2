@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Plan · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Run planner · {{ slug }}</h1>
+<nav class="subnav"><a href="/ui/projects/{{ slug }}">Dashboard</a></nav>
+
+{% if busy_message %}
+<div class="banner banner--warn" role="alert">Project busy — {{ busy_message }}</div>
+{% endif %}
+
+<nav class="tasks">
+  {% for t in tasks %}
+  <a href="/ui/projects/{{ slug }}/plan?task={{ t }}" class="task-link {{ 'active' if t == task else '' }}">{{ labels[t] }}</a>
+  {% endfor %}
+</nav>
+
+<section class="card">
+  <h2>{{ plan.label }} preview</h2>
+
+  {% if plan.needs_llm_backend %}
+  <div class="banner banner--warn" role="alert">
+    Awaiting an LLM backend: the resolved route for this task has no usable profile.
+    The job will run deterministically / degrade honestly until a model is configured.
+  </div>
+  {% endif %}
+
+  <p>Route:
+    <strong>{{ plan.route_profile_id or 'deterministic' }}</strong>
+    (<span class="dest dest--{{ plan.route_destination }}">{{ plan.route_destination }}</span>{% if plan.route_provider %} · {{ plan.route_provider }}{% endif %})</p>
+  <p class="privacy">Content may leave this machine:
+    <strong>{{ 'yes' if plan.external_full_text else 'no — stays local' }}</strong></p>
+  {% if plan.acquisition_preview %}
+  {# Build D ch13 (D-13): the conversion job's cost is acquisition fan-out against
+     rate-limited public APIs, not LLM tokens — the closed-form no-network budget
+     replaces the misleading $0.0000 / 0-token framing for this task. #}
+  <p>Expected papers (worst case): <strong>{{ plan.acquisition_preview['expected_papers'] }}</strong>
+     ({{ plan.acquisition_preview['seed_count'] }} seeds + {{ plan.acquisition_preview['cap'] }} per generation × {{ plan.acquisition_preview['depth'] }} generations)</p>
+  <p>Provider API calls: <strong>~{{ plan.acquisition_preview['api_calls'] }}</strong></p>
+  <p>Estimated disk: <strong>~{{ plan.acquisition_preview['est_disk_mb'] }} MB</strong></p>
+  {% else %}
+  <p>Estimated tokens: {{ plan.est_total_input_tokens }} in / {{ plan.est_total_output_tokens }} out
+     · Estimated cost: <strong>${{ '%.4f' | format(plan.est_total_cost_usd) }}</strong></p>
+  {% endif %}
+  <p>Monthly spend so far: ${{ '%.4f' | format(plan.monthly_spend_usd) }}
+     {% if plan.monthly_soft_limit_usd is not none %}/ soft limit ${{ plan.monthly_soft_limit_usd }}{% endif %}
+     {% if plan.over_monthly_soft_limit %}<span class="badge badge--warn">over soft limit</span>{% endif %}
+     {% if plan.requires_confirmation %}<span class="badge badge--warn">confirmation required</span>{% endif %}
+  </p>
+</section>
+
+<section class="card">
+  <h2>Affected works ({{ plan.affected_count }})</h2>
+  {% if plan.works %}
+  <table class="table">
+    <thead><tr>
+      <th>work</th><th>access</th><th>profile</th><th>destination</th>
+      <th>leaves machine</th><th>est tokens</th><th>est cost</th>
+    </tr></thead>
+    <tbody>
+      {% for w in plan.works %}
+      <tr>
+        <td>{{ w.title or w.work_id }}</td>
+        <td>{{ w.access_class or '—' }}</td>
+        <td>{{ w.profile_id or '—' }}</td>
+        <td>{{ w.destination }}</td>
+        <td>{{ 'yes' if w.external_full_text else 'no' }}</td>
+        <td>{{ w.est_input_tokens }}</td>
+        <td>${{ '%.4f' | format(w.est_cost_usd) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No eligible works for this task right now.</p>{% endif %}
+</section>
+
+<form class="plan-form" method="post" action="/ui/projects/{{ slug }}/plan/{{ task }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  {% if plan.is_llm_task %}
+  <label>Profile override
+    <input type="text" name="profile_id" placeholder="(default route — leave blank)"></label>
+  {% endif %}
+  {% if task == 'lenses' %}
+  <label>Lens id <input type="text" name="lens_id" required></label>
+  {% endif %}
+  <label><input type="checkbox" name="force"> force re-run</label>
+  <button type="submit">Launch job</button>
+</form>
+{% endblock %}

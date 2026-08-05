@@ -1,0 +1,52 @@
+{
+  "answer_category": "source_grounded",
+  "answer_id": "ans_00000000000000000000000000000000",
+  "answer_text": "It holds across groups [E1].",
+  "citations": [
+    {
+      "assertion_status": "stated",
+      "epistemic_type": "llm_extracted",
+      "quote": "We invoke Assumption 2: parallel trends hold across groups.",
+      "section": "body",
+      "span_ids": [
+        "s_a"
+      ],
+      "title": "Paper A: Difference-in-Differences",
+      "work_id": "work_a",
+      "year": 2020
+    }
+  ],
+  "cited_span_ids": [
+    "s_a"
+  ],
+  "cited_work_ids": [
+    "work_a"
+  ],
+  "insufficient_evidence": false,
+  "llm_provenance": {
+    "access_mode": "local",
+    "model": "llama3",
+    "profile": "local_ollama_default",
+    "prompt_version": "answer_v1",
+    "source_text_left_machine": false,
+    "task_type": "answer_generation"
+  },
+  "mode": "project_only",
+  "query_type": "factual",
+  "question": "According to Paper A, what holds \"across groups\"?",
+  "recommendations": [
+    {
+      "action_hint": "upload the PDF to extract evidence and cite this work",
+      "reason": "present in the corpus as metadata-only (no extracted full text)",
+      "status": "metadata_only",
+      "title": "Paper C: Foundational (metadata only)",
+      "work_id": "work_c",
+      "year": 2020
+    }
+  ],
+  "retrieved_item_ids": [
+    "work_a",
+    "s_a"
+  ],
+  "warnings": []
+}

@@ -1,0 +1,211 @@
+/* seedgraph web UI — Stage A shell skeleton. Intentionally minimal; screen-specific
+   styles land with their screens in later stages. No CDN, no build step. */
+
+:root {
+  --fg: #1c1e21;
+  --muted: #6b7280;
+  --bg: #ffffff;
+  --accent: #2563eb;
+  --warn-bg: #fef3c7;
+  --warn-fg: #92400e;
+  --border: #e5e7eb;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+.banner {
+  padding: 0.6rem 1rem;
+  font-size: 0.9rem;
+}
+
+.banner--warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.topnav__brand {
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.topnav__settings {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.topnav__settings-label {
+  font-size: 0.85rem;
+}
+
+.override-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.override-row .inherit {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.override-row .overridden {
+  color: var(--accent);
+  font-style: italic;
+}
+
+.content {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem;
+}
+
+.project-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.project-list__item {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.empty {
+  color: var(--muted);
+}
+
+code {
+  background: #f3f4f6;
+  padding: 0.1rem 0.3rem;
+  border-radius: 3px;
+}
+
+/* --- Stage B mutating forms ------------------------------------------------ */
+.inline-form {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.stack-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-width: 48rem;
+}
+.stack-form label,
+.inline-form label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.stack-form label.check,
+.inline-form label.check {
+  align-items: flex-start;
+}
+.stack-form input[type="text"],
+.stack-form select,
+.inline-form input[type="text"],
+.inline-form select {
+  padding: 0.3rem 0.4rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+.stack-form textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+}
+.stack-form button,
+.inline-form button {
+  align-self: flex-start;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.stack-form button:hover,
+.inline-form button:hover {
+  background: #1d4ed8;
+}
+
+/* Track 2 Stage C — run planner + run progress + answer toggle */
+.tasks { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.task-link { padding: .25rem .6rem; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; }
+.task-link.active { background: #222; color: #fff; border-color: #222; }
+.plan-form { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin-top: 1rem; }
+.privacy strong { font-weight: 600; }
+.dest--external { color: #b04; font-weight: 600; }
+.dest--local { color: #060; font-weight: 600; }
+.ask-llm { margin-left: .5rem; font-size: .9em; }
+
+/* Track 2 — create-project + seed-upload + drag-and-drop dropzone */
+.banner--info {
+  background: #eff6ff;
+  color: #1e40af;
+  border-radius: 4px;
+  margin: 0 0 1rem;
+}
+.new-project,
+.upload {
+  margin: 1rem 0 1.5rem;
+}
+.new-project h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.upload .dropzone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 2px dashed #cbd5e1;
+  border-radius: 6px;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+.upload .dropzone--over {
+  border-color: var(--accent);
+  background: #eff6ff;
+  color: var(--accent);
+}
+.dropzone__count {
+  font-size: 0.85rem;
+}
+
+/* Background marker-conversion status (corpus rows + live poller). */
+.conv { font-size: 0.85rem; }
+.conv--none,
+.conv--queued { color: var(--muted); }
+.conv--converting { color: var(--accent); font-weight: 600; }
+.conv--converted { color: #060; }
+.conv--failed { color: #b04; }

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Lenses · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Lenses · {{ slug }}</h1>
+<nav class="subnav"><a href="/ui/projects/{{ slug }}">Dashboard</a></nav>
+
+{% if lenses %}
+<table class="table">
+  <thead><tr><th>lens</th><th>name</th><th>object</th><th>scope</th><th>status</th></tr></thead>
+  <tbody>
+    {% for l in lenses %}
+    <tr>
+      <td><a href="/ui/projects/{{ slug }}/lenses/{{ l.lens_id }}">{{ l.lens_id }}</a></td>
+      <td>{{ l.name }}</td>
+      <td>{{ l.object_type }}</td>
+      <td>{{ l.scope }}</td>
+      <td><span class="badge">{{ l.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No lenses registered yet.</p>
+{% endif %}
+
+<section class="card">
+  <h2>New lens from template</h2>
+  <form method="post" action="/ui/projects/{{ slug }}/lenses" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>lens id <input type="text" name="lens_id" placeholder="regularity_conditions_v1" required></label>
+    <label>template
+      <input type="text" name="from_template" value="regularity_conditions_v1" required>
+    </label>
+    <button type="submit">create</button>
+  </form>
+  <p class="note">Scaffolds <code>projects/{{ slug }}/lenses/&lt;lens_id&gt;.yaml</code> from a built-in template.</p>
+</section>
+<p><a href="/ui/projects/{{ slug }}">&larr; dashboard</a></p>
+{% endblock %}

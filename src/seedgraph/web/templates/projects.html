@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Projects · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+<form class="new-project stack-form" method="post" action="/ui/projects">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <h2>New project</h2>
+  <label>Slug <input type="text" name="slug" required placeholder="my_project"></label>
+  <label>Name <input type="text" name="name" placeholder="(optional)"></label>
+  <label>Description <input type="text" name="description" placeholder="(optional)"></label>
+  <button type="submit">Create project</button>
+</form>
+{% if projects %}
+<ul class="project-list">
+  {% for slug in projects %}
+  <li class="project-list__item">
+    <a href="/ui/projects/{{ slug }}/graph">{{ slug }}</a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No projects yet. Use the form above to create one.</p>
+{% endif %}
+{% endblock %}

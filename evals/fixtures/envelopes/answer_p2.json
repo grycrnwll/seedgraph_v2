@@ -1,0 +1,16 @@
+{
+  "answer_id": "ans_00000000000000000000000000000002",
+  "question": "What is the rank condition?",
+  "query_type": "factual",
+  "answer_category": "source_grounded",
+  "answer_text": "The rank condition must hold for point identification in the event-study model.",
+  "citations": [],
+  "recommendations": [],
+  "cited_work_ids": ["work_p2"],
+  "cited_span_ids": ["span_p2"],
+  "insufficient_evidence": false,
+  "retrieved_item_ids": ["span_p2", "span_p1"],
+  "warnings": [],
+  "mode": "project_only",
+  "llm_provenance": null
+}

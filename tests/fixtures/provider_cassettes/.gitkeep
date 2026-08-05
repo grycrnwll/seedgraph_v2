@@ -1,0 +1,8 @@
+Committed provider cassettes land here (Build F chunk 11).
+
+Recorded on the dev machine with:
+    SEEDGRAPH_VCR_RECORD=1 pytest -m network tests/test_provider_cassettes.py
+then committed after the scrub grep passes:
+    grep -ri "mailto=\|x-api-key\|authorization" tests/fixtures/provider_cassettes/
+(must match only REDACTED). Until a provider's {name}.json exists, its offline
+replay test self-skips, so the chunk is green before the recording session.

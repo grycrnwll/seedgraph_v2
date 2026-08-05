@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ slug }} · Ask · {{ nav.brand }}{% endblock %}
+{% block content %}
+<h1>Ask · {{ slug }}</h1>
+<nav class="subnav">
+  <a href="/ui/projects/{{ slug }}">Dashboard</a>
+  <a href="/ui/projects/{{ slug }}/plan">Plan</a>
+</nav>
+
+{% if busy_message %}
+<div class="banner banner--warn" role="alert">Project busy — {{ busy_message }}</div>
+{% endif %}
+
+<form class="ask-form" method="post" action="/ui/projects/{{ slug }}/ask">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="text" name="q" value="{{ question }}" placeholder="Ask a question over this project…"
+         class="ask-input" autofocus>
+  <select name="mode">
+    <option value="project_only" {{ 'selected' if mode == 'project_only' else '' }}>project only</option>
+    <option value="allow_outside" {{ 'selected' if mode == 'allow_outside' else '' }}>allow outside</option>
+  </select>
+  <label class="ask-llm"><input type="checkbox" name="use_llm"> generate prose with the LLM</label>
+  <button type="submit">Ask</button>
+</form>
+<p class="note">Without the LLM toggle (or when no model is configured) answers render
+<strong>synchronously in retrieval-only mode</strong> — the evidence below is real. With a
+configured model, a prose answer runs as a background job and the run page streams its progress.</p>
+
+{% if degraded_no_backend %}
+<div class="banner banner--warn" role="alert">
+  No usable LLM backend for answer generation — this answer degraded to
+  <strong>retrieval-only</strong>. Configure a model in Settings to generate prose.
+</div>
+{% endif %}
+
+{% if envelope %}
+<section class="card answer">
+  <h2>Answer
+    <span class="badge">{{ envelope.answer_category }}</span>
+    {% if envelope.insufficient_evidence %}<span class="badge badge--warn">insufficient evidence</span>{% endif %}
+  </h2>
+  {% if envelope.answer_text %}
+  <p class="answer-text">{{ envelope.answer_text }}</p>
+  {% else %}
+  <p class="empty">No prose generated (retrieval-only). Cited evidence is listed below.</p>
+  {% endif %}
+
+  {% if envelope.warnings %}
+  <ul class="warnings">{% for w in envelope.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if trace_url %}
+  <p class="trace-link"><a href="{{ trace_url }}">View answer trace →</a></p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Citations ({{ envelope.citations | length }})</h2>
+  {% if envelope.citations %}
+  <ul class="citations">
+    {% for c in envelope.citations %}
+    <li>
+      <a href="/ui/projects/{{ slug }}/corpus/{{ c.work_id }}">{{ c.title or c.work_id }}</a>
+      {% if c.year %}({{ c.year }}){% endif %}
+      <span class="access access--{{ c.access_class or 'unknown' }}">{{ c.access_class or 'unknown' }}</span>
+      {% if c.section %}<span class="muted">§ {{ c.section }}</span>{% endif %}
+      {% if c.quote %}<blockquote>{{ c.quote }}</blockquote>{% endif %}
+      <span class="muted">spans: {{ c.span_ids | join(', ') }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No in-corpus citations.</p>{% endif %}
+</section>
+
+{% if envelope.recommendations %}
+<section class="card">
+  <h2>Recommendations ({{ envelope.recommendations | length }})</h2>
+  <ul class="recs">
+    {% for r in envelope.recommendations %}
+    <li>{{ r.title or r.work_id }} <span class="badge">{{ r.status }}</span>
+        <span class="muted">{{ r.reason }}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}
