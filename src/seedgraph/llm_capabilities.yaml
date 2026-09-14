@@ -199,6 +199,28 @@ models:
       trained window. Zero cost fields per local-model convention (mirrors
       llama3); the USD pricing gate is irrelevant for locals.
 
+  # --- Local (file mailbox) agent-answered model -----------------------------
+
+  claude-code-subagent:
+    provider: mailbox
+    context_window_tokens: 200000
+    max_output_tokens: 16384
+    input_usd_per_mtok: 0.0                 # answered by an already-paid-for agent session; no per-token API cost
+    output_usd_per_mtok: 0.0
+    supports_structured_output: true        # the answering agent emits JSON on request
+    access_modes: [local]
+    pricing_status: verified
+    notes: >-
+      A Claude Code subagent answering through the file mailbox (provider
+      `mailbox`, profile `claude_code_subagent`). DELIBERATE DEVIATION from the
+      Ollama local rows' `pricing_status: not_applicable`: the budget gate
+      (budget.check_pricing_allowed) fail-closes on anything but `verified`
+      whenever a USD limit is armed, which would refuse this route outright.
+      `verified` here asserts the exact, knowable price of a mailbox call —
+      0.0/0.0, because no metered API call is made — not a snapshot of a
+      provider's published rate card. Window/output are the Claude-family
+      conventions used for gating (200k window, a 16k answer budget).
+
   # --- Local (Ollama) embedding model ----------------------------------------
 
   nomic-embed-text:

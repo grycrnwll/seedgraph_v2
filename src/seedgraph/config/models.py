@@ -236,6 +236,25 @@ def default_profiles() -> dict[str, LLMProfile]:
                 "answer_generation",
             ],
         ),
+        # File-mailbox profile: a Claude Code subagent (or any agent with disk
+        # access) answers extraction requests in place of a hosted model. Local by
+        # construction — nothing leaves the machine, no key. ``base_url`` carries
+        # the mailbox directory (None ⇒ SEEDGRAPH_MAILBOX_DIR ⇒ ~/.seedgraph/mailbox).
+        # No default route references it (ADR-0006 local-first); opt in with
+        # ``seedgraph llm route set --preferred claude_code_subagent``.
+        "claude_code_subagent": LLMProfile(
+            profile_id="claude_code_subagent",
+            provider="mailbox",
+            access_mode="local",
+            model="claude-code-subagent",
+            is_local=True,
+            base_url=None,
+            allowed_tasks=[
+                "note_extraction",
+                "semantic_graph_extraction",
+                "metadata_extraction",
+            ],
+        ),
         "local_embedding_model": LLMProfile(
             profile_id="local_embedding_model",
             provider="ollama",

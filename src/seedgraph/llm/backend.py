@@ -2,7 +2,7 @@
 
 The thin :class:`LLMBackend` ``Protocol`` + a deterministic :class:`FakeLLMBackend`
 for tests, plus a lazy provider registry (:func:`default_backend`) that resolves a
-real adapter (Ollama / Anthropic / OpenAI / Gemini) by provider name. Unknown / ``none`` providers
+real adapter (Ollama / Anthropic / OpenAI / Gemini / mailbox) by provider name. Unknown / ``none`` providers
 resolve to :class:`StubRealBackend`, which raises an actionable
 "configure a profile/key" error if ever invoked. Provider adapters live in
 ``llm/providers/*`` and import ``httpx`` lazily inside their methods, so importing
@@ -145,7 +145,7 @@ class StubRealBackend:
 
 
 # Provider registry (Track 1): provider name -> shipped adapter.
-_PROVIDER_REGISTRY = {"ollama", "anthropic", "openai", "gemini"}
+_PROVIDER_REGISTRY = {"ollama", "anthropic", "openai", "gemini", "mailbox"}
 
 # Registry-aware availability source (consumed by profiles.is_profile_available):
 # a provider is usable iff it has a shipped adapter here, OR it is a no-backend
@@ -166,7 +166,8 @@ def default_backend(
 
     ``ollama`` / ``anthropic`` / ``openai`` / ``gemini`` return their HTTP adapter (``base_url``
     / ``api_key`` / ``transport`` injected centrally by the executor — adapters
-    never read env). Anything else (incl. ``none``) returns the
+    never read env); ``mailbox`` returns the file-mailbox adapter (``base_url`` is
+    the mailbox directory). Anything else (incl. ``none``) returns the
     :class:`StubRealBackend`. Adapter modules import ``httpx`` lazily, so this
     stays offline at import time."""
     name = (provider or "").lower()
@@ -191,4 +192,8 @@ def default_backend(
         from .providers.gemini import GeminiBackend
 
         return GeminiBackend(api_key=api_key, base_url=base_url, **kwargs)
+    if name == "mailbox":
+        from .providers.mailbox import MailboxBackend
+
+        return MailboxBackend(base_url=base_url, model=model)
     return StubRealBackend(provider=provider, model=model)

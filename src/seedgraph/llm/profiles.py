@@ -13,7 +13,7 @@ from .backend import SUPPORTED_PROVIDERS
 from .secrets import resolve_profile_key
 
 # Providers / access modes that need no external key to be "available".
-_LOCAL_PROVIDERS = {"ollama", "none", "local"}
+_LOCAL_PROVIDERS = {"ollama", "mailbox", "none", "local"}
 _NO_BACKEND_MODES = {"local", "none"}
 
 # ``SUPPORTED_PROVIDERS`` (review #1) is owned by ``llm.backend`` (the lazy provider

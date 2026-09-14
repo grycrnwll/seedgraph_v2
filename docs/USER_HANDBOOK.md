@@ -377,6 +377,19 @@ local-first stands); opt in per project with
 Its `allowed_tasks` fence means routing any *other* task to it simply falls
 through to that route's fallback.
 
+**Let a Claude Code subagent be the model** — the `mailbox` provider makes no API
+call: it writes each request to a file and blocks until an answer file appears, so
+any agent with disk access can answer. The shipped profile `claude_code_subagent`
+(provider `mailbox`, model `claude-code-subagent`, local, no key) is allowed
+`note_extraction`, `semantic_graph_extraction` and `metadata_extraction`. Opt in with
+`seedgraph llm route set --task note_extraction --preferred claude_code_subagent`.
+Protocol: seedgraph writes `<dir>/requests/<id>.json` (`system_prompt`,
+`user_prompt`, `model`, `temperature`, `max_tokens`); the agent writes the whole
+answer — nothing else — as `<dir>/responses/<id>.txt` (or `<id>.json` with a `text`
+key) in a single write, and seedgraph moves the request to `<dir>/done/`. The
+mailbox directory is the profile's `base_url`, else `SEEDGRAPH_MAILBOX_DIR`, else
+`~/.seedgraph/mailbox`.
+
 **To change a route** — three ways, easiest first:
 1. **CLI** — `seedgraph llm route set`:
    ```powershell
