@@ -1353,10 +1353,8 @@ def test_ask_persists_envelope_and_trace(run_mcp, isolated_home):
     assert saved_trace["answer_id"] == answer_id
 
 
-def test_ask_response_shape_unchanged_by_persistence(run_mcp, isolated_home):
-    """Shape pin: the response is still exactly `AnswerEnvelope.model_dump(mode=
-    "json")` — persistence is a side effect on disk, not a reshaping of the
-    return (the pre-T6 field set, unchanged)."""
+def test_ask_response_adds_persistence_status(run_mcp, isolated_home):
+    """Delivery adds persistence alongside the existing envelope fields."""
     from seedgraph.answer.types import AnswerEnvelope
     from seedgraph.mcp.server import build_server
 
@@ -1368,7 +1366,64 @@ def test_ask_response_shape_unchanged_by_persistence(run_mcp, isolated_home):
     )
     assert result.isError is False
     payload = _tool_payload(result)
-    assert set(payload) == set(AnswerEnvelope.model_fields)
+    assert set(payload) == set(AnswerEnvelope.model_fields) | {"persistence"}
+    assert payload["persistence"]["status"] == "saved"
+
+
+def test_ask_no_save_is_readonly_even_with_redaction(run_mcp, isolated_home):
+    from _phase8_helpers import build_fixture_project
+    from seedgraph.mcp.server import build_server
+
+    h = build_fixture_project("readonly_mcp")
+    h.engine.dispose()
+    conn = sqlite3.connect(h.db_path)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    before = {p.relative_to(isolated_home): p.read_bytes()
+              for p in isolated_home.rglob("*") if p.is_file()}
+    server = build_server(root=isolated_home, redact_private=True)
+    result = _ask(run_mcp, server, {
+        "project": h.slug, "question": "secret identification trick", "no_save": True,
+    })
+    assert not result.isError, result.content
+    payload = _tool_payload(result)
+    assert payload["persistence"]["status"] == "skipped"
+    assert payload["citations"]
+    assert all("secret identification trick" not in str(c.get("quote"))
+               for c in payload["citations"])
+    assert before == {p.relative_to(isolated_home): p.read_bytes()
+                      for p in isolated_home.rglob("*") if p.is_file()}
+
+
+def test_ask_delivers_evidence_after_save_failure(run_mcp, isolated_home):
+    from _phase8_helpers import build_fixture_project
+    from seedgraph.mcp.server import build_server
+
+    h = build_fixture_project("failed_save")
+    (h.db_path.parent / "answers").write_text("blocked", encoding="utf-8")
+    result = _ask(run_mcp, build_server(root=isolated_home), {
+        "project": h.slug, "question": "across groups",
+    })
+    assert not result.isError, result.content
+    payload = _tool_payload(result)
+    assert payload["citations"]
+    assert payload["persistence"]["status"] == "not_saved"
+
+
+def test_ask_redaction_read_failure_returns_typed_error(run_mcp, isolated_home, monkeypatch):
+    from _phase8_helpers import build_fixture_project
+    from seedgraph.mcp.server import build_server
+
+    h = build_fixture_project("redaction_failure")
+    server = build_server(root=isolated_home, redact_private=True)
+
+    def unavailable(_handle):
+        raise sqlite3.DatabaseError("redaction source unavailable")
+
+    monkeypatch.setattr(server.seedgraph_context, "project_conn", unavailable)
+    result = _ask(run_mcp, server, {"project": h.slug, "question": "across groups"})
+    assert result.isError
+    assert _tool_error_body(result)["code"] == "retrieval_failed"
 
 
 def test_ask_persists_unredacted_while_response_redacts(run_mcp, isolated_home):
@@ -1738,8 +1793,7 @@ def test_semantic_query_prompt_renders_with_and_without_project(run_mcp, isolate
 
 _STDIO_TIMEOUT_S = 60.0
 
-# The complete as-built v1 tool surface (16): the `version` boot canary + 9
-# chunk-1 read tools + 5 chunk-2 concept/search/graph tools + chunk-3 `ask`.
+# The complete tool surface includes bounded reading and explicit extraction.
 # Asserted by EQUALITY here (the in-memory tests above assert subsets per chunk)
 # so that a tool silently added to — or dropped from — the surface fails the one
 # test that speaks the transport a real host uses.
@@ -1763,6 +1817,11 @@ _EXPECTED_V1_TOOLS = {
     "graph_analyze",
     # chunk 3
     "ask",
+    "work_read",
+    "extraction_prepare",
+    "extraction_next",
+    "extraction_submit",
+    "extraction_status",
 }
 
 

@@ -10,7 +10,7 @@ Empty-/missing-table safety (plan §4 coverage gap): a project may be ingested b
 not yet extracted, so an FTS table may be empty or (defensively) absent. Every
 function here treats "table empty" and "table missing"
 (``sqlite3.OperationalError: no such table``) identically — it returns ``[]`` and
-**never raises**. The harness maps a fully-empty result to a clean
+never raises for a missing FTS table. Other execution errors propagate. The harness maps a fully-empty result to a clean
 ``insufficient_evidence`` short-circuit (no LLM call).
 
 Provenance: each :class:`RetrievedItem` carries the raw ``bm25()`` score and both
@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from ..semantic.current import CURRENT_CLAIMS_CTE
 from .types import QuerySpec, RetrievedItem
 
 # Tiny stopword set so the question-token fallback issues meaningful FTS terms
@@ -79,16 +80,20 @@ def _match_query(spec: QuerySpec) -> str:
 
 
 def _safe_fetchall(conn: sqlite3.Connection, sql: str, params: tuple) -> list:
-    """Run ``sql``; map a missing FTS table (and any operational FTS error) to ``[]``.
+    """Map missing optional FTS tables to ``[]``; propagate execution failures.
 
     Both "table empty" and "table missing" (``no such table``) yield ``[]`` so the
     harness short-circuit is identical for an unextracted vs partially-built project
-    (plan §4) — this function NEVER raises ``OperationalError``.
+    (plan §4). Corrupt or incompatible core tables are genuine failures.
     """
     try:
         return conn.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as exc:
+        if "no such table:" in str(exc) and any(
+            name in str(exc) for name in ("span_fts", "claim_fts", "note_fts")
+        ):
+            return []
+        raise
 
 
 def concept_lookup(conn: sqlite3.Connection, spec: QuerySpec) -> list[RetrievedItem]:
@@ -98,7 +103,7 @@ def concept_lookup(conn: sqlite3.Connection, spec: QuerySpec) -> list[RetrievedI
     (no ``concept_fts`` — concepts are few; plan §4 over-engineering-skipped), then
     expands each matched concept through ``claim_concepts`` → ``extracted_claims``
     to citable claim-kind :class:`RetrievedItem`s (with any linked span). Empty /
-    missing table → ``[]`` (never raises).
+    no matching concept yields ``[]``; incompatible schemas raise.
     """
     tokens = [t for t in (spec.concept_tokens or []) if t.strip()]
     tokens += [p for p in spec.phrases if p.strip()]
@@ -110,7 +115,7 @@ def concept_lookup(conn: sqlite3.Connection, spec: QuerySpec) -> list[RetrievedI
         like = f"%{token.strip().lower()}%"
         rows = _safe_fetchall(
             conn,
-            "SELECT c.claim_id, c.work_id, c.normalized_label, c.claim_text, "
+            CURRENT_CLAIMS_CTE + "SELECT c.claim_id, c.work_id, c.normalized_label, c.claim_text, "
             "c.claim_type, c.epistemic_type, c.assertion_status, c.access_class, "
             "co.concept_id, co.weight, co.paper_frequency, "
             "(SELECT cs.span_id FROM claim_spans cs WHERE cs.claim_id = c.claim_id "
@@ -118,7 +123,7 @@ def concept_lookup(conn: sqlite3.Connection, spec: QuerySpec) -> list[RetrievedI
             "FROM concepts co "
             "LEFT JOIN concept_aliases a ON a.concept_id = co.concept_id "
             "JOIN claim_concepts cc ON cc.concept_id = co.concept_id "
-            "JOIN extracted_claims c ON c.claim_id = cc.claim_id "
+            "JOIN current_claims c ON c.claim_id = cc.claim_id "
             "WHERE (lower(co.normalized_label) LIKE ? OR lower(a.alias_label) LIKE ?) "
             "AND c.work_id" + _NOT_EXCLUDED,
             (like, like),
@@ -167,9 +172,10 @@ def spans(conn: sqlite3.Connection, spec: QuerySpec, limit: int) -> list[Retriev
     if not match:
         return []
     sql = [
-        "SELECT e.span_id, e.work_id, e.section_id, e.exact_quote, e.access_class, "
+        CURRENT_CLAIMS_CTE + "SELECT e.span_id, e.work_id, e.section_id, e.exact_quote, e.access_class, "
         "       bm25(span_fts) AS rank, "
-        "       (SELECT cs.claim_id FROM claim_spans cs WHERE cs.span_id = e.span_id "
+        "       (SELECT cs.claim_id FROM claim_spans cs JOIN current_claims c ON c.claim_id=cs.claim_id "
+        "        WHERE cs.span_id = e.span_id "
         "        ORDER BY cs.rank LIMIT 1) AS claim_id, "
         "       d.section_kind AS section_kind "
         "FROM span_fts JOIN evidence_spans e ON e.span_id = span_fts.span_id "
@@ -231,12 +237,12 @@ def claims(conn: sqlite3.Connection, spec: QuerySpec, limit: int) -> list[Retrie
     if not match:
         return []
     sql = [
-        "SELECT c.claim_id, c.work_id, c.normalized_label, c.claim_text, c.claim_type, "
+        CURRENT_CLAIMS_CTE + "SELECT c.claim_id, c.work_id, c.normalized_label, c.claim_text, c.claim_type, "
         "       c.epistemic_type, c.assertion_status, c.access_class, "
         "       bm25(claim_fts) AS rank, "
         "       (SELECT cs.span_id FROM claim_spans cs WHERE cs.claim_id = c.claim_id "
         "        ORDER BY cs.rank LIMIT 1) AS span_id "
-        "FROM claim_fts JOIN extracted_claims c ON c.claim_id = claim_fts.claim_id "
+        "FROM claim_fts JOIN current_claims c ON c.claim_id = claim_fts.claim_id "
         "WHERE claim_fts MATCH ? AND c.work_id" + _NOT_EXCLUDED,
     ]
     params: list[object] = [match]
@@ -282,11 +288,15 @@ def notes(conn: sqlite3.Connection, spec: QuerySpec, limit: int) -> list[Retriev
     if not match:
         return []
     sql = [
-        "SELECT n.note_id, n.work_id, n.note_text, n.access_class, bm25(note_fts) AS rank "
+        CURRENT_CLAIMS_CTE + "SELECT n.note_id, n.work_id, n.note_text, n.access_class, bm25(note_fts) AS rank "
         "FROM note_fts JOIN structured_notes n ON n.note_id = note_fts.note_id "
-        "WHERE note_fts MATCH ? AND n.work_id" + _NOT_EXCLUDED,
+        "WHERE note_fts MATCH ? AND n.note_id IN (SELECT note_id FROM current_notes) "
+        "AND n.work_id" + _NOT_EXCLUDED,
     ]
     params: list[object] = [match]
+    if spec.work_id is not None:
+        sql.append("AND n.work_id = ?")
+        params.append(spec.work_id)
     if spec.access_class is not None:
         sql.append("AND n.access_class = ?")
         params.append(spec.access_class)
@@ -324,7 +334,7 @@ def retrieve(
 
     Every query runs against *this* project's ``project.db`` (private-by-default,
     decisions 30/60/76 — structural isolation, no ``project_id`` filter needed) and
-    applies the ``spec`` filters at the SQL boundary. Returns ``[]`` (never raises)
+    applies the ``spec`` filters at the SQL boundary. Returns ``[]``
     when the corpus is empty or an FTS table is missing — the harness owns the
     resulting clean short-circuit.
     """

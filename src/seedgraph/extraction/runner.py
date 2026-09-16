@@ -38,7 +38,8 @@ from ..ids import new_id
 from ..llm import executor
 from ..llm.backend import default_backend
 from ..llm.profiles import is_local_profile, is_no_llm_profile, is_profile_available, resolve_profile
-from ..llm.routing import NoLlmRoute, Route, local_fallback_route, resolve_route
+from ..llm.routing import (NoLlmRoute, Route, local_fallback_route, resolve_route,
+                           assert_external_content_allowed)
 from ..llm.tokens import estimate_tokens
 from ..llm.usage import UsageEvent, log_usage
 from ..sections.store import load_sections
@@ -333,13 +334,12 @@ def _runtime_fallback(config, route, access_class, injected_backend):
         requires_src = rt.requires_source_text if rt is not None else True
         # Content-access gate (re-applied on the hop): restricted full text must
         # not leave the machine for an external fallback when policy forbids it.
-        if (
-            fb_external
-            and requires_src
-            and access_class != AccessClass.open_access
-            and not config.content_policy.external_llm_for_private_full_text
-        ):
-            return None
+        if fb_external and requires_src:
+            try:
+                assert_external_content_allowed(access_class, config, task_type=TASK_CLASS,
+                                                profile_id=fb_id)
+            except ConfigError:
+                return None
         if not is_profile_available(fb_profile):
             return None
         used["done"] = True
@@ -453,6 +453,174 @@ def current_note(
         .order_by(StructuredNote.created_at.desc())
     )
     return project_session.exec(stmt).first()
+
+
+_UNCHECKED = object()
+
+
+class NoteConflict(ValueError):
+    """Activation would replace an interpretation created after preparation."""
+
+
+def latest_note_id(conn, work_id: str, schema_id: str = SCHEMA_ID) -> str | None:
+    row = conn.execute(
+        "SELECT note_id FROM structured_notes WHERE work_id=? AND schema_id=? "
+        "ORDER BY created_at DESC, rowid DESC LIMIT 1", (work_id, schema_id)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def save_normalized_note(
+    project_session, cache_session, *, work_id, markdown_id, markdown_hash,
+    drafts, note_text, archetype, raw_note_json, resolved_class,
+    schema_id=SCHEMA_ID, model_name=None, provider=None, access_mode=None,
+    temperature=None, external_full_text=0, input_tokens=None, output_tokens=None,
+    estimated_cost=None, build_run_id=None, cache_root=None, extraction_run_id=None,
+    extraction_mode="whole", chunk_count=None, expected_current=_UNCHECKED,
+    before_activation=None,
+) -> ExtractionResult:
+    """One shared atomic activation path for API and host-generated notes.
+
+    Callers validate and normalize first. This boundary anchors all found claims
+    and retains old interpretations. Agent callers supply expected_current for
+    a compare-and-activate under SQLite's writer lock.
+    """
+    try:
+        conn = raw_conn(project_session)
+        run_id = extraction_run_id or new_id("extr")
+        if expected_current is not _UNCHECKED:
+            # Serialize compare-and-activate with other writers, including API runs.
+            conn.execute("BEGIN IMMEDIATE")
+            if latest_note_id(conn, work_id, schema_id) != expected_current:
+                project_session.rollback()
+                raise NoteConflict("current note changed after preparation; prepare again")
+        if before_activation is not None:
+            before_activation()
+        note_id = new_id("note")
+        now = _now()
+
+        _insert_run(
+            conn,
+            run_id=run_id,
+            work_id=work_id,
+            markdown_id=markdown_id,
+            markdown_hash=markdown_hash,
+            schema_id=schema_id,
+            run_status="success",
+            access_class=resolved_class,
+            model_name=model_name,
+            provider=provider,
+            access_mode=access_mode,
+            temperature=temperature,
+            external_full_text=external_full_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            estimated_cost=estimated_cost,
+            build_run_id=build_run_id,
+        )
+        conn.execute(
+            "UPDATE extraction_runs SET extraction_mode=?, chunk_count=? WHERE extraction_run_id=?",
+            (extraction_mode, chunk_count, run_id),
+        )
+        conn.execute(
+            "INSERT INTO structured_notes (note_id, extraction_run_id, work_id, markdown_id, "
+            "markdown_hash, schema_id, schema_version, prompt_version, archetype, access_class, "
+            "raw_note_json, note_text, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                note_id,
+                run_id,
+                work_id,
+                markdown_id,
+                markdown_hash,
+                schema_id,
+                SCHEMA_VERSION,
+                PROMPT_VERSION,
+                archetype,
+                resolved_class,
+                raw_note_json,
+                note_text,
+                now,
+            ),
+        )
+
+        ensure_fts_tables(project_session)
+
+        span_count = 0
+        for draft in drafts:
+            claim_id = new_id("claim")
+            status = draft.status
+            inferred_explanation = draft.inferred_explanation
+            span_ids = []
+            if status == StatusValue.found.value:
+                quotes = getattr(draft, "exact_quotes", None) or (
+                    [draft.exact_quote] if draft.exact_quote else []
+                )
+                for quote in quotes:
+                    span_id = ensure_span(
+                        conn, cache_session, cache_root, markdown_id=markdown_id,
+                        work_id=work_id, exact_quote=quote, access_class=resolved_class,
+                        span_kind="manual",
+                    )
+                    if span_id is not None and span_id not in span_ids:
+                        span_ids.append(span_id)
+                if not span_ids:
+                    status = StatusValue.ambiguous.value
+                    note_msg = "quote could not be anchored verbatim; downgraded to ambiguous"
+                    inferred_explanation = (
+                        f"{inferred_explanation} | {note_msg}" if inferred_explanation else note_msg
+                    )
+
+            conn.execute(
+                "INSERT INTO extracted_claims (claim_id, structured_note_id, extraction_run_id, "
+                "work_id, claim_type, claim_subtype, field_key, normalized_label, claim_text, "
+                "status, epistemic_type, assertion_status, inferred_explanation, confidence, "
+                "access_class, created_at, source_chunk_index, source_extraction_run_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    claim_id,
+                    note_id,
+                    run_id,
+                    work_id,
+                    draft.claim_type,
+                    draft.claim_subtype,
+                    draft.field_key,
+                    draft.normalized_label,
+                    draft.claim_text,
+                    status,
+                    draft.epistemic_type,
+                    draft.assertion_status,
+                    inferred_explanation,
+                    draft.confidence,
+                    resolved_class,
+                    now,
+                    getattr(draft, "source_chunk_index", None),
+                    getattr(draft, "source_extraction_run_id", None),
+                ),
+            )
+            for rank, span_id in enumerate(span_ids):
+                conn.execute(
+                    "INSERT INTO claim_spans (claim_id, span_id, rank, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (claim_id, span_id, rank, now),
+                )
+                span_count += 1
+
+        reindex_claim_fts(project_session, note_id)
+        reindex_note_fts(project_session, note_id)
+
+        project_session.commit()
+
+        return ExtractionResult(
+            work_id=work_id, run_status="success", extraction_run_id=run_id,
+            note_id=note_id, claim_count=len(drafts), span_count=span_count,
+            estimated_cost=estimated_cost,
+            message=f"note for {work_id}: {len(drafts)} claims, {span_count} spans",
+        )
+    except BaseException:
+        project_session.rollback()
+        raise
+
 
 
 def extract_note(
@@ -781,119 +949,16 @@ def extract_note(
         _account_budget(budget_state, config, estimated_cost)
         return result
 
-    # 10. Persist run + note + claims + claim_spans in ONE transaction (D7).
-    conn = raw_conn(project_session)
-    run_id = new_id("extr")
-    note_id = new_id("note")
-    now = _now()
-
-    _insert_run(
-        conn,
-        run_id=run_id,
-        work_id=work_id,
-        markdown_id=markdown_id,
-        markdown_hash=markdown_hash,
-        schema_id=schema_id,
-        run_status="success",
-        access_class=resolved_class,
-        model_name=model,
-        provider=provider_name,
-        access_mode=access_mode_name,
-        temperature=temperature,
-        external_full_text=external_full_text,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        estimated_cost=estimated_cost,
-        build_run_id=build_run_id,
+    saved = save_normalized_note(
+        project_session, cache_session, work_id=work_id, markdown_id=markdown_id,
+        markdown_hash=markdown_hash, schema_id=schema_id, drafts=drafts,
+        note_text=note_text, archetype=archetype, raw_note_json=note.model_dump_json(),
+        resolved_class=resolved_class, model_name=model, provider=provider_name,
+        access_mode=access_mode_name, temperature=temperature,
+        external_full_text=external_full_text, input_tokens=input_tokens,
+        output_tokens=output_tokens, estimated_cost=estimated_cost,
+        build_run_id=build_run_id, cache_root=cache_root,
     )
-    conn.execute(
-        "INSERT INTO structured_notes (note_id, extraction_run_id, work_id, markdown_id, "
-        "markdown_hash, schema_id, schema_version, prompt_version, archetype, access_class, "
-        "raw_note_json, note_text, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            note_id,
-            run_id,
-            work_id,
-            markdown_id,
-            markdown_hash,
-            schema_id,
-            SCHEMA_VERSION,
-            PROMPT_VERSION,
-            archetype,
-            resolved_class,
-            note.model_dump_json(),
-            note_text,
-            now,
-        ),
-    )
-
-    ensure_fts_tables(project_session)
-
-    span_count = 0
-    for draft in drafts:
-        claim_id = new_id("claim")
-        status = draft.status
-        inferred_explanation = draft.inferred_explanation
-        span_id = None
-        if status == StatusValue.found.value:
-            # Every found substantive claim must anchor a verbatim span, or it is
-            # downgraded to ambiguous — NEVER fabricate a span (plan §8/§4.6).
-            if draft.exact_quote:
-                span_id = ensure_span(
-                    conn,
-                    cache_session,
-                    cache_root,
-                    markdown_id=markdown_id,
-                    work_id=work_id,
-                    exact_quote=draft.exact_quote,
-                    access_class=resolved_class,
-                    span_kind="manual",
-                )
-            if span_id is None:
-                status = StatusValue.ambiguous.value
-                note_msg = "quote could not be anchored verbatim; downgraded to ambiguous"
-                inferred_explanation = (
-                    f"{inferred_explanation} | {note_msg}" if inferred_explanation else note_msg
-                )
-
-        conn.execute(
-            "INSERT INTO extracted_claims (claim_id, structured_note_id, extraction_run_id, "
-            "work_id, claim_type, claim_subtype, field_key, normalized_label, claim_text, "
-            "status, epistemic_type, assertion_status, inferred_explanation, confidence, "
-            "access_class, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                claim_id,
-                note_id,
-                run_id,
-                work_id,
-                draft.claim_type,
-                draft.claim_subtype,
-                draft.field_key,
-                draft.normalized_label,
-                draft.claim_text,
-                status,
-                draft.epistemic_type,
-                draft.assertion_status,
-                inferred_explanation,
-                draft.confidence,
-                resolved_class,
-                now,
-            ),
-        )
-        if span_id is not None:
-            conn.execute(
-                "INSERT INTO claim_spans (claim_id, span_id, rank, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (claim_id, span_id, 0, now),
-            )
-            span_count += 1
-
-    reindex_claim_fts(project_session, note_id)
-    reindex_note_fts(project_session, note_id)
-
-    project_session.commit()
 
     # 11. Usage log (append-only audit; status + sha256 hashes, NO bodies) + budget.
     executor.log_llm_usage(
@@ -907,16 +972,8 @@ def extract_note(
     )
     _account_budget(budget_state, config, estimated_cost)
 
-    return ExtractionResult(
-        work_id=work_id,
-        run_status="success",
-        extraction_run_id=run_id,
-        note_id=note_id,
-        claim_count=len(drafts),
-        span_count=span_count,
-        estimated_cost=estimated_cost,
-        message=f"note for {work_id}: {len(drafts)} claims, {span_count} spans",
-    )
+    return saved
+
 
 
 def profile_temperature(profile) -> float:

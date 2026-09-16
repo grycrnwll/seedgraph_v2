@@ -85,8 +85,16 @@ seedgraph ask "What identification assumptions do these papers rely on?" --proje
 ```
 
 Drop `--no-llm` for a synthesized, cited answer once an LLM profile is available.
-Every ask leaves an inspectable trace (web view + `answer trace-export`) — see
-**[USER_HANDBOOK.md §4.12](USER_HANDBOOK.md#412-ask)**.
+CLI/MCP saving is attempted by default. Use `--no-save` to skip artifacts and inspect
+`persistence.status` for `saved`, `skipped` or `not_saved`.
+
+## 8. Inspect sources or extract with your active subscription session
+
+`seedgraph work-read my_project WORK_ID --json` reads bounded source text.
+`seedgraph project agent-setup my_project --extraction --client codex` installs the
+explicit extraction skill (use `--client claude` for Claude).
+See **[Agent workflows](AGENT_WORKFLOWS.md)** for policy gates, continuation,
+single-paper round trips and resumable selected batches.
 
 For install prerequisites, storage layout, privacy gates, and troubleshooting,
 see **[USER_HANDBOOK.md](USER_HANDBOOK.md)**.

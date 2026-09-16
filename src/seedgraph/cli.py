@@ -3083,10 +3083,11 @@ def ask(
     project: str = typer.Option(..., "--project", help="Project slug."),
     mode: str = typer.Option("project_only", "--mode", help="project_only|allow_outside."),
     no_llm: bool = typer.Option(False, "--no-llm", help="Retrieval-only (no LLM call)."),
+    no_save: bool = typer.Option(False, "--no-save", help="Skip answer and trace files. With --no-llm, read a checkpointed corpus without writes."),
     json_out: bool = typer.Option(False, "--json", help="Emit the AnswerEnvelope as JSON."),
     save: bool = typer.Option(
         False, "--save",
-        help="Deprecated no-op: answers now always persist (envelope + trace); kept for compat.",
+        help="Deprecated no-op: saving is attempted by default; kept for compatibility.",
     ),
     limit: int = typer.Option(40, "--limit", help="Max ranked candidates (token-budgeted further)."),
     graph_depth: int = typer.Option(
@@ -3101,35 +3102,48 @@ def ask(
     faithfulness; ``--no-llm`` (or no resolvable profile/budget block) degrades to a
     ranked, cited evidence list with no prose (decisions 82/58/38).
     """
-    from .answer.harness import answer as answer_fn, save_answer
-    from .answer.trace import save_trace
+    import json
+
+    from .answer.delivery import deliver
+    from .answer.harness import answer as answer_fn
     from .answer.types import AnswerMode
     from .errors import SeedgraphError
     from .project.service import open_project
 
+    def fail(code, message):
+        if json_out:
+            typer.echo(json.dumps({"error": {"code": code, "message": message}}))
+        else:
+            typer.echo(f"{code}: {message}", err=True)
+        raise typer.Exit(2)
+
     if mode not in ("project_only", "allow_outside"):
-        typer.echo("--mode must be project_only or allow_outside")
-        raise typer.Exit(2)
+        fail("invalid_mode", "--mode must be project_only or allow_outside")
+    if limit < 1 or graph_depth < 0:
+        fail("invalid_request", "--limit must be positive and --graph-depth nonnegative")
     try:
-        h = open_project(project, root=root)
+        h = open_project(project, root=root, read_only=no_llm and no_save)
     except SeedgraphError as exc:
-        typer.echo(f"project error: {exc}")
-        raise typer.Exit(2)
-
-    env, trace = answer_fn(
-        question, h, mode=AnswerMode(mode), max_candidates=limit, no_llm=no_llm,
-        graph_depth=graph_depth,
-    )
-
-    # Every user-initiated ask persists envelope + trace unconditionally (00 §5, T2);
-    # --save is a redundant no-op now. Paths echoed on every ask.
-    answer_path = save_answer(env, slug=project, root=h.root)
-    trace_path = save_trace(trace, slug=project, root=h.root)
-    typer.echo(f"saved {answer_path}")
-    typer.echo(f"saved {trace_path}")
+        fail(getattr(exc, "code", "project_not_found"), str(exc))
+    except (OSError, sqlite3.Error) as exc:
+        fail("project_unavailable", str(exc))
+    try:
+        env, trace = answer_fn(
+            question, h, mode=AnswerMode(mode), max_candidates=limit, no_llm=no_llm,
+            graph_depth=graph_depth,
+        )
+    except (SeedgraphError, OSError, sqlite3.Error, ValueError) as exc:
+        fail(getattr(exc, "code", "retrieval_failed"), str(exc))
+    payload = deliver(env, trace, slug=project, root=h.root, no_save=no_save)
+    persistence = payload["persistence"]
+    if persistence["status"] == "not_saved":
+        typer.echo(f"not saved: {persistence['reason']}", err=True)
+    elif persistence["status"] == "saved":
+        for key in ("answer_path", "trace_path"):
+            typer.echo(f"saved {persistence[key]}", err=True)
 
     if json_out:
-        typer.echo(env.model_dump_json())
+        typer.echo(json.dumps(payload))
         return
 
     # On abstention the guard guarantees ``answer_text`` is either empty or the
@@ -3158,6 +3172,13 @@ def ask(
             typer.echo(f"  - {r.work_id} ({label}): {r.reason} [{r.status}]")
     if env.warnings:
         typer.echo(f"\nwarnings: {', '.join(env.warnings)}")
+
+
+from .extraction.agent_cli import agent_extract_app
+from .work_read_cli import register_work_read
+
+app.add_typer(agent_extract_app, name="agent-extract")
+register_work_read(app)
 
 
 if __name__ == "__main__":

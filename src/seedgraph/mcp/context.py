@@ -3,7 +3,8 @@
 Holds the home ``root`` resolved once at startup, the ``--redact-private`` flag,
 and a per-slug :class:`ProjectHandle` cache. ``open_project`` idempotently re-runs
 migrations, so caching the handle per slug (not per call) is the only state worth
-keeping (M8).
+keeping (M8). Read-only requests open and validate a separate nonmutating handle
+each time, so a cached writable handle cannot bypass the no-write guarantee.
 
 SDK-free at module load: the sole SDK touch is the *deferred* ``_tool_error``
 import inside :meth:`ServerContext.get_handle` (mapping an invalid/unknown slug to
@@ -22,8 +23,8 @@ from pathlib import Path
 from typing import Iterator
 
 from .. import paths
-from ..db.connection import open_project_db
-from ..errors import ValidationError
+from ..db.connection import connect_readonly, open_project_db
+from ..errors import ConfigError, ValidationError
 from ..project.service import ProjectHandle, open_project
 
 
@@ -40,8 +41,8 @@ class ServerContext:
     redact_private: bool = False
     _handles: dict[str, ProjectHandle] = field(default_factory=dict, repr=False)
 
-    def get_handle(self, slug: str) -> ProjectHandle:
-        """Return a cached :class:`ProjectHandle` for ``slug``, opening it once (M8).
+    def get_handle(self, slug: str, *, read_only: bool = False) -> ProjectHandle:
+        """Return the normal cached handle, or freshly validate a read-only handle.
 
         Validates the slug and opens the project on a cache miss. An invalid or
         unknown slug surfaces as the M9 structured ``project_not_found`` tool
@@ -49,33 +50,37 @@ class ServerContext:
         malformed slug and a missing project directory).
         """
         cached = self._handles.get(slug)
-        if cached is not None:
+        if cached is not None and not read_only:
             return cached
         try:
             paths.validate_slug(slug)
-            handle = open_project(slug, root=self.root)
-        except ValidationError as exc:
+            handle = open_project(slug, root=self.root, read_only=read_only)
+        except (ValidationError, ConfigError, OSError, sqlite3.Error) as exc:
             # Deferred import (see module docstring): avoids the server<->context
             # load-time cycle. get_handle is never called at import time, so this
             # resolves cleanly once both modules are loaded. The raised ToolError
             # is implicitly chained to `exc` (except-block __context__).
             from .server import _tool_error
 
-            _tool_error("project_not_found", str(exc), slug=slug)
-        self._handles[slug] = handle
+            default_code = "project_not_found" if isinstance(exc, ValidationError) else "project_unavailable"
+            _tool_error(getattr(exc, "code", default_code), str(exc), slug=slug)
+        if not read_only:
+            self._handles[slug] = handle
         return handle
 
     @contextmanager
     def project_conn(self, handle: ProjectHandle) -> Iterator[sqlite3.Connection]:
         """Yield a fresh ``project.db`` connection (M7), closed on exit.
 
-        A new connection per call, opened through ``open_project_db`` (WAL +
+        A new connection per call; read-only handles use ``connect_readonly``.
+        Normal handles use ``open_project_db`` (WAL +
         ``busy_timeout=5000`` + FK) — sqlite3 connections are thread-affine and
         FastMCP schedules sync tool bodies on worker threads, so a long-lived
         cached connection would be unsafe. Opens are cheap; ``busy_timeout``
         absorbs contention with a concurrent ``serve`` process.
         """
-        conn = open_project_db(handle.slug, root=self.root)
+        conn = (connect_readonly(handle.db_path) if handle.read_only
+                else open_project_db(handle.slug, root=self.root))
         try:
             yield conn
         finally:

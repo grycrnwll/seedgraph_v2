@@ -25,7 +25,9 @@ FTS) the harness short-circuits to ``insufficient_evidence=True`` /
 from __future__ import annotations
 
 import re
+import os
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,7 @@ from uuid import uuid4
 from .. import __version__
 from ..config.loader import load_project_config as _load_runtime_config
 from ..config.models import GlobalConfig
+from ..db.connection import connect_readonly
 from ..project import layout
 from . import compose, guard, rank, retrieve, traverse
 from .trace import (
@@ -472,7 +475,8 @@ def answer(
     if cache_root is None:
         cache_root = getattr(project, "root", None)
 
-    conn = sqlite3.connect(str(project.db_path))
+    conn = (connect_readonly(project.db_path) if getattr(project, "read_only", False)
+            else sqlite3.connect(str(project.db_path)))
     conn.execute("PRAGMA foreign_keys=ON")
     try:
         # 08 §5 step 7 (gap_finding): on-demand co-citation traversal over existing
@@ -622,5 +626,15 @@ def save_answer(
         base = layout.project_dir(slug, root) / "answers"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{envelope.answer_id}.json"
-    path.write_text(envelope.model_dump_json(indent=2), encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=str(base), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(envelope.model_dump_json(indent=2))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
     return path

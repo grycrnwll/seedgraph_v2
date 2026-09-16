@@ -214,23 +214,20 @@ Exports the computed concept/citation view through a default-deny access guard;
 ### 4.12 Ask
 
 ```powershell
-seedgraph ask "<question>" --project <slug> [--mode project_only|allow_outside] [--no-llm] [--json] [--save] [--limit 40]
+seedgraph ask "<question>" --project <slug> [--mode project_only|allow_outside] [--no-llm] [--json] [--no-save] [--limit 40]
 ```
 Deterministic FTS5 + relational retrieval, then one self-declaring LLM call with
 code-enforced faithfulness (no invented citations, abstains rather than emitting
 unsupported prose). **`--no-llm` works with zero LLM configured** — it degrades to
 a ranked, cited evidence list with no prose.
 
-**Every ask now persists, unconditionally.** Both the `AnswerEnvelope` and a sibling
-`AnswerTrace` — a versioned capture of the pipeline's intermediate state for that
-answer — are written on every CLI ask, every web ask, and every MCP `ask` call.
-`--save` is kept for backward compatibility but is now a redundant no-op: the answer
-persists with or without it. The CLI echoes both paths on every call, including
-before the JSON body under `--json`:
-```text
-saved projects/<slug>/answers/<answer_id>.json
-saved projects/<slug>/answers/<answer_id>.trace.json
-```
+**CLI and MCP ask attempt persistence by default.** Both the answer and its trace
+must be durable for `persistence.status=saved`. `--no-save` / MCP `no_save=true`
+returns `skipped`; a save failure returns usable evidence with `not_saved` and
+only paths actually saved. Machine stdout contains one JSON value; diagnostics
+use stderr. `--save` remains a redundant compatibility option. Combined
+`--no-llm --no-save` uses strict read-only opening; see
+[Agent workflows](AGENT_WORKFLOWS.md) for existing-corpus requirements.
 Ad-hoc asks (CLI, web GET/POST, MCP) land under `projects/{slug}/answers/`; an ask
 made as part of a build run lands under `projects/{slug}/runs/{run_id}/answers/`
 instead — the `run_id` only ever controls this nesting path (see §5).
@@ -542,13 +539,19 @@ succeeds, `mode` comes back `retrieval_only`, and `budget_exceeded` appears in t
 envelope's `warnings`. Read `warnings`, not just the error channel. A retrieval-only
 envelope is a real answer, not a failure.
 
-**Every `ask` call persists**, same as the CLI (§4.12): both the envelope and its
-`AnswerTrace` are written under `projects/{slug}/answers/`, unredacted on disk
-regardless of `--redact-private` (which governs only the tool's response payload,
-never the files). This reverses the original stance that an answer is a query, not
-a run (decisions 16/35, amended not repealed — `run_id` still only controls the
-nesting path). The response shape is unaffected; the returned `answer_id` is the
-lookup key for the files.
+**MCP `ask` attempts saving by default**, with the same `persistence` field as CLI.
+Set `no_save=true` to skip answer/trace files; saving failure returns `not_saved`
+without discarding retrieved evidence. `--redact-private` governs response content,
+not already saved files.
+
+### 10.2.1 Source reading and explicit extraction mutations
+
+`work_read` supplies bounded version-pinned source text and applies external
+content policy, including section headings. `extraction_prepare`, `extraction_next`
+and `extraction_submit` explicitly mutate extraction state; `extraction_status`
+reads progress. These operations share CLI services and do not dispatch a model.
+See [Agent workflows](AGENT_WORKFLOWS.md) for contracts, skills and both-client
+smoke paths.
 
 ### 10.3 The `--redact-private` valve
 

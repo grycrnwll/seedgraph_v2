@@ -283,9 +283,11 @@ def _span_detail(
     if row is None:
         return None, None, None, None
     quote, section = row[0], row[1]
+    from ..semantic.current import CURRENT_CLAIMS_CTE
+
     crow = project_conn.execute(
-        "SELECT c.epistemic_type, c.assertion_status FROM claim_spans cs "
-        "JOIN extracted_claims c ON c.claim_id = cs.claim_id "
+        CURRENT_CLAIMS_CTE + "SELECT c.epistemic_type, c.assertion_status FROM claim_spans cs "
+        "JOIN current_claims c ON c.claim_id = cs.claim_id "
         "WHERE cs.span_id = ? ORDER BY cs.rank LIMIT 1",
         (span_id,),
     ).fetchone()
@@ -733,15 +735,13 @@ def generate(
         # Provider/transport error or unrepairable JSON -> degrade, never fabricate
         # prose (risk table). Warning text derived from the executor error code.
         warn = _warn_for(disp.error)
-        env, _allowed = _retrieval_only_envelope(
+        env, deg_allowed = _retrieval_only_envelope(
             candidates, spec, project_conn,
             warnings=warnings + [warn], llm_provenance=provenance,
         )
-        # C9: the `env, _allowed` construction is OBSERVED, not fixed — env carries the
-        # all-candidate retrieved_item_ids while we still return build_prompt's shown-only
-        # `allowed` (the pre-existing wrinkle, a separate backlog item). A prompt WAS
-        # built + dispatched here, so the trace records what it showed + the hash.
-        return env, allowed, ComposeTrace(
+        # The delivered retrieval-only evidence has its own complete allowlist.
+        # The trace still records only the prompt actually sent to the failed model.
+        return env, deg_allowed, ComposeTrace(
             shown_evidence=shown_report.evidence,
             cut_index=shown_report.cut_index,
             prompt_version=PROMPT_VERSION,

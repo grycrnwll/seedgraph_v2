@@ -69,6 +69,7 @@ class ProjectHandle:
     db_path: Path
     engine: Engine
     config: ProjectConfig
+    read_only: bool = False
 
 
 def create_project(
@@ -118,12 +119,16 @@ def create_project(
     )
 
 
-def open_project(slug: str, *, root: Path | None = None) -> ProjectHandle:
+def open_project(
+    slug: str, *, root: Path | None = None, read_only: bool = False
+) -> ProjectHandle:
     """Open an existing project, round-tripping ``project.yaml`` into the handle's
     :class:`ProjectConfig`.
 
     Hard-errors if the project directory is absent. The schema migrate step is
     re-run (idempotent; D6) so an opened project is always at the current version.
+    With ``read_only=True``, validate an existing checkpointed corpus instead;
+    setup and upgrades are separate explicit operations, never side effects.
     """
     paths.validate_slug(slug)
     project_dir = layout.project_dir(slug, root)
@@ -131,14 +136,38 @@ def open_project(slug: str, *, root: Path | None = None) -> ProjectHandle:
         raise ValidationError(f"project '{slug}' does not exist at {project_dir}")
     cfg = load_project_config(slug, root)
     db_path = layout.project_db_path(slug, root)
-    engine = make_project_engine(db_path)
-    init_project_db(engine)
+    if read_only:
+        from sqlalchemy import create_engine
+        from sqlalchemy.pool import NullPool
+
+        from ..db.connection import ReadOnlyCorpusError, connect_readonly
+        from ..db.migrations import current_version, latest_version
+
+        conn = connect_readonly(db_path)
+        try:
+            version = current_version(conn)
+            expected = latest_version("project")
+            if version != expected:
+                raise ReadOnlyCorpusError(
+                    "setup_required" if version == 0 else "schema_mismatch",
+                    f"Project schema is {version}; expected {expected}. "
+                    "Initialize or upgrade the corpus separately, then retry.",
+                )
+        finally:
+            conn.close()
+        engine = create_engine(
+            "sqlite://", creator=lambda: connect_readonly(db_path), poolclass=NullPool
+        )
+    else:
+        engine = make_project_engine(db_path)
+        init_project_db(engine)
     return ProjectHandle(
         slug=slug,
         root=paths.resolve_home(root),
         db_path=db_path,
         engine=engine,
         config=cfg,
+        read_only=read_only,
     )
 
 

@@ -17,3 +17,4 @@ second_test_*
 docs/*
 !docs/QUICKSTART.md
 !docs/USER_HANDBOOK.md
+!docs/AGENT_WORKFLOWS.md

@@ -76,6 +76,7 @@ from .runner import (  # heavy reuse — phase_4 owns these (plan §5)
     current_note,
     profile_temperature,
     resolve_source_access_class,
+    save_normalized_note,
 )
 from .schema import PROMPT_VERSION, SCHEMA_ID, SCHEMA_VERSION
 from .validator import validate_note
@@ -832,33 +833,6 @@ def extract_note_chunked(
         per_chunk_drafts, source_run_ids=map_run_ids
     )
 
-    # 12. ONE transaction (D7): reduce run + note + claims + claim_spans + FTS, with
-    #     every found quote anchored against the FULL markdown via phase-3 ensure_span
-    #     over the raw_conn bridge (plan §4.5 / §6).
-    conn = raw_conn(project_session)
-    note_id = new_id("note")
-    now = _now()
-    _insert_run(
-        conn,
-        run_id=reduce_run_id,
-        work_id=work_id,
-        markdown_id=markdown_id,
-        markdown_hash=markdown_hash,
-        schema_id=schema_id,
-        run_status="success",
-        access_class=resolved_class,
-        extraction_mode="chunked_reduce",
-        model_name=model,
-        provider=route.provider,
-        access_mode=route.access_mode,
-        temperature=temperature,
-        external_full_text=1 if any_external else 0,
-        input_tokens=total_input,
-        output_tokens=total_output,
-        estimated_cost=total_cost,
-        build_run_id=build_run_id,
-        chunk_count=chunk_count,
-    )
     raw_note_json = json.dumps(
         {
             "schema_id": schema_id,
@@ -881,105 +855,19 @@ def extract_note_chunked(
             ],
         }
     )
-    conn.execute(
-        "INSERT INTO structured_notes (note_id, extraction_run_id, work_id, markdown_id, "
-        "markdown_hash, schema_id, schema_version, prompt_version, archetype, access_class, "
-        "raw_note_json, note_text, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            note_id,
-            reduce_run_id,
-            work_id,
-            markdown_id,
-            markdown_hash,
-            schema_id,
-            SCHEMA_VERSION,
-            PROMPT_VERSION,
-            archetype,
-            resolved_class,
-            raw_note_json,
-            note_text,
-            now,
-        ),
+    saved = save_normalized_note(
+        project_session, cache_session, work_id=work_id, markdown_id=markdown_id,
+        markdown_hash=markdown_hash, schema_id=schema_id, drafts=merged_claims,
+        note_text=note_text, archetype=archetype, raw_note_json=raw_note_json,
+        resolved_class=resolved_class, model_name=model, provider=route.provider,
+        access_mode=route.access_mode, temperature=temperature,
+        external_full_text=1 if any_external else 0, input_tokens=total_input,
+        output_tokens=total_output, estimated_cost=total_cost,
+        build_run_id=build_run_id, cache_root=cache_root,
+        extraction_run_id=reduce_run_id, extraction_mode="chunked_reduce",
+        chunk_count=chunk_count,
     )
-
-    ensure_fts_tables(project_session)
-
-    span_count = 0
-    for draft in merged_claims:
-        claim_id = new_id("claim")
-        status = draft.status
-        inferred_explanation = draft.inferred_explanation
-        span_ids: list[str] = []
-        if status == _FOUND:
-            quotes = getattr(draft, "exact_quotes", None) or (
-                [draft.exact_quote] if draft.exact_quote else []
-            )
-            for quote in quotes:
-                if not quote:
-                    continue
-                # Anchor against the FULL markdown (the chunk only scoped the read):
-                # a document-wide-unique quote anchors with correct full-doc offsets
-                # regardless of which chunk surfaced it; non-unique -> None (no span).
-                sid = ensure_span(
-                    conn,
-                    cache_session,
-                    cache_root,
-                    markdown_id=markdown_id,
-                    work_id=work_id,
-                    exact_quote=quote,
-                    access_class=resolved_class,
-                    span_kind="manual",
-                )
-                if sid is not None and sid not in span_ids:
-                    span_ids.append(sid)
-            if not span_ids:
-                # No verbatim anchor -> downgrade to ambiguous, NEVER fabricate a span
-                # (phase-4 rule, unchanged).
-                status = _AMBIGUOUS
-                note_msg = "quote could not be anchored verbatim; downgraded to ambiguous"
-                inferred_explanation = (
-                    f"{inferred_explanation} | {note_msg}" if inferred_explanation else note_msg
-                )
-
-        conn.execute(
-            "INSERT INTO extracted_claims (claim_id, structured_note_id, extraction_run_id, "
-            "work_id, claim_type, claim_subtype, field_key, normalized_label, claim_text, "
-            "status, epistemic_type, assertion_status, inferred_explanation, confidence, "
-            "access_class, created_at, source_chunk_index, source_extraction_run_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                claim_id,
-                note_id,
-                reduce_run_id,
-                work_id,
-                draft.claim_type,
-                draft.claim_subtype,
-                draft.field_key,
-                draft.normalized_label,
-                draft.claim_text,
-                status,
-                draft.epistemic_type,
-                draft.assertion_status,
-                inferred_explanation,
-                draft.confidence,
-                resolved_class,
-                now,
-                getattr(draft, "source_chunk_index", None),
-                getattr(draft, "source_extraction_run_id", None),
-            ),
-        )
-        for rank, sid in enumerate(span_ids):
-            conn.execute(
-                "INSERT INTO claim_spans (claim_id, span_id, rank, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (claim_id, sid, rank, now),
-            )
-            span_count += 1
-
-    reindex_claim_fts(project_session, note_id)
-    reindex_note_fts(project_session, note_id)
-    project_session.commit()
+    note_id = saved.note_id
     # NOTE: the single aggregate usage row was already written right after the MAP
     # loop (Track 1: one log_llm_usage per dispatched work), so the reduce step
     # adds no further usage row.

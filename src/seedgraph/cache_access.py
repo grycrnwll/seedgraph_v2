@@ -106,6 +106,25 @@ def read_markdown(
     )
 
 
+def proven_markdown_source(
+    cache_conn: sqlite3.Connection, source_file_id: str,
+    source_file_hash: str, markdown_hash: str,
+) -> bool:
+    """Prove producer lineage independently of the shared blob's access pointer.
+
+    Distinct PDFs can produce identical Markdown. The single markdown row keeps
+    a most-restrictive access representative; successful conversion_runs retain
+    every actual source-to-output association.
+    """
+    return cache_conn.execute(
+        "SELECT 1 FROM conversion_runs c JOIN source_files s "
+        "ON s.source_file_id=c.source_file_id "
+        "WHERE c.source_file_id=? AND c.source_file_hash=? AND s.file_hash=? "
+        "AND c.markdown_hash=? AND c.run_status='success' LIMIT 1",
+        (source_file_id, source_file_hash, source_file_hash, markdown_hash),
+    ).fetchone() is not None
+
+
 def current_markdown_for_source(
     cache_conn: sqlite3.Connection, source_file_id: str, source_file_hash: str
 ) -> tuple[str, str] | None:
@@ -114,7 +133,9 @@ def current_markdown_for_source(
     Keyed on the denormalized lineage (``source_file_id`` + ``source_file_hash``) so
     "a newer markdown exists for this source" stays detectable even after the old
     ``markdown_id`` row is GC'd (decisions 18/32/42; doc 03 §12). Returns ``None``
-    when the source/markdown was pruned. Backs lazy staleness in
+    when no successful conversion remains for this source. The returned identity
+    may outlive its Markdown row or blob: callers must use ``read_markdown`` to
+    check availability, and must not silently fall back to older text. Backs lazy staleness in
     ``spans verify`` / ``reanchor`` / ``doctor`` / ``index``.
 
     Thin wrapper over phase_5b's :func:`doctor_reconcile.current_markdown_for_source`

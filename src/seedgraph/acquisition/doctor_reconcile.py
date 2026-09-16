@@ -66,21 +66,30 @@ def current_markdown_for_source(
     *,
     file_hash: str,
 ) -> "tuple[str | None, str | None, str]":
-    """Newest successful markdown for a source lineage (§4.5).
+    """Newest successful conversion identity for a source lineage (§4.5).
 
+    The identity may remain after its Markdown row/blob is pruned; callers verify
+    availability separately. Never select an older conversion just because its
+    bytes survive. Shared blob access pointers do not define producer lineage.
     Returns ``(markdown_id, markdown_hash, status)`` where ``status`` is ``'ok'``
-    (a current markdown exists) or ``'none'``; newest is by ``created_at``.
+    (a successful conversion identity exists) or ``'none'``; newest is by
+    ``created_at`` with ``conversion_run_id`` as the deterministic tie-break.
     """
     source_file_id = f"sf_{file_hash}"
     row = conn.execute(
-        "SELECT markdown_id, markdown_hash FROM markdown_documents "
-        "WHERE source_file_id = ? AND conversion_status = 'success' "
-        "ORDER BY created_at DESC, markdown_id DESC LIMIT 1",
-        (source_file_id,),
+        "SELECT c.markdown_hash FROM conversion_runs c "
+        "JOIN source_files s ON s.source_file_id=c.source_file_id "
+        "WHERE c.source_file_id=? AND c.source_file_hash=? AND s.file_hash=? "
+        "AND c.run_status='success' AND c.markdown_hash IS NOT NULL "
+        "ORDER BY c.created_at DESC, c.conversion_run_id DESC LIMIT 1",
+        (source_file_id, file_hash, file_hash),
     ).fetchone()
     if row is None:
         return (None, None, "none")
-    return (row["markdown_id"], row["markdown_hash"], "ok")
+    # The content-addressed row can be shared by many producing sources. Its
+    # source pointer is access provenance, not the exclusive production link.
+    markdown_hash = row["markdown_hash"]
+    return (f"md_{markdown_hash}", markdown_hash, "ok")
 
 
 def bridge_row_status(

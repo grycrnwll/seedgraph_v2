@@ -107,7 +107,12 @@ def run(
             current = cache_access.current_markdown_for_source(
                 cache_conn, source_file_id, source_file_hash
             )
-            if current is None:
+            try:
+                current_md = (cache_access.read_markdown(cache_conn, cache_root, current[0])
+                              if current is not None else None)
+            except (sqlite3.Error, ValueError, OSError):
+                current_md = None
+            if current_md is None:
                 report.spans_missing += 1
             continue
         if anchor_status == "anchored":

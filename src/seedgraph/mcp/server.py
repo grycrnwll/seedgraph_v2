@@ -23,6 +23,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from .. import __version__, paths
 from .context import ServerContext
 from .resources import register_prompts, register_resources
+from .tools_source import register_source_tools
+from .tools_extraction import register_extraction_tools
 from .tools_read import (
     register_ask_tool,
     register_concept_graph_tools,
@@ -75,6 +77,8 @@ def build_server(*, root: Path | None = None, redact_private: bool = False) -> F
     register_read_tools(mcp, ctx)
     register_concept_graph_tools(mcp, ctx)
     register_ask_tool(mcp, ctx)
+    register_source_tools(mcp, ctx)
+    register_extraction_tools(mcp, ctx)
 
     # Chunk 4: the three §4.2 resources (the `graph.json` export — hard
     # `allow_private=False`, no parameter path to True — plus the two static docs

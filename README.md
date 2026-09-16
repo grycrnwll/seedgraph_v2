@@ -135,9 +135,9 @@ seedgraph ask "What identification assumptions do these papers rely on?" \
 seedgraph project agent-setup my_project --dir .
 ```
 
-Every `ask` above persists the answer envelope + trace pair unconditionally — `--save` is a
-no-op — and echoes both `saved <path>` lines; the pair is also inspectable on disk (web view +
-`answer trace-export`). See `docs/USER_HANDBOOK.md` §4.12.
+CLI and MCP `ask` attempt saving by default and return an explicit persistence status.
+Use `--no-save` to skip answer/trace artifacts; `--json` emits one JSON value. A save
+failure still returns evidence with `not_saved`. See [agent workflows](docs/AGENT_WORKFLOWS.md).
 
 Full happy-path walkthrough: **`docs/QUICKSTART.md`**. Gotchas, config, storage layout, and
 privacy gates: **`docs/USER_HANDBOOK.md`**.
@@ -175,18 +175,17 @@ pip install -e ".[mcp]"                                   # the optional extra
 claude mcp add seedgraph -- <python> -m seedgraph mcp serve   # register with Claude Code
 ```
 
-It serves **16 read-only tools** (project/corpus reads, the concept-overlay and search/graph
-tools, and `ask`), two docs resources plus a `graph.json` resource template, and the
-`semantic_query` prompt that carries the honesty rules. Nothing on the surface can mutate a
-project, and `ask` defaults to `no_llm=true` — the free retrieval floor — so nothing spends
-unless you explicitly pass `no_llm=false`. The budget-confirmation handshake is **conditional**:
+It serves corpus/query tools, bounded `work_read`, and explicit extraction operations
+(`extraction_prepare`, `extraction_next`, `extraction_submit`, `extraction_status`).
+Prepare, next and submit may mutate extraction state. `ask` defaults to `no_llm=true`;
+paid synthesis is selected with `no_llm=false`. The budget-confirmation handshake is **conditional**:
 it fires only when the project's budget policy arms `require_confirmation_above_usd` or the
 monthly soft limit is crossed — with no policy armed, a paid call proceeds unprompted, so arm
 that setting before using the paid path (the spend cap is advisory; a hard stop is not yet
 implemented).
 
-> "Read-only" means no project mutation — `ask` still writes its answer + trace artifact
-> files to disk on every call (see above); that is artifact persistence, not project state.
+> Use `no_llm=true, no_save=true` for strict read-only retrieval against an existing,
+> compatible and checkpointed corpus/cache. See [agent workflows](docs/AGENT_WORKFLOWS.md).
 
 Setup, registration snippets, the `--redact-private` valve, Inspector smoke steps, and the
 client-side error contract: **`docs/USER_HANDBOOK.md` §10**. A copyable project-scope config
@@ -218,11 +217,14 @@ API keys:       programmatic execution credentials.
 Local models:   local execution backends controlled by the user.
 ```
 
-Automated Seedgraph tasks require an API key, an official provider integration, a local model
-backend, or the no-LLM fallback. The design does not assume a consumer subscription grants
-programmatic model access. The deterministic / no-LLM spine (resolve → walk → convert → spans →
-citation graph → concept overlay → FTS search → `ask --no-llm`) is functional end-to-end
-without any model call.
+API-driven tasks use configured credentials or a local model. The explicit
+`seedgraph-extract` skill instead lets an active signed-in Codex/Claude session
+complete prepared packets and submit them through Seedgraph validation. No API key
+or application-launched client is needed for that path. Subscription use remains
+subject to the client entitlement and quota. The deterministic no-LLM retrieval
+spine works without a model call.
+
+Setup and single-paper/resumed-batch examples: **[Agent workflows](docs/AGENT_WORKFLOWS.md)**.
 
 ## Storage posture
 

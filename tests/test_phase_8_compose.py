@@ -355,6 +355,24 @@ def test_second_json_parse_failure_degrades_to_retrieval_only(conn):
     assert "compose_failed" in env.warnings
 
 
+def test_failed_dispatch_delivers_all_retrieved_evidence_with_matching_allowlist(conn):
+    cfg = make_answer_config()
+    cfg.answer.max_evidence_tokens = 1
+    cands = [
+        _candidate("s_a", "work_a", "Assumption 2 holds."),
+        _candidate("s_b", "work_b", "The rank condition holds."),
+    ]
+    env, allowed, trace = generate(
+        cands, make_spec("q"), cfg, project_conn=conn,
+        backend=FakeLLMBackend(responses=["invalid", "still invalid"]),
+    )
+    assert env.mode == AnswerMode.RETRIEVAL_ONLY
+    assert set(env.cited_span_ids) == {"s_a", "s_b"}
+    assert allowed.span_ids == frozenset(env.cited_span_ids)
+    assert allowed.retrieved_item_ids == tuple(env.retrieved_item_ids)
+    assert len(trace.shown_evidence) == 1  # records the actual attempted prompt
+
+
 def test_retrieval_only_path_returns_ranked_cited_list_empty_answer_text(conn):
     """The ``retrieval_only`` branch (no_llm) returns the ranked, cited evidence list
     with ``answer_text=""`` and makes no LLM call (decisions 58/38)."""

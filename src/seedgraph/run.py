@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from contextlib import contextmanager
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -39,7 +41,45 @@ class RunManifest:
     sections: dict = field(default_factory=dict)
 
 
+def validate_run_id(run_id: str) -> None:
+    """Run IDs are names, never user-controlled relative or absolute paths."""
+    if (not isinstance(run_id, str) or len(run_id) > 120
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", run_id)):
+        raise SeedgraphError("invalid run ID; use the ID returned by prepare")
+
+
+@contextmanager
+def batch_writer(slug: str, run_id: str, *, root=None):
+    """Nonblocking OS lock, automatically released when the host process dies."""
+    directory = _run_dir(slug, run_id, root)
+    if not directory.is_dir():
+        raise SeedgraphError("unknown extraction batch")
+    with open(directory / "writer.lock", "a+b") as handle:
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise SeedgraphError("another process is writing this batch; retry later") from exc
+        try:
+            yield directory
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def _run_dir(slug: str, run_id: str, root: Path | str | None) -> Path:
+    validate_run_id(run_id)
     return paths.project_dir(slug, root) / "runs" / run_id
 
 
@@ -53,6 +93,8 @@ def _atomic_write_json(path: Path, data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
@@ -183,6 +225,7 @@ def append_event(
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
             handle.flush()
+            os.fsync(handle.fileno())
     return seq
 
 
@@ -225,7 +268,7 @@ def _status_from_events(events: list[dict]) -> str | None:
     if not events:
         return None
     last = events[-1].get("event")
-    if last in ("finished", "failed", "interrupted"):
+    if last in ("finished", "failed", "interrupted", "paused", "awaiting_host"):
         return last
     return "running"
 
@@ -250,6 +293,14 @@ def mark_interrupted_runs(slug: str, *, root: Path | str | None = None) -> list[
     stamped: list[str] = []
     for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
         run_id = run_dir.name
+        manifest_path = run_dir / "manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifest = {}
+            if manifest.get("sections", {}).get("agent_extraction", {}).get("owner") == "external_host":
+                continue
         events = read_events(slug, run_id, root=root)
         if _status_from_events(events) != "running":
             continue

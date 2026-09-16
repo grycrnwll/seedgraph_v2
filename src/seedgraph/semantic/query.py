@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from .current import CURRENT_CLAIMS_CTE
+
 
 def list_concepts(
     conn: sqlite3.Connection,
@@ -221,8 +223,9 @@ def concept_detail(conn: sqlite3.Connection, concept_id: str) -> dict | None:
     papers = [
         {"work_id": r[0], "title": r[1], "year": r[2]}
         for r in conn.execute(
-            "SELECT DISTINCT w.work_id, w.canonical_title, w.year "
+            CURRENT_CLAIMS_CTE + "SELECT DISTINCT w.work_id, w.canonical_title, w.year "
             "FROM claim_concepts cc JOIN works w ON w.work_id = cc.work_id "
+            "JOIN current_claims ec ON ec.claim_id = cc.claim_id "
             "WHERE cc.concept_id = ? ORDER BY w.work_id",
             (concept_id,),
         ).fetchall()
@@ -237,8 +240,8 @@ def concept_detail(conn: sqlite3.Connection, concept_id: str) -> dict | None:
             "epistemic_type": r[4],
         }
         for r in conn.execute(
-            "SELECT ec.claim_id, ec.work_id, ec.claim_type, ec.claim_text, cc.epistemic_type "
-            "FROM claim_concepts cc JOIN extracted_claims ec ON ec.claim_id = cc.claim_id "
+            CURRENT_CLAIMS_CTE + "SELECT ec.claim_id, ec.work_id, ec.claim_type, ec.claim_text, cc.epistemic_type "
+            "FROM claim_concepts cc JOIN current_claims ec ON ec.claim_id = cc.claim_id "
             "WHERE cc.concept_id = ? ORDER BY ec.claim_id",
             (concept_id,),
         ).fetchall()
@@ -252,8 +255,9 @@ def concept_detail(conn: sqlite3.Connection, concept_id: str) -> dict | None:
             "access_class": r[3],
         }
         for r in conn.execute(
-            "SELECT DISTINCT es.span_id, es.work_id, es.exact_quote, es.access_class "
+            CURRENT_CLAIMS_CTE + "SELECT DISTINCT es.span_id, es.work_id, es.exact_quote, es.access_class "
             "FROM claim_concepts cc "
+            "JOIN current_claims ec ON ec.claim_id = cc.claim_id "
             "JOIN claim_spans cs ON cs.claim_id = cc.claim_id "
             "JOIN evidence_spans es ON es.span_id = cs.span_id "
             "WHERE cc.concept_id = ? ORDER BY es.span_id",
@@ -284,14 +288,14 @@ def concept_provenance(
     Optionally narrowed to a single ``work_id``. project.db-local; no cache.db read.
     """
     sql = (
-        "SELECT ec.work_id, w.canonical_title, w.year, "
+        CURRENT_CLAIMS_CTE + "SELECT ec.work_id, w.canonical_title, w.year, "
         "cc.claim_id, ec.claim_type, ec.claim_subtype, ec.claim_text, "
         "ec.extraction_run_id, ec.access_class, "
         "es.span_id, es.exact_quote, es.start_char, es.end_char, "
         "es.page_start, es.page_end, es.access_class, "
         "ds.heading_path, ds.heading_text, cs.rank "
         "FROM claim_concepts cc "
-        "JOIN extracted_claims ec ON ec.claim_id = cc.claim_id "
+        "JOIN current_claims ec ON ec.claim_id = cc.claim_id "
         "JOIN works w ON w.work_id = ec.work_id "
         "LEFT JOIN claim_spans cs ON cs.claim_id = cc.claim_id "
         "LEFT JOIN evidence_spans es ON es.span_id = cs.span_id "
@@ -349,11 +353,12 @@ def concept_provenance_counts(
         return {}
     placeholders = ",".join("?" for _ in concept_ids)
     rows = conn.execute(
-        "SELECT cc.concept_id, "
+        CURRENT_CLAIMS_CTE + "SELECT cc.concept_id, "
         "COUNT(DISTINCT cc.work_id) AS papers, "
         "COUNT(DISTINCT cc.claim_id) AS claims, "
         "COUNT(DISTINCT es.span_id) AS spans "
         "FROM claim_concepts cc "
+        "JOIN current_claims ec ON ec.claim_id = cc.claim_id "
         "LEFT JOIN claim_spans cs ON cs.claim_id = cc.claim_id "
         "LEFT JOIN evidence_spans es ON es.span_id = cs.span_id "
         f"WHERE cc.concept_id IN ({placeholders}) "

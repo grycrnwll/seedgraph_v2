@@ -181,6 +181,8 @@ def save_trace(
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(trace.model_dump_json(indent=2))
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):

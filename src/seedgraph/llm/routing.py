@@ -55,6 +55,24 @@ class NoLlmRoute:
     deterministic_fallback: bool
 
 
+def assert_external_content_allowed(
+    access_class: str, cfg: ProjectConfig, *, task_type: str = "note_extraction",
+    profile_id: str = "external_agent",
+) -> None:
+    """Apply the same full-text gate to hosted APIs and signed-in agent clients."""
+    if not cfg.content_policy.allow_external_llm:
+        raise ConfigError("external LLM handoff is disabled by content_policy.allow_external_llm=false")
+    route = cfg.llm.routes.get(task_type)
+    if (route is not None and route.allowed_access_classes is not None
+            and access_class not in route.allowed_access_classes):
+        raise ConfigError(f"task '{task_type}' does not permit access_class='{access_class}'")
+    if (access_class != AccessClass.open_access
+            and not cfg.content_policy.external_llm_for_private_full_text):
+        raise ConfigError(_CONTENT_GATE_MESSAGE.format(
+            task_type=task_type, profile_id=profile_id, access_class=access_class
+        ))
+
+
 def resolve_route(task_type: str, access_class: str, cfg: ProjectConfig) -> Route | NoLlmRoute:
     route = cfg.llm.routes.get(task_type)
     if route is None:
@@ -93,15 +111,9 @@ def resolve_route(task_type: str, access_class: str, cfg: ProjectConfig) -> Rout
         # licensed_future / unknown, plus any unrecognized value), so an external
         # dispatch of it requires an explicit per-project confirmation
         # (``external_llm_for_private_full_text``, set by ``--confirm-external``).
-        if (
-            access_class != AccessClass.open_access
-            and not cfg.content_policy.external_llm_for_private_full_text
-        ):
-            raise ConfigError(
-                _CONTENT_GATE_MESSAGE.format(
-                    task_type=task_type, profile_id=chosen_id, access_class=access_class
-                )
-            )
+        assert_external_content_allowed(
+            access_class, cfg, task_type=task_type, profile_id=chosen_id
+        )
         # Embeddings open-access-only external-fallback gate (decision 51).
         if (
             route.external_fallback_access_class is not None

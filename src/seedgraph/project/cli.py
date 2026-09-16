@@ -160,12 +160,14 @@ def project_agent_setup(
     dir: Path = typer.Option(
         Path.cwd, "--dir", help="Target directory for the CLAUDE.md norm block (default: cwd)."
     ),
-    skills_dir: Path = typer.Option(
-        lambda: Path.home() / ".claude" / "skills",
+    skills_dir: Optional[Path] = typer.Option(
+        None,
         "--skills-dir",
         help="Global skills directory to deploy the seedgraph skill into.",
     ),
     no_skill: bool = typer.Option(False, "--no-skill", help="Skip installing the global skill."),
+    extraction: bool = typer.Option(False, "--extraction", help="Install only the explicit extraction skill."),
+    client: str = typer.Option("claude", "--client", help="Extraction host: claude or codex."),
     root: Optional[Path] = _root_option,
 ) -> None:
     """Install the ambient trigger for a research working directory.
@@ -182,10 +184,18 @@ def project_agent_setup(
                 f"no project '{slug}' under {resolve_home(root)}; "
                 f"run `seedgraph project new {slug}` first"
             )
+        if extraction:
+            if no_skill or client not in {"claude", "codex"}:
+                raise SeedgraphError("--extraction requires skill installation and --client claude|codex")
+            if skills_dir is None:
+                skills_dir = Path.home() / (".agents" if client == "codex" else ".claude") / "skills"
+            skill_path, changed = agent_setup.install_extraction_skill(skills_dir, client=client)
+            typer.echo(f"extraction skill: {skill_path} ({'updated' if changed else 'already current'})")
+            return
         claude_path = agent_setup.write_claude_block(dir, slug)
         skill_line: Optional[str] = None
         if not no_skill:
-            skill_path, changed = agent_setup.install_skill(skills_dir)
+            skill_path, changed = agent_setup.install_skill(skills_dir or Path.home() / ".claude" / "skills")
             skill_line = f"{skill_path} ({'updated' if changed else 'already current'})"
     except SeedgraphError as exc:
         _fail(exc)

@@ -32,7 +32,6 @@ from sqlmodel import Session
 from .. import run as run_mod
 from ..acquisition import service as acquisition_service
 from ..answer import harness as answer_harness
-from ..answer import trace as answer_trace
 from ..answer.types import AnswerMode
 from ..errors import ConfigError, SeedgraphError
 from ..fts import search as fts_search
@@ -639,12 +638,9 @@ def register_ask_tool(mcp: Any, ctx: Any) -> None:
     re-raised as ``gate_refused`` carrying the router's ORIGINAL message verbatim —
     never re-worded, never softened, never swallowed into a silent degrade.
 
-    **Persistence (T6, `trace_plans/00_trace_design.md` §5/§7).** Every ask persists
-    BOTH the envelope and its ``AnswerTrace`` beside the project's ``answers/`` — this
-    reverses the earlier "an answer is a query, not a run" stance (decisions 16/35,
-    now amended, not repealed: ``run_id`` still controls only the nesting path). The
-    envelope's ``answer_id`` is the lookup key; the response payload is unaffected —
-    same shape, same redaction behavior — persistence is a side effect on local disk.
+    **Persistence.** Saving both answer and trace is best-effort by default.
+    Delivery adds an explicit saved/skipped/not_saved status. Combined no-LLM and
+    no-save requests validate an existing checkpointed corpus without mutations.
     """
 
     def _redacting(fn):
@@ -671,6 +667,7 @@ def register_ask_tool(mcp: Any, ctx: Any) -> None:
         graph_depth: int = 1,
         max_candidates: int = 40,
         confirm_spend: bool = False,
+        no_save: bool = False,
     ) -> dict:
         """Answer a question over the project corpus with traceable citations.
 
@@ -694,13 +691,14 @@ def register_ask_tool(mcp: Any, ctx: Any) -> None:
         bounds citation-neighborhood traversal for citation-shaped questions;
         ``max_candidates`` caps ranked candidates before token budgeting. Citation
         ``quote`` is verbatim span text, withheld for non-shareable works under
-        ``--redact-private``. Every ask persists the envelope AND its trace beside
-        the project's ``answers/`` (unredacted on disk, same posture as the CLI's
-        saved files); the returned ``answer_id`` is the lookup key.
+        ``--redact-private``. Saving both artifacts is attempted by default;
+        ``persistence`` reports saved, skipped or not_saved. ``no_save=true`` skips
+        both files; combined with no_llm it reads a checkpointed, quiescent corpus
+        without initialization or writes. Saved files remain unredacted locally.
         """
         from .server import _tool_error
 
-        h = ctx.get_handle(project)
+        h = ctx.get_handle(project, read_only=no_llm and no_save)
         if mode not in (AnswerMode.PROJECT_ONLY.value, AnswerMode.ALLOW_OUTSIDE.value):
             # `retrieval_only` is an OUTPUT mode the harness sets on a degrade; it is
             # not a valid input, so this checks the two-member input set explicitly
@@ -727,20 +725,19 @@ def register_ask_tool(mcp: Any, ctx: Any) -> None:
         except ConfigError as exc:
             # §5.2 / 38/58: the router's (or pricing gate's) own words, verbatim.
             _tool_error("gate_refused", str(exc), project=project)
+        except (SeedgraphError, OSError, sqlite3.Error, ValueError) as exc:
+            _tool_error(getattr(exc, "code", "retrieval_failed"), str(exc), project=project)
 
-        # T6: persist both artifacts, root-relative through the handle, no
-        # `run_id` (ad-hoc ask, 00 §5) — same path logic as the CLI's always-save.
-        # These are local-disk files, same class as the envelope the CLI writes:
-        # written UNREDACTED regardless of `--redact-private`, which governs only
-        # the RESPONSE below (00 §8).
-        answer_harness.save_answer(envelope, slug=project, root=h.root)
-        answer_trace.save_trace(trace, slug=project, root=h.root)
+        from ..answer.delivery import deliver
 
-        payload = envelope.model_dump(mode="json")
+        payload = deliver(envelope, trace, slug=project, root=h.root, no_save=no_save)
         if ctx.redact_private:
             # Redaction coverage (§5.1): Citation carries `quote` but no
             # access_class; stamp it from the span the quote came from so the
             # filter can withhold non-shareable verbatim text.
-            with ctx.project_conn(h) as conn:
-                _stamp_citation_access_class(conn, payload.get("citations") or [])
+            try:
+                with ctx.project_conn(h) as conn:
+                    _stamp_citation_access_class(conn, payload.get("citations") or [])
+            except (SeedgraphError, OSError, sqlite3.Error, ValueError) as exc:
+                _tool_error(getattr(exc, "code", "retrieval_failed"), str(exc), project=project)
         return payload

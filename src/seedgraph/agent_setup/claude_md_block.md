@@ -31,7 +31,7 @@ never a fact alone). Drill into the **citation graph** (deterministic lineage) a
 **Commands** (corpus resolves under `~/.seedgraph` by default; `--project` for
 ask/search, positional slug for the rest):
 - Concepts first: `seedgraph concepts list {slug}` → `seedgraph concepts show {slug} <concept_id>`
-- Grounded answer: `seedgraph ask "<q>" --project {slug} --json`  (`--no-llm` = retrieval only; every ask persists an inspectable trace — `answer trace-export`)
+- Grounded answer: `seedgraph ask "<q>" --project {slug} --json`  (`--no-llm` = retrieval only; saving is attempted by default; --no-save skips artifacts; inspect persistence.status — `answer trace-export`)
 - Span search: `seedgraph search "<term>" --project {slug}`
 - Structure: `seedgraph graph analyze {slug}`
 - Coverage: `seedgraph corpus status {slug}`

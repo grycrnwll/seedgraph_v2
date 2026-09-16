@@ -80,7 +80,8 @@ def plan_chunks(
     sections: Sequence[object],
     full_markdown: str,
     *,
-    model_caps: "ModelCapability",
+    model_caps: "ModelCapability | None" = None,
+    input_budget_tokens: int | None = None,
     prompt_overhead_tokens: int,
     reserved_output_tokens: int,
     overlap_tokens: int,
@@ -118,11 +119,14 @@ def plan_chunks(
 
     Implements: D4 (chunked oversize follow-up), D9 (capability-snapshot sizing).
     """
-    input_budget = (
-        int(model_caps.context_window_tokens)
-        - int(prompt_overhead_tokens)
-        - int(reserved_output_tokens)
-    )
+    if input_budget_tokens is not None:
+        # An external host declares a conservative budget, not model capabilities.
+        input_budget = int(input_budget_tokens) - int(prompt_overhead_tokens)
+    elif model_caps is not None:
+        input_budget = (int(model_caps.context_window_tokens)
+                        - int(prompt_overhead_tokens) - int(reserved_output_tokens))
+    else:
+        raise ValueError("model_caps or explicit input_budget_tokens is required")
     if input_budget < 1:
         # Degenerate window (overhead+output reserve >= the whole window): nothing
         # can fit, so every unit becomes an over-budget chunk (the runner then

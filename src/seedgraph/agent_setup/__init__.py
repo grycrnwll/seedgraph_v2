@@ -80,3 +80,26 @@ def install_skill(skills_dir: Path) -> tuple[Path, bool]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path, True
+
+
+def install_extraction_skill(skills_dir: Path, *, client: str = "claude") -> tuple[Path, bool]:
+    """Install the separately selected extraction skill; never change ambient rules."""
+    if client not in {"claude", "codex"}:
+        raise ValueError("client must be claude or codex")
+    path = Path(skills_dir) / "seedgraph-extract" / "SKILL.md"
+    content = _template("seedgraph_extract_skill.md")
+    if client == "claude":
+        content = content.replace("name: seedgraph-extract\n",
+                                  "name: seedgraph-extract\ndisable-model-invocation: true\n", 1)
+    changed = False
+    artifacts = {path: content}
+    if client == "codex":
+        artifacts[path.parent / "agents" / "openai.yaml"] = (
+            "policy:\n  allow_implicit_invocation: false\n"
+        )
+    for destination, text in artifacts.items():
+        if not destination.exists() or destination.read_text(encoding="utf-8") != text:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(text, encoding="utf-8")
+            changed = True
+    return path, changed
