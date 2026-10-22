@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Iterable, Optional
 
 from . import pdf, v2
@@ -14,6 +15,11 @@ def pdf_page_count(entry: dict) -> Optional[int]:
     return pdf.page_count(v2.pdf_path(entry["quote_source"]["v2_home"], entry["pdf_sha256"]))
 
 
+def _concurrency(source: Source) -> int:
+    """How many PDFs a source can render at once (a converter pool's ``size``)."""
+    return max(1, int(getattr(source, "concurrency", 1) or 1))
+
+
 def run_check(
     entries: Iterable[dict],
     old: Source,
@@ -21,16 +27,18 @@ def run_check(
     *,
     page_counter: Callable[[dict], Optional[int]] = pdf_page_count,
 ) -> list[PdfResult]:
-    """Compare OLD vs NEW for every entry; page count from the PDF, else the converter's."""
-    results = []
-    for entry in entries:
+    """Compare OLD vs NEW for every entry; page count from the PDF, else the converter's.
+
+    Entries run concurrently up to the sources' concurrency (one per pool converter,
+    so every GPU is busy); results keep manifest order."""
+
+    def one(entry: dict) -> PdfResult:
         try:
             old_r, new_r = old.rendition(entry), new.rendition(entry)
         except Exception as exc:  # one PDF failing (e.g. converter crash) must not stop the run
-            results.append(PdfResult(entry["id"], [CheckResult(
+            return PdfResult(entry["id"], [CheckResult(
                 "source", None, None, "fail", f"{type(exc).__name__}: {exc}")],
-                {"category": entry.get("category"), "old_source": old.label, "new_source": new.label}))
-            continue
+                {"category": entry.get("category"), "old_source": old.label, "new_source": new.label})
         pages = page_counter(entry)
         source = "pdf"
         if pages is None:
@@ -41,5 +49,11 @@ def run_check(
                             "old_source": old.label, "new_source": new.label})
         if new_r.page_count is not None and pages is not None and new_r.page_count != pages:
             result.meta["converter_page_count_mismatch"] = new_r.page_count
-        results.append(result)
-    return results
+        return result
+
+    entries = list(entries)
+    workers = max(_concurrency(old), _concurrency(new))
+    if workers == 1:
+        return [one(e) for e in entries]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(one, entries))

@@ -8,6 +8,8 @@ from typer.testing import CliRunner
 
 from _golden_fixtures import FakeV2, synthetic_markdown
 from seedgraph.cli import app
+from seedgraph.conversion import set_pool
+from support.converter import fake_pool, synthetic_pdf
 
 runner = CliRunner()
 QUOTES = ["alpha beta", "gamma delta"]
@@ -66,9 +68,28 @@ def test_check_failure_gives_nonzero_exit(tmp_path):
     assert "FAIL" in res.output
 
 
-def test_check_unknown_id_and_unwired_convert(tmp_path):
+def test_check_unknown_id_exits_2(tmp_path):
     _, _, home, _ = _init(tmp_path)
     res = runner.invoke(app, ["golden", "check", "--new", "v2-stored", "--ids", "GS77", "--root", str(home)])
     assert res.exit_code == 2 and "GS77" in res.output
-    res = runner.invoke(app, ["golden", "check", "--new", "convert", "--root", str(home)])
-    assert res.exit_code == 2 and "not wired" in res.output
+
+
+def test_check_new_convert_uses_shared_pool_and_shuts_it_down(tmp_path):
+    fake, _, home, _ = _init(tmp_path)
+    [entry] = json.loads((home / "golden_set.json").read_text(encoding="utf-8"))
+    pdf_dir = fake.home / "cache" / "pdfs"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    synthetic_pdf(pdf_dir, f"{entry['pdf_sha256']}.pdf", pages=3)
+    pool = fake_pool()
+    set_pool(pool)  # conftest restores (and shuts down) the previous pool afterwards
+
+    res = runner.invoke(app, ["golden", "check", "--old", "convert", "--new", "convert", "--root", str(home)])
+
+    assert res.exit_code == 0, res.output
+    [rdir] = list((home / "golden_reports").iterdir())
+    report = json.loads((rdir / "report.json").read_text(encoding="utf-8"))
+    assert report["meta"]["new"] == "convert"
+    assert [c["name"] for c in report["results"][0]["checks"]] != ["source"]
+    assert report["meta"]["converter_load_seconds"]  # one entry per converter that started
+    assert report["meta"]["wall_seconds"] >= 0
+    assert pool.running_count() == 0  # the check shut the pool down when it finished

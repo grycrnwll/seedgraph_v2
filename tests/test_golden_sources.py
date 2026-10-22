@@ -166,3 +166,30 @@ def test_run_check_falls_back_to_rendition_page_count(setup):
     [res] = run_check(entries, sources.V2StoredSource(), new, page_counter=lambda e: None)
     assert res.meta["page_count"] == 3
     assert res.check("page_markers").status == "pass"
+
+
+def test_run_check_converts_on_every_pool_converter_at_once(setup):
+    """A pool of N converters (``size``) gets N PDFs at a time, so both GPUs work."""
+    import threading
+
+    fake, md, entries = setup
+    p2 = fake.add_paper(markdown=synthetic_markdown(3, ["zeta"]), quotes=["zeta"])
+    entries = entries + manifest.build_manifest(
+        [{"id": "GS02", "category": "x", "md": p2["md_prefix"], "project": p2["slug"]}],
+        default_v2_home=fake.home)
+
+    class TwoSlotPool:
+        size = 2
+
+        def __init__(self):
+            self.barrier = threading.Barrier(2, timeout=10)
+
+        def convert(self, pdf_path, options):
+            self.barrier.wait()  # only returns if both PDFs are in flight together
+            return _Result(md, 3, _Timings(1.0), "1.10.2")
+
+    results = run_check(entries, sources.V2StoredSource(), sources.ConvertSource(TwoSlotPool()),
+                        page_counter=lambda e: 3)
+    assert [r.golden_id for r in results] == ["GS01", "GS02"]
+    for r in results:
+        assert "source" not in [c.name for c in r.checks], r.checks

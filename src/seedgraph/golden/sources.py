@@ -9,18 +9,15 @@ Three sources, each turning one manifest entry into a :class:`Rendition`:
   "converter_version": v}``.
 * ``convert`` (:class:`ConvertSource`) - runs a :class:`Converter` on the cached
   PDF. The converter is injected; the CLI obtains it from
-  :data:`converter_factory`.
-
-TODO(stage 0 part B): wire the warm converter pool. Set
-``seedgraph.golden.sources.converter_factory`` to a zero-argument callable that
-returns an object satisfying :class:`Converter` (e.g. a context-managed pool
-started on first use). Until then ``--new convert`` exits with "converter pool
-not wired". Nothing here imports part B's modules.
+  :data:`converter_factory`, which defaults to the process-wide warm converter
+  pool (``seedgraph.conversion.get_pool``). :meth:`ConvertSource.close` shuts the
+  converter down (the CLI calls it when a check finishes).
 """
 
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
 
@@ -57,8 +54,15 @@ class Converter(Protocol):
     def convert(self, pdf_path: Path, options: Mapping[str, Any]) -> ConvertResult: ...
 
 
-#: Hook for the real warm converter pool (see module TODO). ``None`` = not wired.
-converter_factory: Optional[Callable[[], Converter]] = None
+def shared_pool() -> Converter:
+    """The process-wide warm converter pool (imported lazily)."""
+    from seedgraph.conversion import get_pool
+
+    return get_pool()
+
+
+#: Where ``convert`` sources get their converter. ``None`` = not wired.
+converter_factory: Optional[Callable[[], Converter]] = shared_pool
 
 
 class Source(Protocol):
@@ -107,10 +111,32 @@ class ConvertSource:
     def __init__(self, converter: Converter, options: Optional[Mapping[str, Any]] = None):
         self.converter = converter
         self.options = dict(DEFAULT_CONVERT_OPTIONS if options is None else options)
+        #: PDFs that can convert at once (one per pool converter); run_check uses it
+        self.concurrency = max(1, int(getattr(converter, "size", 1) or 1))
+        #: model-load seconds of each converter start seen, keyed by GPU ("unpinned" if none)
+        self.load_seconds: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def _note_ready(self, result: Any) -> None:
+        ready = getattr(result, "ready", None) or {}
+        load = ready.get("load_seconds")
+        if load is None:
+            return
+        with self._lock:
+            seen = self.load_seconds.setdefault(str(getattr(result, "gpu", None) or "unpinned"), [])
+            if not seen or seen[-1] != load:  # same ready message => same converter start
+                seen.append(float(load))
+
+    def close(self) -> None:
+        """Shut the converter down, if it can be (the shared pool can)."""
+        shutdown = getattr(self.converter, "shutdown", None)
+        if callable(shutdown):
+            shutdown()
 
     def rendition(self, entry: dict) -> Rendition:
         path = v2.pdf_path(entry["quote_source"]["v2_home"], entry["pdf_sha256"])
         result = self.converter.convert(path, self.options)
+        self._note_ready(result)
         t = result.timings
         seconds = t.get("convert_seconds") if isinstance(t, Mapping) else getattr(t, "convert_seconds", None)
         return Rendition(
@@ -128,7 +154,7 @@ def make_source(spec: str) -> Source:
         return V2StoredSource()
     if spec == "convert":
         if converter_factory is None:
-            raise GoldenError("converter pool not wired (TODO: stage 0 part B sets sources.converter_factory)")
+            raise GoldenError("converter pool not wired (sources.converter_factory is None)")
         return ConvertSource(converter_factory())
     path = Path(spec)
     if not path.is_dir():

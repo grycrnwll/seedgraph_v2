@@ -4,11 +4,19 @@ Numbered ``schema/{scope}/NNNN_*.sql`` files are the single source of truth for
 every ``CREATE TABLE`` / CHECK / index. The runner discovers them in order and
 applies any with ``version`` greater than the recorded one, inside one
 transaction each. Idempotent: a no-op when already current.
+
+Threads in one process that migrate at the same time are serialised by a
+process-level lock, and the recorded version is read under it, so a second
+thread sees the first one's work and skips it. (``executescript`` runs each
+statement in autocommit - 0014 relies on that for ``PRAGMA foreign_keys=OFF`` -
+so SQLite's own locking cannot make a whole migration atomic. Two *processes*
+migrating the same fresh database at once are not guarded.)
 """
 
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -16,6 +24,11 @@ from typing import Literal
 Scope = Literal["cache", "project"]
 
 _SCHEMA_DIR = Path(__file__).resolve().parent / "schema"
+
+#: Serialises migrations within the process (cheap: a no-op run is a single SELECT).
+#: Re-entrant so bootstrap can also hold it while opening (and WAL-switching) a
+#: fresh database file.
+MIGRATE_LOCK = threading.RLock()
 
 
 def _now() -> str:
@@ -54,16 +67,17 @@ def current_version(conn: sqlite3.Connection) -> int:
 
 def run_migrations(conn: sqlite3.Connection, scope: Scope) -> int:
     """Apply pending migrations for ``scope``; return the resulting version."""
-    applied = current_version(conn)
-    for version, path in discover_migrations(scope):
-        if version <= applied:
-            continue
-        sql = path.read_text(encoding="utf-8")
-        with conn:  # one transaction per migration
-            conn.executescript(sql)
-            conn.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-                (version, _now()),
-            )
-        applied = version
-    return applied
+    with MIGRATE_LOCK:
+        applied = current_version(conn)  # read under the lock: another thread may have migrated
+        for version, path in discover_migrations(scope):
+            if version <= applied:
+                continue
+            sql = path.read_text(encoding="utf-8")
+            with conn:  # one transaction per migration
+                conn.executescript(sql)
+                conn.execute(
+                    "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+                    (version, _now()),
+                )
+            applied = version
+        return applied

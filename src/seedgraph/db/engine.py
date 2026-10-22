@@ -30,7 +30,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import create_engine
 
-from .migrations import run_migrations
+from .migrations import MIGRATE_LOCK, run_migrations
 
 
 def make_project_engine(path: Path) -> Engine:
@@ -72,13 +72,16 @@ def init_project_db(engine: Engine) -> None:
     files remain the sole schema source of truth. Idempotent: a no-op when already
     at the latest version.
     """
-    raw = engine.raw_connection()
-    try:
-        dbapi = getattr(raw, "dbapi_connection", None) or getattr(
-            raw, "driver_connection", None
-        )
-        if dbapi is None:  # pragma: no cover - very old SQLAlchemy fallback
-            dbapi = raw.connection
-        run_migrations(dbapi, "project")
-    finally:
-        raw.close()
+    # Locked across the connect too: its listener switches a fresh file to WAL,
+    # which fails with "database is locked" while another thread creates it.
+    with MIGRATE_LOCK:
+        raw = engine.raw_connection()
+        try:
+            dbapi = getattr(raw, "dbapi_connection", None) or getattr(
+                raw, "driver_connection", None
+            )
+            if dbapi is None:  # pragma: no cover - very old SQLAlchemy fallback
+                dbapi = raw.connection
+            run_migrations(dbapi, "project")
+        finally:
+            raw.close()

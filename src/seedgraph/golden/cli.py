@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -65,13 +66,32 @@ def golden_check(
                 _die(f"unknown golden id(s): {', '.join(unknown)}")
             entries = [e for e in entries if e["id"] in wanted]
         manifest.guard_v3_home(home, [e["quote_source"]["v2_home"] for e in entries])
-        old_src, new_src = sources.make_source(old), sources.make_source(new)
-        results = run_check(entries, old_src, new_src)
+        opened: list = []
+        try:
+            old_src = sources.make_source(old)
+            opened.append(old_src)
+            new_src = sources.make_source(new)
+            opened.append(new_src)
+            t0 = time.perf_counter()
+            results = run_check(entries, old_src, new_src)
+            wall = time.perf_counter() - t0
+        finally:
+            for src in opened:  # stop warm converters so the command exits promptly
+                close = getattr(src, "close", None)
+                if callable(close):
+                    close()
     except GoldenError as exc:
         _die(str(exc))
     typer.echo(report.render_table(results))
-    out = report.write_report(results, home, meta={"old": old_src.label, "new": new_src.label,
-                                                   "ids": [e["id"] for e in entries]})
+    meta = {"old": old_src.label, "new": new_src.label, "ids": [e["id"] for e in entries],
+            "wall_seconds": round(wall, 2)}
+    loads: dict[str, list[float]] = {}
+    for src in opened:
+        for gpu, secs in getattr(src, "load_seconds", {}).items():
+            loads.setdefault(gpu, []).extend(x for x in secs if x not in loads[gpu])
+    if loads:
+        meta["converter_load_seconds"] = loads
+    out = report.write_report(results, home, meta=meta)
     typer.echo(f"\nreport: {out}")
     failed = [r.golden_id for r in results if r.status == "fail"]
     if failed:
