@@ -21,6 +21,7 @@ from .cache.cli import cache_app
 from .db.bootstrap import ensure_cache_db, ensure_project_db
 from .db.connection import cache_db_path, connect_project_raw, project_db_path
 from .db.migrations import current_version
+from .golden.cli import golden_app
 from .graph.run_view import build_and_export
 from .project.cli import project_app, review_app
 from .run import latest_run_id
@@ -3020,6 +3021,7 @@ def answer_trace_export(
 # Grouped sub-apps (group -> verbs), mounted additively onto the root app.
 app.add_typer(answer_app, name="answer")  # trace_plans 01 chunk 4: trace-export
 app.add_typer(cache_app, name="cache")  # phase_1: real sub-app (NotImplementedError bodies)
+app.add_typer(golden_app, name="golden")  # v3 stage 0: golden set + converter-upgrade check
 # phase_5: real grouped sub-apps wired to the project.service / project.review core.
 app.add_typer(project_app, name="project")
 app.add_typer(review_app, name="review")

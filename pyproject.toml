@@ -53,6 +53,10 @@ dependencies = [
     # removed `mcp.shared.memory.create_connected_server_and_client_session`, which
     # the in-memory MCP tests use; moving to 2.x is a deliberate, tested bump.
     "mcp>=1.28.1,<2",
+    # Golden-set check (stage 0): PDF page count for the page-marker check. Same
+    # PDF engine Marker uses, so counts agree. Binary wheel, no torch. Lazy-imported
+    # inside seedgraph/golden/pdf.py.
+    "pypdfium2>=5.14.0",
 ]
 
 [project.optional-dependencies]
