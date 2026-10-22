@@ -533,46 +533,27 @@ def _probe_ollama(root, slug) -> CheckResult:
 
 
 def _check_gpu_probe() -> CheckResult:
-    """Informational GPU probe: torch importability, detected device, ``gpu_memory_gb``.
+    """Informational GPU probe: GPUs visible to ``nvidia-smi`` and the converter version.
 
-    ALWAYS ``ok=True`` — the probe informs, it never gates anything (Build E design 8).
-    The recommended marker batch profile stays hard-coded ``conservative`` regardless
-    of what the probe sees: a broken/mismatched CUDA build (a live possibility on an
-    sm_120 box) must never silently pick a larger, OOM-prone tier off a misleading
-    VRAM number — VRAM-gated auto-tiering is exactly what produced v1's live 16 GB
-    OutOfMemoryError cascade. A wrong probe degrades to *slow*, never to *crash*.
+    The app environment has no torch (PDF conversion runs in the separate converter
+    environment), so GPUs are counted with ``nvidia-smi -L``. ALWAYS ``ok=True`` --
+    the probe informs, it never gates anything (Build E design 8). The recommended
+    marker batch profile stays hard-coded ``conservative``: a misleading probe must
+    degrade to *slow*, never to an OOM-prone tier.
     """
-    try:
-        import torch  # type: ignore  # probed lazily so doctor stays import-safe torch-less
-    except Exception as exc:  # noqa: BLE001 - torch absent/broken is informational, never a failure
-        return CheckResult(
-            "gpu_probe",
-            True,
-            f"torch not importable ({exc.__class__.__name__}) — local marker conversion "
-            f"needs the ML runtime; informational only, nothing gated",
-        )
+    from .conversion import pool as conversion_pool
 
-    device = "unknown"
-    gpu_memory_gb = None
     try:
-        if torch.cuda.is_available():
-            device = "cuda"
-            try:
-                total = torch.cuda.get_device_properties(0).total_memory
-                gpu_memory_gb = round(total / (1024**3), 1)
-            except Exception:  # noqa: BLE001 - broken/mismatched driver → leave None
-                gpu_memory_gb = None
-        elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-    except Exception:  # noqa: BLE001 - device probe failure → device stays "unknown"
-        pass
+        gpus = str(conversion_pool._nvidia_smi_gpu_count())
+    except Exception:  # noqa: BLE001 - informational only
+        gpus = "unknown"
+    version = conversion_pool.locked_marker_version() or "unknown"
     return CheckResult(
         "gpu_probe",
         True,
-        f"torch importable; device={device}; gpu_memory_gb={gpu_memory_gb}; "
-        f"recommended batch profile: conservative (hard-coded — probe never gates)",
+        f"gpus={gpus} (nvidia-smi); converter: marker-pdf {version} (converter/uv.lock); "
+        f"one warm converter per GPU; recommended batch profile: conservative "
+        f"(hard-coded — probe never gates)",
     )
 
 

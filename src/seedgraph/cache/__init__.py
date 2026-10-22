@@ -29,7 +29,6 @@ from .hashing import sha256_bytes, sha256_file, sha256_text
 from .ingest import ingest_file, reconcile_access_class
 from .marker_backend import (
     FakeMarkerBackend,
-    LocalMarkerBackend,
     MarkerBackend,
     MarkerResult,
 )
@@ -52,7 +51,6 @@ __all__ = [
     # backend
     "MarkerBackend",
     "MarkerResult",
-    "LocalMarkerBackend",
     "FakeMarkerBackend",
     # validation
     "ValidationResult",

@@ -20,3 +20,4 @@ docs/*
 !docs/USER_HANDBOOK.md
 !docs/AGENT_WORKFLOWS.md
 !docs/DEPENDENCY_POLICY.md
+!docs/CONVERTER_PROTOCOL.md

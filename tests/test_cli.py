@@ -233,63 +233,48 @@ def test_analyze_summary_bridge_shape_on_two_triangle_project():
 # --- Build E ch5a: informational GPU probe (design 8 — probe never gates) ----
 
 
-def test_doctor_gpu_probe_ok_when_torch_import_raises(monkeypatch):
-    """The check NEVER fails, even when `import torch` itself raises."""
-    import sys
-
+def test_doctor_gpu_probe_never_imports_torch_and_reports_gpus(monkeypatch):
+    """The probe counts GPUs with nvidia-smi (the app has no torch) and reports the
+    converter version pinned in converter/uv.lock. Informational: always ok."""
     from seedgraph import doctor as doctor_mod
+    from seedgraph.conversion import pool as pool_mod
 
-    # None in sys.modules makes `import torch` raise ImportError deterministically,
-    # so this holds on machines that DO have torch installed.
-    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setattr(pool_mod, "_nvidia_smi_gpu_count", lambda: 2)
     check = doctor_mod._check_gpu_probe()
     assert check.ok is True
-    assert "torch not importable" in check.detail
-
-
-def test_doctor_gpu_probe_ok_when_device_probe_raises(monkeypatch):
-    """torch imports but the device probe explodes → still ok=True, device=unknown."""
-    import sys
-    import types
-
-    from seedgraph import doctor as doctor_mod
-
-    broken = types.ModuleType("torch")
-    broken.cuda = types.SimpleNamespace(
-        is_available=lambda: (_ for _ in ()).throw(RuntimeError("driver mismatch"))
-    )
-    monkeypatch.setitem(sys.modules, "torch", broken)
-    check = doctor_mod._check_gpu_probe()
-    assert check.ok is True
-    assert "device=unknown" in check.detail
-
-
-def test_doctor_gpu_probe_reports_cuda_but_guidance_stays_conservative(monkeypatch):
-    """Happy path reports device + VRAM, and the recommended profile is still the
-    hard-coded conservative floor (a wrong probe degrades to slow, never to crash)."""
-    import sys
-    import types
-
-    from seedgraph import doctor as doctor_mod
-
-    fake = types.ModuleType("torch")
-    fake.cuda = types.SimpleNamespace(
-        is_available=lambda: True,
-        get_device_properties=lambda i: types.SimpleNamespace(total_memory=16 * 1024**3),
-    )
-    monkeypatch.setitem(sys.modules, "torch", fake)
-    check = doctor_mod._check_gpu_probe()
-    assert check.ok is True
-    assert "device=cuda" in check.detail
-    assert "gpu_memory_gb=16.0" in check.detail
+    assert "gpus=2" in check.detail
+    assert "marker-pdf 1.10.2" in check.detail
     assert "conservative" in check.detail
 
 
-def test_doctor_exits_zero_when_torch_import_raises(monkeypatch):
-    """Acceptance rider (Build E item 5): doctor exits 0 on a torch-less machine."""
-    import sys
+def test_doctor_gpu_probe_ok_when_no_gpu(monkeypatch):
+    from seedgraph import doctor as doctor_mod
+    from seedgraph.conversion import pool as pool_mod
 
-    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setattr(pool_mod, "_nvidia_smi_gpu_count", lambda: 0)
+    check = doctor_mod._check_gpu_probe()
+    assert check.ok is True
+    assert "gpus=0" in check.detail
+
+
+def test_doctor_gpu_probe_ok_when_probe_raises(monkeypatch):
+    from seedgraph import doctor as doctor_mod
+    from seedgraph.conversion import pool as pool_mod
+
+    def boom():
+        raise RuntimeError("driver mismatch")
+
+    monkeypatch.setattr(pool_mod, "_nvidia_smi_gpu_count", boom)
+    check = doctor_mod._check_gpu_probe()
+    assert check.ok is True
+    assert "unknown" in check.detail
+
+
+def test_doctor_exits_zero_without_gpu(monkeypatch):
+    """Acceptance rider (Build E item 5): doctor exits 0 on a GPU-less machine."""
+    from seedgraph.conversion import pool as pool_mod
+
+    monkeypatch.setattr(pool_mod, "_nvidia_smi_gpu_count", lambda: 0)
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert "gpu_probe" in result.output

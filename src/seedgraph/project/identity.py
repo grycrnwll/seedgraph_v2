@@ -682,7 +682,7 @@ def update_work_bibliography(
             result.ids_collided.append((id_type, value))
             continue
 
-        # Insert under a SAVEPOINT so a concurrent backfill (one _convert_worker per
+        # Insert under a SAVEPOINT so a concurrent backfill (one marker-queue worker per
         # GPU) that wins the UNIQUE(id_type,id_value) race between our SELECT and this
         # INSERT is caught + re-resolved here, not swallowed by best_effort_backfill.
         try:

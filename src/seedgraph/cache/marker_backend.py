@@ -1,10 +1,9 @@
 """Marker conversion backend (doc 11 §3 — versioned backend behind a Protocol).
 
-Marker is a heavy / optionally-GPU dependency, so it sits behind a
-:class:`MarkerBackend` ``Protocol``. ``marker-pdf`` is an install **extra**; all
-tests use :class:`FakeMarkerBackend` and never require a GPU, network, or the real
-package. The real :class:`LocalMarkerBackend` lazy-imports ``marker`` only inside
-its ``__call__`` so importing this module never pulls the heavy dep.
+Marker never runs in the app process. The real adapter is
+:class:`seedgraph.conversion.WarmMarkerBackend`, which sends the PDF to a warm
+converter in the separate converter environment (docs/CONVERTER_PROTOCOL.md). Tests
+use :class:`FakeMarkerBackend` and never need a GPU, network, or Marker.
 
 Pagination (gap 10 / decision 83): the backend passes ``cfg.paginate_output`` to
 the marker call so the markdown carries **in-markdown page-delimiter markers**
@@ -15,7 +14,7 @@ rides on the delimiters, NOT on block-JSON page extraction.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -37,6 +36,12 @@ class MarkerResult:
     markdown: str
     block_json: dict | None
     warnings: list[str]
+    #: Pages in the source PDF (from the PDF itself), when the backend knows it.
+    page_count: int | None = None
+    #: Backend timings, e.g. ``convert_seconds`` / ``wall_seconds``.
+    timings: dict = field(default_factory=dict)
+    #: Converter version that actually produced this result (worker's ready message).
+    converter_version: str | None = None
 
 
 @runtime_checkable
@@ -51,63 +56,6 @@ class MarkerBackend(Protocol):
     def version(self) -> str:
         """Backend version string captured for the conversion fingerprint."""
         ...
-
-
-class LocalMarkerBackend:
-    """Real backend over ``marker-pdf`` (lazy-imported inside ``__call__``).
-
-    Captures ``importlib.metadata.version('marker-pdf')`` as :attr:`version` and
-    ``platform.python_version()`` onto the run. Defaults to no-LLM (local,
-    deterministic); passes ``cfg.paginate_output`` to the marker call; returns
-    best-effort ``block_json`` (``None`` on the markdown-only/remote path).
-    """
-
-    @property
-    def version(self) -> str:
-        """``marker-pdf`` version via ``importlib.metadata`` (captured at runtime).
-
-        Lazy: ``importlib.metadata.version`` raises ``PackageNotFoundError`` (a
-        subclass of ``ModuleNotFoundError``) when the optional ``marker-pdf`` extra
-        is not installed, so importing this module never requires the dep.
-        """
-        from importlib.metadata import version as _pkg_version
-
-        return _pkg_version("marker-pdf")
-
-    def __call__(self, pdf_path: Path, cfg: "MarkerConfig") -> MarkerResult:
-        """Run Marker on ``pdf_path``; lazy-import the dep so module import is cheap.
-
-        Passes ``cfg.paginate_output`` to the marker call so the markdown carries
-        in-markdown page-delimiter markers (gap 10 / decision 83). No text leaves the
-        machine on the no-LLM default path. ``block_json`` is best-effort (``None``
-        on the markdown-only/remote path). This path is exercised only by the opt-in
-        ``-m marker`` smoke test; all unit tests use :class:`FakeMarkerBackend`.
-        """
-        # Lazy imports — keep marker-pdf strictly optional at package-import time.
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-        from marker.output import text_from_rendered
-
-        config: dict = {
-            "output_format": cfg.output_format,
-            "paginate_output": cfg.paginate_output,
-            "force_ocr": cfg.force_ocr,
-            "use_llm": cfg.use_llm,
-            "redo_inline_math": cfg.redo_inline_math,
-        }
-        if cfg.use_llm and cfg.llm_service:
-            config["llm_service"] = cfg.llm_service
-
-        converter = PdfConverter(artifact_dict=create_model_dict(), config=config)
-        rendered = converter(str(pdf_path))
-        markdown, _metadata, _images = text_from_rendered(rendered)
-
-        block_json: dict | None = None
-        meta = getattr(rendered, "metadata", None)
-        if isinstance(meta, dict):
-            block_json = meta
-
-        return MarkerResult(markdown=markdown, block_json=block_json, warnings=[])
 
 
 class FakeMarkerBackend:

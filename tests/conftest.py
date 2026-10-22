@@ -131,3 +131,27 @@ def _guard_paper_library(monkeypatch):
     # pathlib calls the latter, so both names must point at the wrapper.
     monkeypatch.setattr(io, "open", guarded_open)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_real_converter():
+    """Tests never start the real (GPU) converter by accident: the shared pool is
+    replaced by one whose worker exits at once, so an un-faked conversion fails fast
+    with a clear message. Tests that need conversion inject a backend or a fake pool
+    (tests/support/converter.py)."""
+    import sys
+
+    from seedgraph.conversion import ConverterPool, set_pool
+
+    disabled = ConverterPool(
+        [None],
+        command=[sys.executable, "-c",
+                 "import sys; sys.stderr.write('real converter disabled in tests'); "
+                 "sys.exit(2)"],
+        expected_version="1.10.2",
+    )
+    old = set_pool(disabled)
+    yield
+    current = set_pool(old)
+    if current is not None:
+        current.shutdown()

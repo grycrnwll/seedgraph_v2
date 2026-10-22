@@ -1,42 +1,33 @@
 """Process-global background marker-conversion queue for ``seedgraph serve``.
 
 Uploaded seed PDFs are ingested synchronously (fast: hash/dedup/store) on the
-request thread, then their slow Marker PDF->markdown conversion is ENQUEUED here and
-drained by a pool of ``N = GPU slots`` daemon workers (one paper per GPU; the rest
-wait FIFO). Unlike :mod:`seedgraph.web.jobs` (per-project, single active job), this
-queue is process-GLOBAL with ``N`` concurrent workers.
+request thread, then their slow PDF->markdown conversion is ENQUEUED here and drained
+by ``N`` daemon worker threads, where ``N`` is the size of the shared warm converter
+pool (:func:`seedgraph.conversion.get_pool`: one converter per GPU). Unlike
+:mod:`seedgraph.web.jobs` (per-project, single active job), this queue is
+process-GLOBAL with ``N`` concurrent workers.
 
-Each conversion runs in its OWN subprocess pinned to a single GPU via
-``CUDA_VISIBLE_DEVICES``: marker/Surya keep process-global model singletons + a
-shared CUDA context and are NOT safe to run concurrently in one process (2-way
-in-process concurrency reliably fails with a ``c10::Half`` overflow). A fresh
-interpreter per conversion gives each its own CUDA context, so true "1 paper per
-GPU" parallelism is safe. Worker ``i`` pins GPU ``i % num_gpus``; with no GPU
-detected there is no pin (CPU; the single effective slot is fine).
+Each queue worker converts IN this process: it calls
+:func:`acquisition.service.convert_and_bridge`, whose default backend sends the PDF to
+a warm converter child (models loaded once, pinned to one GPU) and saves the returned
+markdown here. The converter never touches a database. Marker and torch are never
+imported in the serve process.
 
-# ponytail: model weights reload per task (~10-20s each) because every conversion is
-# a fresh process. The upgrade is persistent warm worker processes (one per GPU) that
-# import marker once and take tasks over a pipe; deferred while the reload overhead
-# matters less than the isolation simplicity.
-
-``N`` is resolved ONCE when the pool starts: ``SEEDGRAPH_MARKER_SLOTS`` (int, clamped
->=1) overrides; otherwise ``torch.cuda.device_count()`` if torch is importable
-(CPU-only/no-torch => 1); otherwise 1. ``SEEDGRAPH_MARKER_TIMEOUT`` (seconds) caps a
-single conversion subprocess (default 1800).
+``N`` is resolved ONCE when the queue starts (pool size; see
+:mod:`seedgraph.conversion.pool` for ``SEEDGRAPH_MARKER_SLOTS`` /
+``SEEDGRAPH_MARKER_TIMEOUT`` / idle shutdown).
 
 State is in-memory only -- there is no persistence. A restart with items still queued
 ORPHANS them; re-upload to recover (content dedup makes that cheap). Per-task
-exceptions (including a subprocess non-zero exit / timeout) are caught and recorded as
+exceptions (including a converter crash or timeout, which the pool turns into an
+error after killing and later restarting that converter) are caught and recorded as
 ``failed`` (with the message); a worker never dies on a task exception and never
 re-raises into the request.
 """
 
 from __future__ import annotations
 
-import os
 import queue
-import subprocess
-import sys
 import threading
 import time
 
@@ -55,7 +46,6 @@ _STATUS: dict[tuple[str, str], dict] = {}
 _STARTED = False
 _STARTING = False
 _SLOTS: int | None = None
-_NUM_GPUS = 0
 _POOL: list[threading.Thread] = []
 #: Tasks currently mid-conversion (for ``wait_idle``).
 _CONVERTING = 0
@@ -63,72 +53,44 @@ _CONVERTING = 0
 #: Sentinel pushed onto the queue to retire a worker (test teardown only).
 _SENTINEL = object()
 
-#: Per-conversion subprocess timeout (seconds); ``SEEDGRAPH_MARKER_TIMEOUT`` overrides.
-_CONVERT_TIMEOUT = int(os.environ.get("SEEDGRAPH_MARKER_TIMEOUT", "1800"))
-
-
 def _resolve_slots() -> int:
-    """Resolve the worker count ONCE at pool start (see module docstring)."""
-    env = os.environ.get("SEEDGRAPH_MARKER_SLOTS")
-    if env is not None and env.strip() != "":
-        try:
-            return max(1, int(env))
-        except ValueError:
-            return 1
-    try:
-        import torch  # noqa: PLC0415 -- optional, slow; off the request thread
+    """Worker count = the shared converter pool's size (one per GPU; no torch)."""
+    from ..conversion import get_pool
 
-        n = int(torch.cuda.device_count())
-        return n if n >= 1 else 1
-    except Exception:  # noqa: BLE001 -- no torch / no CUDA => single slot
-        return 1
+    return max(1, get_pool().size)
 
 
-def _detect_num_gpus() -> int:
-    """Number of CUDA devices (0 for CPU-only / no torch). Pins one GPU per worker."""
-    try:
-        import torch  # noqa: PLC0415
+def _run_conversion(slug, work_id, source_file_id, file_hash, *, root=None) -> None:
+    """Convert one already-ingested source file through the warm pool and bridge it,
+    in this process (slow). Raises on failure (recorded by the worker). Module-level
+    so tests can monkeypatch this dispatch seam."""
+    from ..acquisition.service import convert_and_bridge
+    from ..project import service as project_service
 
-        return int(torch.cuda.device_count())
-    except Exception:  # noqa: BLE001
-        return 0
-
-
-def _run_conversion(
-    slug, work_id, source_file_id, file_hash, *, root=None, gpu_index=None
-) -> None:
-    """Convert one already-ingested source file in an ISOLATED subprocess pinned to
-    one GPU, then bridge it (slow).
-
-    Marker/Surya are not safe to run concurrently in one process, so each conversion
-    gets its own fresh interpreter + CUDA context. ``gpu_index`` is pinned via
-    ``CUDA_VISIBLE_DEVICES`` in the child's env (set BEFORE the child imports
-    torch/marker); ``None`` => no pin (CPU). The child inherits the serve env (incl.
-    ``$SEEDGRAPH_HOME``), so ``root`` is not forwarded. Raises on a non-zero exit or a
-    timeout. Module-level so tests can monkeypatch this dispatch seam."""
-    env = dict(os.environ)
-    if gpu_index is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu_index)
-    proc = subprocess.run(
-        [
-            sys.executable, "-m", "seedgraph.web._convert_worker",
-            slug, work_id, source_file_id, file_hash,
-        ],
-        env=env, capture_output=True, text=True, timeout=_CONVERT_TIMEOUT,
+    h = project_service.open_project(slug, root=root)
+    convert_and_bridge(
+        h, work_id=work_id, source_file_id=source_file_id, file_hash=file_hash,
+        cache_root=root,
     )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            (proc.stderr or proc.stdout or "marker convert subprocess failed").strip()
+    # Best-effort bibliographic backfill: replace the filename-derived title + attach
+    # ids from the converted markdown. Guarded so it can NEVER fail an
+    # already-bridged conversion (the markdown is already durable).
+    try:
+        from ..extraction.metadata import best_effort_backfill
+
+        best_effort_backfill(h, work_id)
+    except Exception as exc:  # noqa: BLE001 - backfill/import must not fail conversion
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "metadata backfill skipped for %s: %s: %s", work_id, type(exc).__name__, exc
         )
 
 
 def _worker(idx: int) -> None:
-    """Drain the global queue forever; one task at a time per worker (1 paper/GPU).
-
-    ``idx`` is this worker's stable slot index; its conversions are pinned to GPU
-    ``idx % _NUM_GPUS`` (or unpinned when no GPU is detected)."""
+    """Drain the global queue forever; one task at a time per worker. The pool hands
+    each conversion to whichever converter (GPU) is free."""
     global _CONVERTING
-    gpu_index = (idx % _NUM_GPUS) if _NUM_GPUS else None
     while True:
         task = _QUEUE.get()
         if task is _SENTINEL:
@@ -139,13 +101,10 @@ def _worker(idx: int) -> None:
             _CONVERTING += 1
             _STATUS[(slug, work_id)] = {"state": "converting", "detail": ""}
         try:
-            _run_conversion(
-                slug, work_id, source_file_id, file_hash,
-                root=root, gpu_index=gpu_index,
-            )
+            _run_conversion(slug, work_id, source_file_id, file_hash, root=root)
             with _LOCK:
                 _STATUS.pop((slug, work_id), None)
-        except Exception as exc:  # noqa: BLE001 -- record + survive (incl. subprocess timeout)
+        except Exception as exc:  # noqa: BLE001 -- record + survive (incl. crash / timeout)
             with _LOCK:
                 _STATUS[(slug, work_id)] = {"state": "failed", "detail": str(exc)}
         finally:
@@ -155,18 +114,15 @@ def _worker(idx: int) -> None:
 
 
 def _start_pool() -> None:
-    """Resolve slots + GPU count (may ``import torch``) and spawn the worker pool --
-    OFF the request thread (run from the one-shot starter in
-    :func:`_ensure_pool_started`)."""
-    global _STARTED, _STARTING, _SLOTS, _NUM_GPUS, _POOL
+    """Resolve slots (may run ``nvidia-smi``) and spawn the worker threads -- OFF the
+    request thread (run from the one-shot starter in :func:`_ensure_pool_started`)."""
+    global _STARTED, _STARTING, _SLOTS, _POOL
     slots = _resolve_slots()
-    num_gpus = _detect_num_gpus()
     with _LOCK:
         if _STARTED:
             _STARTING = False
             return
         _SLOTS = slots
-        _NUM_GPUS = num_gpus
         pool = []
         for i in range(slots):
             t = threading.Thread(
@@ -180,8 +136,8 @@ def _start_pool() -> None:
 
 
 def _ensure_pool_started() -> None:
-    """Idempotently kick off the pool WITHOUT blocking the caller: the (possibly slow,
-    torch-importing) start runs on a one-shot daemon starter thread."""
+    """Idempotently kick off the pool WITHOUT blocking the caller: the start runs on a
+    one-shot daemon starter thread."""
     global _STARTING
     with _LOCK:
         if _STARTED or _STARTING:
@@ -196,8 +152,8 @@ def enqueue(slug, work_id, source_file_id, file_hash, *, root=None) -> None:
     """Mark ``work_id`` ``queued`` and enqueue its conversion; ensure the pool runs.
 
     Non-blocking: the task is parked on the global FIFO and the pool is started off
-    the request thread (no ``import torch`` on the request path). ``root`` is captured
-    now (default ``None`` => the worker / subprocess resolves ``$SEEDGRAPH_HOME``)."""
+    the request thread. ``root`` is captured now (default ``None`` => the worker
+    resolves ``$SEEDGRAPH_HOME``)."""
     with _LOCK:
         _STATUS[(slug, work_id)] = {"state": "queued", "detail": ""}
     _QUEUE.put((slug, work_id, source_file_id, file_hash, root))
@@ -237,8 +193,8 @@ def wait_idle(timeout: float = 60.0) -> bool:
 
 def _reset_for_tests() -> None:
     """TEST-ONLY: retire the pool and clear all state so the next ``enqueue`` re-reads
-    ``SEEDGRAPH_MARKER_SLOTS`` and re-resolves the slot / GPU counts. Not production."""
-    global _STARTED, _STARTING, _SLOTS, _NUM_GPUS, _POOL, _QUEUE, _CONVERTING
+    the pool size. Not production."""
+    global _STARTED, _STARTING, _SLOTS, _POOL, _QUEUE, _CONVERTING
     for _ in range(1000):  # let any in-flight async start settle first
         with _LOCK:
             if not _STARTING:
@@ -255,7 +211,6 @@ def _reset_for_tests() -> None:
         _STARTED = False
         _STARTING = False
         _SLOTS = None
-        _NUM_GPUS = 0
         _CONVERTING = 0
         _STATUS.clear()
         _QUEUE = queue.Queue()

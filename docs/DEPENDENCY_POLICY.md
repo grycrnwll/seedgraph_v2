@@ -52,3 +52,7 @@ uv run --frozen --project converter ...
 Plain `uv run` re-locks and re-syncs the environment when it thinks it is out of
 date, which can silently change what is installed. `--frozen` (or `--no-sync`)
 uses exactly what the lock says.
+
+The app reaches the converter only through warm worker processes, one per GPU,
+over a stdin/stdout pipe. The message format is in
+[CONVERTER_PROTOCOL.md](CONVERTER_PROTOCOL.md).

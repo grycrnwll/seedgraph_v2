@@ -49,7 +49,7 @@ from . import store
 from .db import init_cache_db
 from .events import record_event
 from .hashing import sha256_text
-from .marker_backend import FakeMarkerBackend, LocalMarkerBackend, MarkerBackend
+from .marker_backend import FakeMarkerBackend, MarkerBackend
 from .models import MarkdownDocument, SourceFile
 from .validate import validate_markdown
 
@@ -79,13 +79,15 @@ def _canonical_json(obj) -> str:
 
 
 def _default_backend() -> MarkerBackend:
-    """Default conversion backend. Real :class:`LocalMarkerBackend` unless the
+    """Default conversion backend: the shared warm converter pool
+    (:class:`seedgraph.conversion.WarmMarkerBackend`) unless the
     ``SEEDGRAPH_FAKE_MARKER`` env flag is set (offline CLI demos / manual smoke),
-    in which case a deterministic :class:`FakeMarkerBackend` is used. Tests always
-    pass an explicit backend, so this flag never affects assertions."""
+    in which case a deterministic :class:`FakeMarkerBackend` is used."""
     if os.environ.get("SEEDGRAPH_FAKE_MARKER"):
         return FakeMarkerBackend()
-    return LocalMarkerBackend()
+    from ..conversion import WarmMarkerBackend  # local: conversion imports cache
+
+    return WarmMarkerBackend()
 
 
 @dataclass(frozen=True)
@@ -435,7 +437,7 @@ def convert_source_file(
     """Convert a stored source file to validated markdown (or reuse a cache hit).
 
     Runs the §6 dedup+validate algorithm. ``backend`` defaults to
-    :class:`LocalMarkerBackend` (or :class:`FakeMarkerBackend` under
+    the warm converter pool (or :class:`FakeMarkerBackend` under
     ``SEEDGRAPH_FAKE_MARKER`` for offline demos). Rejects ``file_type='html'`` with
     a clear deferred-feature error. Returns the canonical ``MarkdownDocument`` (the
     reused one on a cache hit, ``markdown_id == 'md_' + markdown_hash``); raises

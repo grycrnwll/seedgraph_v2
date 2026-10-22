@@ -5,8 +5,8 @@ Defines the ``seedgraph cache …`` verbs, mounted on the root CLI as
 read) and print human-readable provenance; errors surface as a clear message +
 non-zero exit (never a traceback).
 
-Conversion verbs (``add`` / ``convert``) use the real ``LocalMarkerBackend`` by
-default; set ``SEEDGRAPH_FAKE_MARKER=1`` to drive a deterministic
+Conversion verbs (``add`` / ``convert``) use the warm converter pool
+(``seedgraph.conversion``) by default; set ``SEEDGRAPH_FAKE_MARKER=1`` to drive a deterministic
 :class:`FakeMarkerBackend` for an offline round-trip without ``marker-pdf``.
 """
 

@@ -465,11 +465,9 @@ def test_milestone_no_reprocess(tmp_path):
 
 @pytest.mark.marker
 def test_marker_smoke():
-    """Opt-in/slow: confirm the real LocalMarkerBackend adapter wires up against the
-    installed marker-pdf (version capture). Deselected by default (-m 'not marker')
-    AND self-skips when marker-pdf is not installed; never runs in CI."""
-    pytest.importorskip("marker", reason="marker-pdf optional extra not installed")
-    from seedgraph.cache.marker_backend import LocalMarkerBackend
+    """Opt-in/slow: the warm backend reports the converter version pinned in
+    converter/uv.lock (no Marker in the app environment). Deselected by default."""
+    from seedgraph.conversion import WarmMarkerBackend, locked_marker_version
 
-    version = LocalMarkerBackend().version
-    assert isinstance(version, str) and version
+    version = WarmMarkerBackend().version
+    assert isinstance(version, str) and version == locked_marker_version()

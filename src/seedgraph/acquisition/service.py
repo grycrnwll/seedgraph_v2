@@ -539,7 +539,8 @@ def convert_with_ocr_fallback(
     perturbs the conversion fingerprint, so this is a DISTINCT run — never deduped
     against the default). Returns ``(markdown, ocr_used)``; a second
     ``ConversionError`` on the OCR retry PROPAGATES (the caller records
-    ``conversion_failed``). Stays no-LLM / local (force_ocr uses local Surya OCR,
+    ``conversion_failed``). A converter crash or timeout (``ConverterCrashed``) is
+    not retried. Stays no-LLM / local (force_ocr uses local Surya OCR,
     not an external service)."""
     from ..cache.convert import ConversionError, MarkerConfig, convert_source_file
 
@@ -548,7 +549,11 @@ def convert_with_ocr_fallback(
             source_file_id, config=MarkerConfig(), backend=backend, root=cache_root
         )
         return md, False
-    except ConversionError:
+    except ConversionError as exc:
+        from ..conversion import ConverterCrashed
+
+        if isinstance(exc.__cause__, ConverterCrashed):
+            raise  # the converter died / timed out: an OCR re-run won't help
         md = convert_source_file(
             source_file_id,
             config=MarkerConfig(force_ocr=True),
