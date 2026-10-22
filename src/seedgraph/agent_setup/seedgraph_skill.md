@@ -27,7 +27,7 @@ NOT build a graph — the seedgraph CLI's build phases do that (`corpus`, `cite`
 citation graph and reason over them **at query time**. The crucial point that
 distinguishes this skill from a normal search: **the semantic match is Claude's own
 understanding of the text, not a lexical/string score.** There is NO bundled helper
-in V2 — everything lives in SQLite under `~/.seedgraph/projects/{slug}/project.db`,
+in V2 — everything lives in SQLite under `~/.seedgraph-v3/projects/{slug}/project.db`,
 and the skill drives the `seedgraph` CLI directly. Never grep/regex/string-match the
 query term to pre-filter a concept or paper list — the matches you want are often
 near-synonyms that share no words with the term. Load the WHOLE list and select by

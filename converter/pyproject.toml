@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sg-converter"
+version = "0.1.0"
+description = "Seedgraph PDF converter: Marker/Surya/torch in a separate locked environment (PDF in, markdown + page info out)"
+requires-python = ">=3.13"
+# Exact pins for the converter working set (ticket 12 / ADR-0014). Every other
+# package is pinned exactly in converter/uv.lock. Bumped only after passing the
+# golden-set check (docs/DEPENDENCY_POLICY.md). This environment must never depend
+# on seedgraph: the only contract is "PDF in -> markdown + page info out".
+dependencies = [
+    "marker-pdf==1.10.2",
+    "surya-ocr==0.17.1",
+    "torch==2.11.0",
+]
+
+[tool.uv]
+# uv-managed CPython (version in .python-version), never a system interpreter.
+python-preference = "only-managed"
+
+# CUDA 12.8 torch builds from the PyTorch index. `explicit = true` means only the
+# packages mapped in [tool.uv.sources] come from this index; everything else is PyPI.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sg_converter"]

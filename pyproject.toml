@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "seedgraph"
 version = "0.1.0"
 description = "Seedgraph v2 — local-first citation/knowledge graph substrate (Phase 0 foundation)"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "typer",
     # click>=8.2 changed flag handling and breaks Typer's option construction
@@ -43,36 +43,45 @@ dependencies = [
     # llm/secrets.py so import time stays offline, and a missing OS backend
     # (headless CI) degrades to the env-var fallback, never an install-state branch.
     "keyring",
+    # MCP server surface (`seedgraph mcp serve`). v3 always serves MCP, so this is a
+    # core dependency (it was the `[mcp]` extra in v2). Base `mcp` SDK only — NOT
+    # `mcp[cli]`, whose CLI extra pulls typer/click and would fight the
+    # `click>=8.1,<8.2` pin above. Still lazy-imported inside `seedgraph/mcp/*` and
+    # behind the `mcp serve` command body so package import stays cheap. Floor pinned
+    # to the version whose FastMCP + in-memory-transport surface chunk 0 verified
+    # against; the exact version is pinned in uv.lock. Capped below 2: mcp 2.x
+    # removed `mcp.shared.memory.create_connected_server_and_client_session`, which
+    # the in-memory MCP tests use; moving to 2.x is a deliberate, tested bump.
+    "mcp>=1.28.1,<2",
 ]
 
 [project.optional-dependencies]
+# Opt-in browser-driver for the `-m browser` Playwright smoke tests (Track 2/3,
+# deselected by default). Not installed/run as part of the offline suite.
+# Install with `uv sync --extra browser` then `uv run playwright install`.
+browser = [
+    "playwright",
+]
+# Marker / Surya / torch are NOT here: PDF conversion runs in the separate,
+# separately locked converter environment under `converter/` (see
+# docs/DEPENDENCY_POLICY.md). The app environment never contains torch.
+
+[project.scripts]
+# Interim name: v2's `seedgraph.exe` is already on PATH, so v3 installs as
+# `seedgraph-v3` until the switch-over. Renamed back to `seedgraph` at stage 7.
+# `python -m seedgraph` works regardless.
+seedgraph-v3 = "seedgraph.cli:app"
+
+[dependency-groups]
 dev = [
     "pytest",
     "httpx",
 ]
-# Heavy / optionally-GPU PDF->markdown converter. Tests use FakeMarkerBackend and
-# never require this; install with `pip install -e .[marker]` to run the opt-in
-# `-m marker` smoke test against the real LocalMarkerBackend.
-marker = [
-    "marker-pdf",
-]
-# Opt-in browser-driver for the `-m browser` Playwright smoke tests (Track 2/3,
-# deselected by default). Dev-only; not installed/run as part of the offline suite.
-# Install with `pip install -e .[browser]` then `playwright install` to run them.
-browser = [
-    "playwright",
-]
-# MCP server surface (`seedgraph mcp serve`). Base `mcp` SDK only — NOT `mcp[cli]`,
-# whose CLI extra pulls typer/click and would fight the `click>=8.1,<8.2` pin above.
-# Lazy-imported inside `seedgraph/mcp/*` and behind the `mcp serve` command body so
-# the base package still imports offline/keyless without the SDK. Floor pinned to the
-# version whose FastMCP + in-memory-transport surface chunk 0 verified against.
-mcp = [
-    "mcp>=1.28.1",
-]
 
-[project.scripts]
-seedgraph = "seedgraph.cli:app"
+[tool.uv]
+# v3 runs on uv-managed CPython (version in .python-version), never on a system
+# interpreter such as the global G:\python313 that v2 uses.
+python-preference = "only-managed"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -92,14 +101,13 @@ seedgraph = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # The opt-in real-Marker smoke test is marked `marker` and deselected by default;
-# it also self-skips on ImportError. Run it explicitly with `pytest -m marker`
-# after `pip install -e .[marker]`.
+# it also self-skips on ImportError (Marker is not in the app environment).
 addopts = "-m 'not marker and not network and not llm_network and not browser and not corpus and not mcp_client'"
 markers = [
-    "marker: opt-in slow test that requires the real marker-pdf extra (deselected by default)",
+    "marker: opt-in slow test that requires marker-pdf (not in the app environment) (deselected by default)",
     "network: opt-in real-network smoke test (phase_5b; deselected by default). Run with `pytest -m network`.",
     "llm_network: opt-in real-LLM smoke test (Track 1: live Ollama/Anthropic; deselected by default). Run with `pytest -m llm_network`.",
     "browser: opt-in Playwright browser test (Track 2/3; deselected by default). Run with `pytest -m browser`.",
     "corpus: opt-in real-corpus bibliography-overlap regression gate (Build F chunk 4; v1 criterion 11; deselected by default — the machine-local paper_library never leaves the dev box, so it never runs in CI). Run with `pytest -m corpus`.",
-    "mcp_client: opt-in real-transport MCP smoke — SPAWNS `python -m seedgraph mcp serve` as a subprocess and speaks stdio JSON-RPC to it (MCP plan 01 risk 6: Windows CRLF/encoding on stdio pipes). Deselected by default because the suite's posture is offline/keyless/NO SUBPROCESS; every other MCP test uses the SDK in-memory transport. Run with `pytest -m mcp_client` (needs the `[mcp]` extra).",
+    "mcp_client: opt-in real-transport MCP smoke — SPAWNS `python -m seedgraph mcp serve` as a subprocess and speaks stdio JSON-RPC to it (MCP plan 01 risk 6: Windows CRLF/encoding on stdio pipes). Deselected by default because the suite's posture is offline/keyless/NO SUBPROCESS; every other MCP test uses the SDK in-memory transport. Run with `pytest -m mcp_client` (mcp is a core dependency).",
 ]

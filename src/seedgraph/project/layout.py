@@ -9,7 +9,7 @@ This module is the phase_5 single import surface for project paths. ``validate_s
 trivial delegations so the project layer has one place to import from; this phase
 adds the new ``project_yaml_path``. Layout:
 
-    {root or $SEEDGRAPH_HOME or ~/.seedgraph}/projects/{slug}/
+    {root or $SEEDGRAPH_HOME or ~/.seedgraph-v3}/projects/{slug}/
         project.db
         project.yaml
         runs/                  # scaffolded empty; manifests written by later phases

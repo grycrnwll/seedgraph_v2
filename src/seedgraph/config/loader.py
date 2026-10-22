@@ -327,7 +327,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 def write_global_config(
     patch: dict[str, Any], root: Path | str | None = None
 ) -> GlobalConfig:
-    """Deep-merge ``patch`` into ``~/.seedgraph/config.yaml``, validate, atomic-write.
+    """Deep-merge ``patch`` into ``~/.seedgraph-v3/config.yaml``, validate, atomic-write.
 
     The shared write path behind both the first-run setup screen and the settings
     screen (lifted so the UI never re-implements config writing). ``patch`` carries

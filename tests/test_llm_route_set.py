@@ -2,7 +2,7 @@
 
 Offline / keyless throughout. Every invocation passes an explicit ``--root`` tmp
 home (belt-and-suspenders on top of the autouse ``isolated_home`` fixture) so the
-real ``~/.seedgraph`` is never read or written. A read-back is via the loader
+real ``~/.seedgraph-v3`` (or v2's ``~/.seedgraph``) is never read or written. A read-back is via the loader
 functions (no `route list` command — `llm profiles list` already prints the table).
 """
 

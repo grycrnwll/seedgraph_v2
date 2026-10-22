@@ -1,4 +1,5 @@
 .venv/
+converter/.venv/
 __pycache__/
 *.pyc
 *.egg-info/
@@ -18,3 +19,4 @@ docs/*
 !docs/QUICKSTART.md
 !docs/USER_HANDBOOK.md
 !docs/AGENT_WORKFLOWS.md
+!docs/DEPENDENCY_POLICY.md

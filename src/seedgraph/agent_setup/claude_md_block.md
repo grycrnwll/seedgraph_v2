@@ -28,7 +28,7 @@ between two concepts via a shared third) — as long as you show your work.
 never a fact alone). Drill into the **citation graph** (deterministic lineage) and
 **evidence spans** (verbatim, quote-hashed — ground truth) to support any claim.
 
-**Commands** (corpus resolves under `~/.seedgraph` by default; `--project` for
+**Commands** (corpus resolves under `~/.seedgraph-v3` by default; `--project` for
 ask/search, positional slug for the rest):
 - Concepts first: `seedgraph concepts list {slug}` → `seedgraph concepts show {slug} <concept_id>`
 - Grounded answer: `seedgraph ask "<q>" --project {slug} --json`  (`--no-llm` = retrieval only; saving is attempted by default; --no-save skips artifacts; inspect persistence.status — `answer trace-export`)

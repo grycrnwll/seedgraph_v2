@@ -1,7 +1,7 @@
 """Local content cache (phase_1) — public surface.
 
 Turns an uploaded/fetched PDF into a content-addressed, deduplicated,
-fully-provenanced, validated markdown artifact in ``~/.seedgraph/cache/`` +
+fully-provenanced, validated markdown artifact in ``~/.seedgraph-v3/cache/`` +
 ``cache.db``. Same bytes are never hashed-and-stored twice; same
 ``(file, converter version, config)`` is never re-converted.
 

@@ -1,7 +1,8 @@
 """Filesystem layout + slug safety (decision 17).
 
 Root resolves by ``--root`` override → ``$SEEDGRAPH_HOME`` → default
-``~/.seedgraph``. ``validate_slug`` rejects anything that is not a single
+``~/.seedgraph-v3`` (a separate home, so v3 never writes into v2's
+``~/.seedgraph``). ``validate_slug`` rejects anything that is not a single
 ``^[a-z0-9._-]+$`` path segment *before* it reaches the filesystem.
 """
 
@@ -14,7 +15,7 @@ from pathlib import Path
 from .errors import ValidationError
 
 SLUG_RE = re.compile(r"^[a-z0-9._-]+$")
-_DEFAULT_HOME = Path.home() / ".seedgraph"
+_DEFAULT_HOME = Path.home() / ".seedgraph-v3"
 
 
 def resolve_home(root: Path | str | None = None) -> Path:

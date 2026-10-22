@@ -3,7 +3,7 @@
 Flat content-addressed names (no ``{h2}`` sharding — over-engineering for a
 single-user corpus; v1 did not shard)::
 
-    ~/.seedgraph/cache/
+    ~/.seedgraph-v3/cache/
         pdfs/{file_hash}.pdf
         html/{file_hash}.html
         markdown/{markdown_hash}.md
@@ -30,7 +30,7 @@ from .. import paths
 
 
 def cache_root(root: Path | str | None = None) -> Path:
-    """Resolve the cache root (``$SEEDGRAPH_HOME``/``--root``/default ``~/.seedgraph/cache``).
+    """Resolve the cache root (``$SEEDGRAPH_HOME``/``--root``/default ``~/.seedgraph-v3/cache``).
 
     Thin re-export of :func:`seedgraph.paths.cache_root` so cache callers have a
     single import surface.

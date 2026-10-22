@@ -102,6 +102,7 @@ def _guard_paper_library(monkeypatch):
     ``test_corpus_guard.py`` depends on this).
     """
     real_open = builtins.open
+    v2_home = str(Path.home() / ".seedgraph").lower()
 
     def guarded_open(file, mode="r", *args, **kwargs):
         root = os.environ.get(
@@ -112,10 +113,16 @@ def _guard_paper_library(monkeypatch):
             p = str(Path(file)).lower()
         except Exception:  # noqa: BLE001 - int fds, bytes paths: never guarded
             p = str(file).lower()
-        if p.startswith(lib_str) and any(m in mode for m in ("w", "a", "x", "+")):
+        writing = any(m in mode for m in ("w", "a", "x", "+"))
+        if p.startswith(lib_str) and writing:
             raise AssertionError(
                 "HARD RULE violation: attempted write-open of read-only corpus: "
                 f"{file!r} (mode={mode!r})"
+            )
+        # v2's live home (~/.seedgraph) is read-only for v3 and its tests.
+        if writing and (p == v2_home or p.startswith(v2_home + os.sep)):
+            raise AssertionError(
+                f"attempted write-open under v2's home {v2_home!r}: {file!r} (mode={mode!r})"
             )
         return real_open(file, mode, *args, **kwargs)
 
