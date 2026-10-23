@@ -207,3 +207,104 @@ def test_accept_without_expected_json_exits_1(runner, v2_home, tmp_path):
     result = runner.invoke(app, ["migrate", "accept", "--v2-home", str(v2_home), "--root", str(v3)])
     assert result.exit_code == 1, result.output
     assert "expected values" in result.output and "FAIL" in result.output
+
+
+# --- replacing the empty library `setup` made -----------------------------------------------
+
+@pytest.fixture
+def _no_gpu_probe(monkeypatch):
+    from seedgraph.conversion import pool
+
+    monkeypatch.setattr(pool, "_nvidia_smi_gpu_count", lambda: 2)
+
+
+def _setup(runner, home):
+    result = runner.invoke(app, ["setup", "--root", str(home)])
+    assert result.exit_code == 0, result.output
+
+
+def _write_a_paper(home):
+    with open_library_at(home / "library") as lib, lib.write() as conn:
+        conn.execute("INSERT INTO papers (paper_id, title, created_at) VALUES (?, ?, ?)",
+                     ("lp_invented", "An invented paper about widgets", "2026-08-01T00:00:00+00:00"))
+
+
+def _meta(home):
+    from seedgraph.library.store import read_meta
+
+    with open_library_at(home / "library") as lib:
+        return read_meta(lib.conn)
+
+
+@pytest.mark.usefixtures("_no_gpu_probe")
+def test_setup_then_migrate_run_needs_no_flag_and_moves_the_setup_library_aside(runner, v2_home, tmp_path):
+    home = tmp_path / "v3"
+    _setup(runner, home)
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 0, result.output
+    assert _meta(home)["origin"] == "migration"
+    moved = list((home / "migration" / "replaced").glob("*/library/library.db"))
+    assert len(moved) == 1  # moved aside, never deleted
+
+
+@pytest.mark.usefixtures("_no_gpu_probe")
+def test_a_setup_library_that_gained_data_is_refused(runner, v2_home, tmp_path):
+    home = tmp_path / "v3"
+    _setup(runner, home)
+    _write_a_paper(home)
+    meta = _meta(home)
+    assert meta["dirty"] == "1"  # the ordinary dirty rule still applies to a setup library
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 3, result.output
+
+
+@pytest.mark.usefixtures("_no_gpu_probe")
+def test_a_setup_library_with_data_is_refused_even_if_not_flagged_dirty(runner, v2_home, tmp_path):
+    import sqlite3
+
+    home = tmp_path / "v3"
+    _setup(runner, home)
+    _write_a_paper(home)
+    conn = sqlite3.connect(home / "library" / "library.db")
+    with conn:
+        conn.execute("UPDATE library_meta SET value = '0' WHERE key = 'dirty'")
+    conn.close()
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 3, result.output
+
+
+@pytest.mark.usefixtures("_no_gpu_probe")
+def test_a_setup_library_with_a_file_beside_it_is_refused(runner, v2_home, tmp_path):
+    home = tmp_path / "v3"
+    _setup(runner, home)
+    (home / "library" / "pdfs").mkdir()
+    (home / "library" / "pdfs" / "invented.pdf").write_bytes(b"%PDF-1.4 invented")
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 3, result.output
+
+
+def test_an_empty_never_written_local_library_is_replaceable(runner, v2_home, tmp_path):
+    """A library an older `setup` (or any first open) created: origin 'local', never written."""
+    from seedgraph.library.store import open_library
+
+    home = tmp_path / "v3"
+    with open_library(home) as lib:
+        lib.graphs_root.mkdir(parents=True, exist_ok=True)
+    assert _meta(home)["origin"] == "local"
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 0, result.output
+
+
+def test_a_written_local_library_is_still_refused(runner, v2_home, tmp_path):
+    from seedgraph.library.store import open_library
+
+    home = tmp_path / "v3"
+    open_library(home).close()
+    _write_a_paper(home)
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(home)])
+    assert result.exit_code == 3, result.output
+
+
+def test_a_clean_migration_product_is_replaceable_as_before(runner, v2_home, migrated_home):
+    result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(migrated_home)])
+    assert result.exit_code == 0, result.output

@@ -13,7 +13,7 @@ from typing import Optional
 import typer
 
 from ..conversion import pool
-from ..library.store import is_dirty, library_db_path, library_dir, open_library
+from ..library.store import ORIGIN_SETUP, is_dirty, library_db_path, library_dir, open_library
 from . import _common
 
 
@@ -26,7 +26,7 @@ def setup(
         home = _common.home(root)
         lib_dir = library_dir(home)
         created = not library_db_path(lib_dir).is_file()
-        with open_library(home) as lib:
+        with open_library(home, new_origin=ORIGIN_SETUP) as lib:
             lib.graphs_root.mkdir(parents=True, exist_ok=True)
             dirty = is_dirty(lib.conn)
         conv_dir = pool.converter_dir()

@@ -27,6 +27,9 @@ PROVIDER_CACHE_SCOPE = "library/provider_cache"
 
 ORIGIN_LOCAL = "local"
 ORIGIN_MIGRATION = "migration"
+#: A library `seedgraph setup` created and nothing has written to yet; a migration may
+#: replace it while it holds no data (``seedgraph.migrate.files.check_replaceable``).
+ORIGIN_SETUP = "setup"
 
 
 class LibraryError(SeedgraphError):
@@ -189,29 +192,30 @@ class Library:
         self.close()
 
 
-def open_library_at(lib_dir: Path | str, *, migration: bool = False) -> Library:
+def open_library_at(lib_dir: Path | str, *, migration: bool = False, new_origin: str | None = None) -> Library:
     """Open (creating and migrating if needed) the library in ``lib_dir``.
 
     ``migration=True`` is for the migration's staging build: its writes leave
     ``dirty`` alone. A library created in migration mode gets ``origin =
-    'migration'``; one created otherwise gets ``origin = 'local'``. An existing
-    library's origin is never changed here.
+    'migration'``; one created otherwise gets ``new_origin`` (``seedgraph setup``
+    passes ``'setup'``), else ``origin = 'local'``. An existing library's origin is
+    never changed here.
     """
     lib_dir = Path(lib_dir)
     conn = open_migrated(library_db_path(lib_dir), LIBRARY_SCOPE)
     try:
         if conn.execute("SELECT 1 FROM library_meta WHERE key = 'origin'").fetchone() is None:
             with transaction(conn):
-                _set_meta(conn, "origin", ORIGIN_MIGRATION if migration else ORIGIN_LOCAL)
+                _set_meta(conn, "origin", ORIGIN_MIGRATION if migration else (new_origin or ORIGIN_LOCAL))
     except BaseException:
         conn.close()
         raise
     return Library(root=lib_dir, conn=conn, migration=migration)
 
 
-def open_library(home: Path | str | None = None) -> Library:
+def open_library(home: Path | str | None = None, *, new_origin: str | None = None) -> Library:
     """Open the live library at ``<home>/library`` (normal mode: writes set dirty)."""
-    return open_library_at(library_dir(home))
+    return open_library_at(library_dir(home), new_origin=new_origin)
 
 
 def record_migration_origin(lib: Library, *, run_id: str, v2_home: str) -> None:

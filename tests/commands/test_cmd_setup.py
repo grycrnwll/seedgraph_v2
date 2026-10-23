@@ -51,3 +51,14 @@ def test_setup_without_root_uses_seedgraph_home(runner, isolated_home):
     result = runner.invoke(app, ["setup"])
     assert result.exit_code == 0, result.output
     assert (isolated_home / "library" / "library.db").is_file()
+
+
+def test_setup_stamps_a_new_library_origin_setup_and_keeps_it(runner, tmp_path):
+    from seedgraph.library.store import read_meta
+
+    home = tmp_path / "fresh"
+    assert runner.invoke(app, ["setup", "--root", str(home)]).exit_code == 0
+    assert runner.invoke(app, ["setup", "--root", str(home)]).exit_code == 0
+    with open_library(home) as lib:
+        meta = read_meta(lib.conn)
+    assert meta["origin"] == "setup" and meta["dirty"] == "0"

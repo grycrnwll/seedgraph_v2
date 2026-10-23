@@ -73,7 +73,9 @@ folders it owns (`library/`, `graphs/` and `v2_answers/`).** Swap procedure:
 2. Verify the staging build: integrity check, FTS row counts, canonical dump written.
 3. If a live `library/` exists, refuse unless (a) its `library_meta.origin` is a migration run **and** (b)
    `library_meta.dirty = 0`. Any non-migration write sets `dirty = 1`. `--replace-dirty` overrides this and
-   says what will be moved.
+   says what will be moved. One exception needs no flag: an empty, never-written library (origin `setup`,
+   which `seedgraph setup` stamps, or `local`; `dirty = 0`; no rows outside the schema/FTS bookkeeping; no
+   file in the owned folders but the database). It is still moved aside, never deleted.
 4. Rename the live `library/`, `graphs/` and `v2_answers/` into `migration/replaced/<timestamp>/`. Then rename
    the staging folders into place. A crash between renames leaves both sets on disk, and `migrate` reports the
    half-swap on its next start.

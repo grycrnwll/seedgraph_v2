@@ -9,7 +9,9 @@
   the staged ones. It never lists, moves or deletes anything else in the home
   (``golden_set.json``, ``golden_reports/``, unknown files). Replaced folders are
   moved to ``migration/replaced/<timestamp>-<run_id>/``, never deleted. A live
-  library that is not a clean migration product is refused unless ``replace_dirty``.
+  library that is not a clean migration product is refused unless ``replace_dirty``
+  - except an *empty, never-written* one (see :attr:`LiveState.empty_unwritten`):
+  the library ``seedgraph setup`` creates, which holds nothing to lose.
   A marker file makes a crash between renames visible on the next run.
 """
 
@@ -96,16 +98,56 @@ def copy_blobs(blobs: Sequence[BlobCopy], v2_cache_root: Path, lib_dir: Path) ->
 
 # --- swap ---------------------------------------------------------------------------
 
+#: Origins of a library nobody migrated into: ``setup`` (made by ``seedgraph setup``) and
+#: ``local`` (any other first open, including an older ``setup``).
+_UNMIGRATED_ORIGINS = ("setup", "local")
+#: Bookkeeping tables that exist in every library, empty or not.
+_SCHEMA_TABLES = ("library_meta", "schema_migrations")
+_FTS_SHADOW_SUFFIXES = ("_data", "_idx", "_content", "_docsize", "_config")
+_DB_FILES = ("library.db", "library.db-wal", "library.db-shm", "library.db-journal")
+
+
 @dataclass(frozen=True)
 class LiveState:
     present: tuple[str, ...]        # which owned folders exist in the home
     origin: str | None
     dirty: str | None
     migration_run_id: str | None
+    empty_unwritten: bool = False   # see the property docs below
 
     @property
     def clean_migration(self) -> bool:
         return self.origin == "migration" and self.dirty == "0"
+
+    @property
+    def replaceable(self) -> bool:
+        """A clean migration product, or an empty never-written library: origin
+        ``setup``/``local``, ``dirty = '0'`` (every normal write sets it), no row in any
+        table but the schema/FTS bookkeeping, and no file in the owned folders but the
+        database itself."""
+        return self.clean_migration or self.empty_unwritten
+
+
+def _data_rows(conn) -> int:
+    master = conn.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'").fetchall()
+    fts = [n for n, sql in master if (sql or "").upper().startswith("CREATE VIRTUAL TABLE")]
+    total = 0
+    for name, _ in master:
+        if name.startswith("sqlite_") or name in _SCHEMA_TABLES:
+            continue
+        if any(name.startswith(f) and name[len(f):] in _FTS_SHADOW_SUFFIXES for f in fts):
+            continue
+        total += conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+    return total
+
+
+def _only_the_database(v3_home: Path, present: Sequence[str]) -> bool:
+    for name in present:
+        folder = v3_home / name
+        for f in folder.rglob("*"):
+            if f.is_file() and not (name == "library" and f.parent == folder and f.name in _DB_FILES):
+                return False
+    return True
 
 
 def live_state(v3_home: Path) -> LiveState:
@@ -114,14 +156,17 @@ def live_state(v3_home: Path) -> LiveState:
     present = tuple(n for n in OWNED_FOLDERS if (v3_home / n).exists())
     db = v3_home / "library" / "library.db"
     origin = dirty = run = None
+    empty = False
     if db.is_file():
         conn = connect_v2_ro(db)  # the generic read-only open (the live library is never written here)
         try:
             meta = {k: v for k, v in conn.execute("SELECT key, value FROM library_meta")}
+            origin, dirty, run = meta.get("origin"), meta.get("dirty"), meta.get("migration_run_id")
+            if origin in _UNMIGRATED_ORIGINS and dirty == "0":
+                empty = _data_rows(conn) == 0 and _only_the_database(v3_home, present)
         finally:
             conn.close()
-        origin, dirty, run = meta.get("origin"), meta.get("dirty"), meta.get("migration_run_id")
-    return LiveState(present, origin, dirty, run)
+    return LiveState(present, origin, dirty, run, empty)
 
 
 def half_swap(v3_home: Path) -> dict | None:
@@ -134,10 +179,11 @@ def half_swap(v3_home: Path) -> dict | None:
 
 def check_replaceable(v3_home: Path, *, replace_dirty: bool) -> LiveState:
     state = live_state(v3_home)
-    if state.present and not state.clean_migration and not replace_dirty:
+    if state.present and not state.replaceable and not replace_dirty:
         what = ", ".join(f"{n}/" for n in state.present)
         raise MigrationRefused(
-            f"the live library is not a clean migration product (origin={state.origin!r}, dirty={state.dirty!r}); "
+            f"the live library is not a clean migration product or an empty, never-written library "
+            f"(origin={state.origin!r}, dirty={state.dirty!r}); "
             f"refusing to replace it. --replace-dirty would move {what} into migration/replaced/.")
     return state
 

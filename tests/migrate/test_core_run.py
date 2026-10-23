@@ -198,7 +198,10 @@ def test_dirty_library_is_refused_then_replaced_with_the_flag(fx, tmp_path):
 
 def test_a_non_migration_library_is_refused(fx, tmp_path):
     v3 = tmp_path / "v3"
-    open_library_at(v3 / "library").close()  # origin = 'local'
+    # origin = 'local' with a row in it (an empty, never-written library is replaceable)
+    with open_library_at(v3 / "library") as lib, lib.write() as conn:
+        conn.execute("INSERT INTO papers (paper_id, title, created_at) VALUES (?, ?, ?)",
+                     ("lp_invented", "An invented paper about widgets", T1))
     with pytest.raises(MigrationRefused):
         run(fx.home, v3, run_id="mig-x", now=T1)
 
