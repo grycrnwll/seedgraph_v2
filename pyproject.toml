@@ -96,6 +96,11 @@ seedgraph = [
     "agent_setup/*.md",
     "db/schema/cache/*.sql",
     "db/schema/project/*.sql",
+    "db/schema/library/*.sql",
+    "db/schema/library/provider_cache/*.sql",
+    "db/schema/graph/*.sql",
+    "migrate/v2_schema/project/*.sql",
+    "migrate/v2_schema/cache/*.sql",
     # Track 2 web UI assets shipped inside the wheel (recursive: templates + the
     # static css/js/vendor tree).
     "web/templates/**/*",
