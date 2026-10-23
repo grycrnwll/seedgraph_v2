@@ -35,8 +35,8 @@ from typing import Any
 
 from seedgraph.anchor import assert_invariant
 from seedgraph.library.identity import (
-    IdentityPlan, PlannedPaper, WorkRecord, WorkRef, mint_paper_id, normalize_ids, plan_identity,
-    project_rank,
+    MERGE_ID_TYPES, IdentityPlan, PlannedPaper, WorkRecord, WorkRef, mint_paper_id, normalize_ids,
+    plan_identity, project_rank,
 )
 from seedgraph.project.identity import normalize_title
 from seedgraph.semantic.merge import normalize as normalize_label
@@ -397,6 +397,12 @@ class _Builder:
                         never += [(WorkRef(slug, target), WorkRef(slug, c)) for c in conflicting
                                   if c in self.carried[slug]]
         self.ident = plan_identity(records, never)
+        # report facts (acceptance totals): carried works with no strong id, and papers held
+        # (a PDF attached) in more than one v2 project
+        self.report["no_strong_id_works"] = sorted(
+            [r.project, r.work_id] for r in records
+            if not any(t in MERGE_ID_TYPES for t, _ in normalize_ids(r.ids)))
+        held_in = []
         self.paper_of: dict[WorkRef, _Paper] = {}
         self.papers: list[_Paper] = []
         for pp in self.ident.papers:
@@ -404,6 +410,11 @@ class _Builder:
             self.papers.append(p)
             for m in pp.members:
                 self.paper_of[WorkRef(*m)] = p
+            projects = sorted({m.project for m in pp.members if self.is_held(m.project, m.work_id)},
+                              key=self.rank)
+            if len(projects) > 1:
+                held_in.append({"paper_id": pp.paper_id, "projects": projects})
+        self.report["papers_held_in_several_projects"] = sorted(held_in, key=lambda r: r["paper_id"])
         # every cached PDF held by no carried work becomes a held paper with no metadata
         held_hashes = {h for pp in self.ident.papers for h in pp.pdf_hashes}
         taken = {pp.paper_id for pp in self.ident.papers}
@@ -1272,6 +1283,16 @@ class _Builder:
                 "origin": f"v2:{slug}", "decided_at": r["created_at"]})
         self.report["concept_contradictions"] = contradictions
         self.report["concept_agent_overridden"] = overridden
+        # v2 rows reflected in a decision (carried, or merged into one), by their own project,
+        # kind and maker: lets acceptance check each project's v2 counts separately
+        per_project: dict[str, dict[str, int]] = {s: {} for s in self.carried_projects}
+        for entries in by_pair.values():
+            for slug, key, kind, by, _ in entries:
+                d = self.ledger.get(slug, "concept_constraints", key)
+                if d is not None and d.outcome in ("carried", "merged"):
+                    bucket = per_project.setdefault(slug, {})
+                    bucket[f"{kind}:{by}"] = bucket.get(f"{kind}:{by}", 0) + 1
+        self.report["concept_v2_rows"] = {s: dict(sorted(v.items())) for s, v in sorted(per_project.items())}
 
     # 9. remaining tables ----------------------------------------------------------------
     def finalize_ledger(self) -> None:

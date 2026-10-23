@@ -358,3 +358,108 @@ def test_folded_in_papers_are_listed_by_title(data):
     folded = data["graphs"]["did"]["folded_in"]
     assert folded and all(f["title"] is not None or f["paper_id"] for f in folded)
     assert data["totals"]["graph.did.folded_in"] == len(folded)
+
+
+# --- totals for the spec's acceptance items (hand-counted from the fixture script) -----------
+#
+# Every expected value below is enumerated from tests/migrate/fixtures/v2home.py, not
+# recomputed the way the report computes it.
+
+def test_pdf_totals_split_held_and_unheld(fx, data):
+    t = data["totals"]
+    pdfs = sorted((fx.home / "cache" / "pdfs").glob("*.pdf"))
+    held = {w.source_file_id for w in fx.works.values()
+            if w.source_file_id and not w.slug.startswith("dbg_")}
+    unheld = {i.ids["source_file_id"] for i in fx.items if i.kind in ("unheld_pdf", "unheld_pdf_second_copy")}
+    assert len(pdfs) == 24 and len(held) == 22 and len(unheld) == 2      # the fixture as written
+    assert t["library.pdfs"] == len(pdfs)
+    assert t["library.pdfs_held_by_project"] == len(held)
+    assert t["library.pdfs_held_by_none"] == len(unheld)
+
+
+def test_graph_membership_totals(data):
+    t = data["totals"]
+    # did: second_test's held papers (overlap, dbl_a+dbl_b as one, mix_a, victim, foreign, lattice,
+    # noid_ambig, noid_none, moji, malformed_cached) = 10, plus 7 test_proj held papers folded in
+    # (shared_a, moji_title, malformed_uncached, port_a, port_b, auction_pub, unconv); frontier: cited,
+    # market_1.
+    assert (t["graph.did.member"], t["graph.did.frontier"], t["graph.did.excluded"]) == (17, 2, 0)
+    assert t["graph.did.folded_in"] == 7
+    # land-value: mix_b, noconv, wrong, external, scan; frontier: noid_match (lattice), market_2,
+    # near_miss; excluded: the Bronze Age toll roads work.
+    lv = (t["graph.land-value.member"], t["graph.land-value.frontier"], t["graph.land-value.excluded"])
+    assert lv == (5, 3, 1)
+
+
+def test_papers_held_in_several_projects(data):
+    t = data["totals"]
+    # held (a PDF attached) in two of second_test/land_value/test_proj: only the overlap paper. cited
+    # (both metadata-only) and lattice/noid_match (land_value side has no PDF) do not count.
+    assert t["papers.held_in_multiple_projects"] == 1
+    # adding oct2026test: shared_a (test_proj) + shared_b (oct2026test) share one PDF.
+    assert t["papers.held_in_multiple_projects_incl_oct"] == 2
+
+
+def test_multi_project_note_pairs(data):
+    # papers with notes from more than one v2 project: overlap (second_test + test_proj) and the
+    # shared PDF (test_proj + oct2026test). dbl_a/dbl_b are both second_test.
+    assert data["totals"]["notes.multi_project_pairs"] == 2
+
+
+def test_works_without_a_strong_id(data):
+    t = data["totals"]
+    # carried no-id works: shared_b, noid_match (merged by pdf / title+year rule), noid_ambig,
+    # noid_none, port_b ("check these"). dbg works and test_proj's front-matter stub are not carried.
+    assert t["works.no_strong_id"] == 5
+    assert t["works.no_strong_id.merged_by_rule"] == 2
+    assert t["works.no_strong_id.check_these"] == 3
+
+
+def test_concept_decisions_per_v2_project(data):
+    t = data["totals"]
+    # second_test: llm_merge x2 (agent), user must_link x2 (researcher); test_proj: one user must_link,
+    # two user cannot_link. Every row is carried or merged into a carried decision.
+    assert t["concepts.v2.second_test.merge.agent"] == 2
+    assert t["concepts.v2.second_test.merge.researcher"] == 2
+    assert t["concepts.v2.second_test.never_merge.researcher"] == 0
+    assert t["concepts.v2.test_proj.merge.researcher"] == 1
+    assert t["concepts.v2.test_proj.never_merge.researcher"] == 2
+    assert t["concepts.v2.test_proj.merge.agent"] == 0
+    assert t["concepts.v2.land_value.merge.researcher"] == 0
+
+
+def test_citation_decision_totals(fx, data):
+    t = data["totals"]
+    decided = fx.one("citation_review_decided")
+    assert t["citations.decided_total_v2"] == len(decided.ids["items"]) == 5
+    assert t["citations.collapsed_onto_existing"] == len(decided.expect["mapped"]) == 1
+    assert t["citations.decided_unmapped"] == len(decided.expect["unmapped"]) == 1
+    assert t["citations.decided_carried"] == 3
+    assert t["citations.decided_reflected_in_reference"] == 0
+    parts = ("decided_carried", "collapsed_onto_existing", "decided_unmapped", "decided_reflected_in_reference")
+    assert sum(t[f"citations.{p}"] for p in parts) == t["citations.decided_total_v2"]
+
+
+def test_answers_exported_total(fx, data):
+    assert data["totals"]["answers.exported"] == len(fx.by_kind("saved_answer")) == 3
+
+
+def test_every_attention_kind_has_a_total(fx, data):
+    t = data["totals"]
+    for kind in rep.ATTENTION_KINDS:
+        assert f"attention.{kind}" in t, kind
+    assert t["attention.shared_pdf"] == 2              # mix_a and mix_b
+    assert t["attention.pdf_title_miss"] == len(fx.by_kind("wrong_pdf"))
+    assert t["attention.metadata_needed"] == 2
+    assert t["attention.concept_contradiction"] == 1
+    assert t["attention.identity_collision"] == 0
+
+
+def test_concept_grid_is_always_present(data):
+    t = data["totals"]
+    for kind in ("merge", "never_merge"):
+        for by in ("researcher", "agent"):
+            assert f"concepts.{kind}.{by}" in t
+            for project in ("second_test", "land_value", "test_proj", "oct2026test"):
+                assert f"concepts.v2.{project}.{kind}.{by}" in t
+    assert not any(k.startswith("concepts.v2.dbg_") for k in t)

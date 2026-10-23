@@ -29,7 +29,8 @@ A bare number means ``{"expected": n, "tolerance": 0}``; ``tolerance_pct`` is a
 percentage alternative. A key missing from the report fails, and so does an
 attention kind the report has but ``expected.json`` does not list (unless
 ``allow_other_attention_kinds``). :func:`write_expected` writes a starter file from
-values you give it; :func:`expected_template` lists the keys with empty values.
+values you give it; :func:`expected_template` lists the keys with empty values (every
+totals key of a run when given its ``report.json``).
 """
 
 from __future__ import annotations
@@ -51,18 +52,30 @@ EXPECTED_FILE = "migration/acceptance/expected.json"
 ACCEPTANCE_MD = "acceptance.md"
 STEPS: tuple[str, ...] = ("preflight", "migrate run", "re-run identical", "v2 guard", "parity", "expected values")
 
-#: ``report.json`` totals the spec's expectations speak about (ticket 13 facts, design
-#: §6.2): graph sizes, folded-in papers, every cached PDF in the library, merges,
-#: decisions carried, answers exported, not-converted papers. Values are the
-#: researcher's to fill in.
+#: ``report.json`` totals the spec's expectations speak about (SPEC stage 1 acceptance
+#: check, ticket 13 facts, design §6.2): graph sizes, folded-in papers, every cached PDF
+#: in the library (held / not held), papers held in several projects, multi-project note
+#: versions, works with no strong id, decisions carried (per v2 project for concepts),
+#: answers exported, not-converted papers. Values are the researcher's to fill in. The
+#: full key set of a run is ``expected_template(report)``; design §6.12 documents each key.
 STARTER_TOTALS: tuple[str, ...] = (
-    "graph.did.member", "graph.did.frontier", "graph.did.folded_in", "graph.land-value.member",
-    "graph.land-value.excluded", "library.papers", "library.source_files", "v2.cache.source_files.rows",
-    "library.structured_notes", "merges.papers", "current_elsewhere", "not_converted",
+    "graph.did.member", "graph.did.frontier", "graph.did.excluded", "graph.did.folded_in",
+    "graph.land-value.member", "graph.land-value.frontier", "graph.land-value.excluded",
+    "library.papers", "library.source_files", "v2.cache.source_files.rows",
+    "library.pdfs", "library.pdfs_held_by_project", "library.pdfs_held_by_none",
+    "papers.held_in_multiple_projects", "papers.held_in_multiple_projects_incl_oct",
+    "library.structured_notes", "notes.multi_project_pairs", "merges.papers", "current_elsewhere",
+    "works.no_strong_id", "works.no_strong_id.merged_by_rule", "works.no_strong_id.check_these",
+    "not_converted",
     "concepts.merge.researcher", "concepts.never_merge.researcher", "concepts.merge.agent",
-    "concepts.contradictions", "citations.review_decisions", "library.duplicate_decisions",
-    "library.lens_outputs", "answers.exported", "attention.total", "attention.hides_notes", "errors",
-    "unaccounted",
+    "concepts.v2.second_test.merge.agent", "concepts.v2.second_test.merge.researcher",
+    "concepts.v2.second_test.never_merge.researcher",
+    "concepts.v2.test_proj.merge.researcher", "concepts.v2.test_proj.never_merge.researcher",
+    "concepts.contradictions",
+    "citations.review_decisions", "citations.decided_carried", "citations.collapsed_onto_existing",
+    "citations.decided_unmapped", "citations.decided_reflected_in_reference", "citations.decided_total_v2",
+    "library.duplicate_decisions", "library.lens_outputs", "answers.exported", "attention.total",
+    "attention.hides_notes", "errors", "unaccounted",
 )
 STARTER_ATTENTION: tuple[str, ...] = tuple(_report.ATTENTION_KINDS)
 
@@ -136,10 +149,21 @@ def write_expected(v3_home: Path | str, *, totals: Mapping[str, Any], attention:
     return path
 
 
-def expected_template() -> dict[str, Any]:
-    """Every starter key with ``expected: null`` (fill in, then save as expected.json)."""
-    return {"totals": {k: {"expected": None, "tolerance": 0} for k in STARTER_TOTALS},
-            "attention": {k: {"expected": None, "tolerance": 0} for k in STARTER_ATTENTION},
+def expected_template(report: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Keys with ``expected: null`` (fill in, then save as expected.json).
+
+    With no ``report``: the :data:`STARTER_TOTALS`. With a ``report.json`` document
+    (:func:`seedgraph.migrate.report.load_report`): **every** key of its ``totals`` (the
+    per-table, per-graph and per-project keys depend on the v2 home), sorted, plus every
+    attention kind it or :data:`STARTER_ATTENTION` names."""
+    if report is None:
+        keys: Sequence[str] = STARTER_TOTALS
+        kinds: Sequence[str] = STARTER_ATTENTION
+    else:
+        keys = sorted(report.get("totals", {}))
+        kinds = sorted(set(STARTER_ATTENTION) | set(report.get("attention", {}).get("by_kind", {})))
+    return {"totals": {k: {"expected": None, "tolerance": 0} for k in keys},
+            "attention": {k: {"expected": None, "tolerance": 0} for k in kinds},
             "allow_other_attention_kinds": False}
 
 

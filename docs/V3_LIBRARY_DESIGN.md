@@ -451,6 +451,36 @@ split as *carried*, *merged into*, *not carried (reason)*, or *flagged*. Section
 - the v2 guard result;
 - the dump sha.
 
+`report.json` also has a flat `totals` map (dotted keys, integers) that the acceptance check compares with the
+researcher's `migration/acceptance/expected.json`. Every key is always present, zero included, so an expectation
+never fails just because a count was empty. `accept.expected_template(report)` lists every key of a run.
+"Carried projects" are all v2 projects except `dbg_*`. "Held" means a work has a PDF attached in that project.
+
+| key | meaning |
+|---|---|
+| `library.<table>` | rows in each library table |
+| `library.pdfs` | cached PDFs in the library |
+| `library.pdfs_held_by_project` / `library.pdfs_held_by_none` | of those, PDFs attached to some carried v2 work in any project / attached to none (these become papers with no metadata) |
+| `graph.<slug>.member` / `.frontier` / `.excluded` / `.seeds` | graph membership by status, and seed count |
+| `graph.<slug>.folded_in` | papers folded into the graph from another project (test_proj into `did`) |
+| `papers.held_in_multiple_projects` | library papers whose merged v2 works were held in more than one graph or fold-in project (second_test, land_value, test_proj) |
+| `papers.held_in_multiple_projects_incl_oct` | the same over every carried project (adds library-only projects such as oct2026test) |
+| `notes.multi_project_pairs` | papers whose note versions come from more than one v2 project |
+| `works.no_strong_id` | carried v2 works with no DOI, OpenAlex or arXiv id |
+| `works.no_strong_id.merged_by_rule` / `.check_these` | of those, merged into another work by rule (PDF, title + year) / left unmerged with their paper on "check these" (`identity_check`) |
+| `merges.papers`, `merges.blocked` | papers made from more than one v2 work; merges blocked by conflicting ids |
+| `concepts.<kind>.<decided_by>` | carried concept decisions (`merge` / `never_merge` × `researcher` / `agent`) |
+| `concepts.v2.<project>.<kind>.<decided_by>` | v2 `concept_constraints` rows of that project reflected in a decision (carried or merged into one), by the row's own kind and maker (`user` → researcher, bulk `llm_merge` → agent) |
+| `concepts.contradictions` | pairs with contradicting researcher decisions |
+| `citations.decided_total_v2` | resolved citation-resolution review items in carried projects |
+| `citations.decided_carried` / `.collapsed_onto_existing` / `.decided_unmapped` / `.decided_reflected_in_reference` | a partition of that total: carried as a decision row / mapped onto a decision already carried for the same reference / no counterpart on the kept reference list / an accept, reflected in the carried reference entry |
+| `citations.review_decisions`, `citations.unmapped_decisions`, `citations.edges_dropped` | decision rows; all unmapped decisions (citation and duplicate); citation edges not carried |
+| `answers.exported` / `answers.run_scoped_not_carried` | saved v2 answers exported to markdown / answers in run folders, not carried |
+| `attention.total`, `attention.hides_notes`, `attention.<kind>` | attention items in all, those hiding notes, and the count for every kind |
+| `v2.<source>.<table>.rows` / `.carried` / `.merged` / `.rebuilt` / `.not_carried` | the per-table reconciliation of every v2 row |
+| `current_elsewhere`, `not_converted`, `labelled_versions`, `repairs.titles`, `repairs.relinks` | the matching report sections' list lengths |
+| `errors`, `unaccounted` | migration errors; v2 rows with no disposition (must be 0) |
+
 Report files go only to the v3 home.
 
 ## 7. Defect detection and the standing PDF check

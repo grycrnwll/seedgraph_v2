@@ -153,3 +153,24 @@ def test_starter_keys_exist_in_a_real_report(accepted):
     template = acc.expected_template()
     assert set(template["totals"]) == set(acc.STARTER_TOTALS)
     assert all(v["expected"] is None for v in template["totals"].values())
+
+
+def test_starter_keys_cover_the_spec_acceptance_items():
+    for key in ("library.pdfs", "library.pdfs_held_by_project", "library.pdfs_held_by_none",
+                "graph.did.member", "graph.did.folded_in", "graph.land-value.member",
+                "papers.held_in_multiple_projects", "papers.held_in_multiple_projects_incl_oct",
+                "notes.multi_project_pairs", "works.no_strong_id", "works.no_strong_id.merged_by_rule",
+                "works.no_strong_id.check_these", "concepts.v2.second_test.merge.agent",
+                "concepts.v2.second_test.merge.researcher", "concepts.v2.test_proj.merge.researcher",
+                "concepts.v2.test_proj.never_merge.researcher", "citations.decided_carried",
+                "citations.collapsed_onto_existing", "citations.decided_total_v2", "answers.exported"):
+        assert key in acc.STARTER_TOTALS, key
+
+
+def test_template_from_a_report_lists_every_totals_key(accepted):
+    v3, _, _ = accepted
+    report = json.loads((v3 / "migration" / "runs" / "mig-acc-1" / "report.json").read_text(encoding="utf-8"))
+    template = acc.expected_template(report)
+    assert list(template["totals"]) == sorted(report["totals"])
+    assert all(v == {"expected": None, "tolerance": 0} for v in template["totals"].values())
+    assert set(template["attention"]) >= set(acc.STARTER_ATTENTION) | set(report["attention"]["by_kind"])

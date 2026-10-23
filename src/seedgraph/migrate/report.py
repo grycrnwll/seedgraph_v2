@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from seedgraph.library.attention import item_id_for
 
 from . import answers as _answers
-from .plan import row_key
+from .plan import FOLD_INTO, GRAPH_PROJECTS, row_key
 
 if TYPE_CHECKING:  # pragma: no cover
     from . import MigrationResult, StageContext
@@ -62,7 +62,14 @@ ATTENTION_KINDS: dict[str, tuple[str, str]] = {
     "concept_contradiction": ("Contradicting concept decisions",
                               "You decided 'merge' in one v2 project and 'never merge' in another for the same "
                               "pair. Both decisions are kept; pick one."),
+    "identity_collision": ("Derived paper ids that collided",
+                           "Two papers derived the same library id; the later one got a suffixed key. Check that "
+                           "they really are different papers."),
 }
+
+#: Concept decision kinds and makers; the totals list every combination (zero included).
+CONCEPT_KINDS = ("merge", "never_merge")
+CONCEPT_MAKERS = ("researcher", "agent")
 
 _OUTCOME_WORDS = {"graph": "became a context graph", "folded": "folded into a graph", "library_only":
                   "papers join the library, no graph", "not_carried": "not carried", "cache": "the v2 cache"}
@@ -221,6 +228,61 @@ def _reconcile(ledger: Any, v2_rows: Mapping[str, Any] | None, problems: list[st
     return dict(out)
 
 
+def _acceptance_totals(plan: Any, items: list[dict[str, Any]]) -> dict[str, int]:
+    """Totals for the spec's acceptance items that no single table count gives (§6.12 table)."""
+    rp = plan.report
+    out: dict[str, int] = {}
+
+    # cached PDFs: held by a carried v2 work in some project, or by none
+    pdf_hashes = {r["file_hash"] for r in plan.rows("source_files") if r.get("file_type") == "pdf"}
+    held = {h for pp in plan.identity.papers for h in pp.pdf_hashes} & pdf_hashes
+    out["library.pdfs"] = len(pdf_hashes)
+    out["library.pdfs_held_by_project"] = len(held)
+    out["library.pdfs_held_by_none"] = len(pdf_hashes - held)
+
+    # papers held (a PDF attached) in more than one v2 project
+    core = set(GRAPH_PROJECTS) | set(FOLD_INTO)
+    several = rp.get("papers_held_in_several_projects", [])
+    out["papers.held_in_multiple_projects"] = sum(1 for r in several if len(core & set(r["projects"])) > 1)
+    out["papers.held_in_multiple_projects_incl_oct"] = len(several)
+
+    # papers with note versions from more than one v2 project
+    note_projects: dict[str, set[str]] = defaultdict(set)
+    for r in plan.rows("structured_notes"):
+        note_projects[r["paper_id"]].add(r["origin"])
+    out["notes.multi_project_pairs"] = sum(1 for s in note_projects.values() if len(s) > 1)
+
+    # carried works with no DOI / OpenAlex / arXiv id: merged by rule, or on "check these"
+    checked = {a["paper_id"] for a in items if a["kind"] == "identity_check" and a["paper_id"]}
+    merged = checks = 0
+    no_id = rp.get("no_strong_id_works", [])
+    for project, work_id in no_id:
+        d = plan.ledger.get(project, "works", work_id)
+        merged += int(d is not None and d.outcome == "merged")
+        checks += int(d is not None and d.outcome == "carried" and d.v3_id in checked)
+    out["works.no_strong_id"] = len(no_id)
+    out["works.no_strong_id.merged_by_rule"] = merged
+    out["works.no_strong_id.check_these"] = checks
+
+    # decided v2 citation-resolution items (carried projects): a partition of the total
+    cite = Counter()
+    for (source, table, _), d in plan.ledger.entries.items():
+        if table != "review_queue":
+            continue
+        if d.outcome == "carried" and d.v3_table == "citation_review_decisions":
+            cite["decided_carried"] += 1
+        elif d.reason == "mapped_onto_existing_decision":
+            cite["collapsed_onto_existing"] += 1
+        elif d.reason == "unmapped_citation_decision":
+            cite["decided_unmapped"] += 1
+        elif d.reason == "reflected_in_reference_entry":
+            cite["decided_reflected_in_reference"] += 1
+    for k in ("decided_carried", "collapsed_onto_existing", "decided_unmapped", "decided_reflected_in_reference"):
+        out[f"citations.{k}"] = cite[k]
+    out["citations.decided_total_v2"] = sum(cite.values())
+    return out
+
+
 def build_report(result: MigrationResult, *, v2_rows: Mapping[str, Any] | None = None,
                  answers_folder: Path | None = None) -> dict[str, Any]:
     """The ``report.json`` document (pure apart from listing the exported answers)."""
@@ -313,10 +375,15 @@ def build_report(result: MigrationResult, *, v2_rows: Mapping[str, Any] | None =
             totals[f"v2.{source}.{table}.not_carried"] = sum(r["not_carried"].values())
     totals["attention.total"] = len(items)
     totals["attention.hides_notes"] = sum(1 for a in items if a["hides_notes"])
-    for k, n in sorted(by_kind.items()):
-        totals[f"attention.{k}"] = n
-    for k, n in sorted(ccounts.items()):
-        totals[f"concepts.{k.replace(':', '.')}"] = n
+    for k in sorted(set(ATTENTION_KINDS) | set(by_kind)):
+        totals[f"attention.{k}"] = by_kind.get(k, 0)
+    grid = [f"{k}:{by}" for k in CONCEPT_KINDS for by in CONCEPT_MAKERS]
+    for k in sorted(set(grid) | set(ccounts)):
+        totals[f"concepts.{k.replace(':', '.')}"] = ccounts.get(k, 0)
+    for project, c in rp.get("concept_v2_rows", {}).items():
+        for k in sorted(set(grid) | set(c)):
+            totals[f"concepts.v2.{project}.{k.replace(':', '.')}"] = c.get(k, 0)
+    totals.update(_acceptance_totals(plan, items))
     totals.update({
         "merges.papers": len(merges), "merges.blocked": len(ident.get("blocked", [])),
         "current_elsewhere": len(rp.get("current_elsewhere", [])),
