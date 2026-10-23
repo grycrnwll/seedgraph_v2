@@ -27,7 +27,10 @@ def test_doctor_tampered_schema_version_fails():
     assert has_failure(results)
     version_check = next(r for r in results if r.name == "schema_version_cache")
     assert not version_check.ok
-    assert "migrate" in version_check.detail.lower()
+    # v3 has no in-place v2 schema upgrade: the guidance names the v2 install and the
+    # v3 migration, never the deleted `seedgraph migrate` upgrade command.
+    assert "Run `seedgraph migrate`" not in version_check.detail
+    assert "seedgraph-v3 migrate run" in version_check.detail
 
 
 def test_doctor_bad_project_slug_fails():

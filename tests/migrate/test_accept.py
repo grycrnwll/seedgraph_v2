@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import copy
 import json
-import shutil
-import sqlite3
 
 import pytest
 
@@ -32,18 +30,7 @@ EXPECTED_ATTENTION = {"shared_pdf": 2, "pdf_title_miss": 1, "malformed_title": 1
 
 @pytest.fixture(scope="module")
 def v2(tmp_path_factory):
-    """The fixture home, with its lens claim's missing ``claim_fts`` row added in a
-    test-local copy (v2's lens runner always writes it; see test_parity.py)."""
-    built = build_v2_home(tmp_path_factory.mktemp("v2") / "built")
-    home = tmp_path_factory.mktemp("v2copy") / "home"
-    shutil.copytree(built.home, home)
-    conn = sqlite3.connect(home / "projects" / "second_test" / "project.db")
-    with conn:
-        conn.execute("INSERT INTO claim_fts (claim_id, normalized_label, claim_text) SELECT claim_id, "
-                     "normalized_label, claim_text FROM extracted_claims WHERE claim_id NOT IN "
-                     "(SELECT claim_id FROM claim_fts)")
-    conn.close()
-    return home
+    return build_v2_home(tmp_path_factory.mktemp("v2") / "built").home
 
 
 def prepared_home(root, *, totals=EXPECTED_TOTALS, attention=EXPECTED_ATTENTION):

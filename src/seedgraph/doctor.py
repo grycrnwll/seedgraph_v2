@@ -102,7 +102,8 @@ def _check_schema_version(scope: str, db_path: Path) -> CheckResult:
         name,
         False,
         f"{scope} schema version mismatch: applied={applied}, expected={expected}. "
-        f"Run `seedgraph migrate` to bring it current.",
+        "v3 does not upgrade v2 databases in place: open this one with the v2 `seedgraph` "
+        "install that wrote it, or move the v2 home into v3 with `seedgraph-v3 migrate run`.",
     )
 
 

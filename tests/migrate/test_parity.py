@@ -30,21 +30,8 @@ def tree(root: Path) -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def fx(tmp_path_factory):
-    """The synthetic v2 home, with one fixture gap closed in a test-local copy: the
-    fixture's lens claim has no ``claim_fts`` row, which v2's lens runner always
-    writes (``lenses/runner.py``). Without it v3's rebuilt index finds a claim v2's
-    index cannot, an FTS drift no named class covers (and correctly unexplained)."""
-    built = build_v2_home(tmp_path_factory.mktemp("v2") / "built")
-    home = tmp_path_factory.mktemp("v2copy") / "home"
-    shutil.copytree(built.home, home)
-    conn = sqlite3.connect(home / "projects" / "second_test" / "project.db")
-    with conn:
-        conn.execute("INSERT INTO claim_fts (claim_id, normalized_label, claim_text) "
-                     "SELECT c.claim_id, c.normalized_label, c.claim_text FROM extracted_claims c "
-                     "WHERE c.claim_id NOT IN (SELECT claim_id FROM claim_fts)")
-    conn.close()
-    built.home = home
-    return built
+    """The synthetic v2 home (read-only here: the capture must not change it)."""
+    return build_v2_home(tmp_path_factory.mktemp("v2") / "built")
 
 
 @pytest.fixture(scope="module")

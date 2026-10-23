@@ -981,6 +981,9 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
                 "created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (claim_id, None, run_id, ref.work_id, "data", "plot_layout_v1[0]", "plot layout", q, "found",
                  "llm_extracted", "stated", 0.8, at))
+            # v2's lens runner always indexes the claim it writes (lenses/runner.py)
+            b.db[ST].execute("INSERT INTO claim_fts (claim_id, normalized_label, claim_text) VALUES (?,?,?)",
+                             (claim_id, "plot layout", q))
             b.db[ST].execute("INSERT INTO claim_spans (claim_id, span_id, rank, created_at) VALUES (?,?,?,?)",
                              (claim_id, span, 0, at))
         lo_id = _id("lensout", ref.key)
