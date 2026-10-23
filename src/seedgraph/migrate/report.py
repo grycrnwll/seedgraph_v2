@@ -43,8 +43,9 @@ REPORT_MD, REPORT_JSON, ATTENTION_MD = "report.md", "report.json", "attention.md
 #: Plain-English headings for the attention kinds the migration raises.
 ATTENTION_KINDS: dict[str, tuple[str, str]] = {
     "shared_pdf": ("Different papers sharing one PDF",
-                   "Two or more papers point at the same PDF. Notes are hidden on a side whose title is not in "
-                   "the PDF. Decide which paper the PDF belongs to."),
+                   "Two or more papers point at the same PDF (one item per PDF, listing every paper on it). A "
+                   "paper whose title is not in the PDF also has a 'title not found' item that hides its notes. "
+                   "Decide which paper the PDF belongs to."),
     "pdf_title_miss": ("Title not found in the paper's own PDF (notes hidden)",
                        "The paper's title and DOI were not found in its PDF or text. The PDF may be a different "
                        "paper. Its notes are kept but hidden from agents until you confirm or fix the paper."),
@@ -322,6 +323,9 @@ def build_report(result: MigrationResult, *, v2_rows: Mapping[str, Any] | None =
         items.append({"item_id": item_id_for(a.kind, a.subject), "kind": a.kind, "paper_id": a.paper_id,
                       "title": titles.get(a.paper_id) if a.paper_id else None, "subject": dict(a.subject),
                       "detail": a.detail, "hides_notes": bool(a.hides_notes)})
+        if a.kind == "shared_pdf":
+            items[-1]["sides"] = [{**s, "title": titles.get(s["paper_id"])}
+                                  for s in json.loads(a.detail or "{}").get("papers", [])]
     by_kind = Counter(a["kind"] for a in items)
 
     # concepts --------------------------------------------------------------------
@@ -388,6 +392,9 @@ def build_report(result: MigrationResult, *, v2_rows: Mapping[str, Any] | None =
         "merges.papers": len(merges), "merges.blocked": len(ident.get("blocked", [])),
         "current_elsewhere": len(rp.get("current_elsewhere", [])),
         "repairs.titles": len(repairs["titles"]), "repairs.relinks": len(repairs["relinks"]),
+        "titles.malformed_cited_only": len(rp.get("malformed_unheld", [])),
+        "shared_pdfs.pdfs": len(rp.get("shared_pdfs", [])),
+        "shared_pdfs.papers": len({pid for s in rp.get("shared_pdfs", []) for pid in s["paper_ids"]}),
         "not_converted": len(rp.get("not_converted", [])),
         "labelled_versions": len(rp.get("labelled_versions", [])),
         "concepts.contradictions": len(rp.get("concept_contradictions", [])),
@@ -415,6 +422,8 @@ def build_report(result: MigrationResult, *, v2_rows: Mapping[str, Any] | None =
         "not_converted": rp.get("not_converted", []),
         "test_converter_papers": rp.get("test_converter_papers", []),
         "title_check": {"weak": rp.get("title_check_weak", []), "miss": rp.get("title_check_miss", [])},
+        "titles": {"malformed_cited_only": rp.get("malformed_unheld", [])},
+        "shared_pdfs": rp.get("shared_pdfs", []),
         "attention": {"by_kind": dict(sorted(by_kind.items())), "items": items},
         "concepts": {"counts": dict(sorted(ccounts.items())), "contradictions": rp.get("concept_contradictions", []),
                      "agent_overridden": rp.get("concept_agent_overridden", [])},
@@ -543,6 +552,17 @@ def render_report_md(d: Mapping[str, Any]) -> str:
     if not (rep["titles"] or rep["relinks"]):
         L += ["None.", ""]
 
+    unheld = d.get("titles", {}).get("malformed_cited_only", [])
+    L += ["## Malformed titles on papers without a PDF", "",
+          f"{len(unheld)} cited-only or frontier papers have a malformed title: fixed by the metadata refresh "
+          "in stage 2. They are not attention items (only papers with a PDF attached are).", ""]
+
+    shared = d.get("shared_pdfs", [])
+    L += ["## Different papers sharing one PDF", "",
+          f"{len(shared)} PDFs ({len({p for s in shared for p in s['paper_ids']})} papers). Each PDF is one item "
+          "in `attention.md`; a paper whose title is not in its PDF is hidden through its own 'title not found' "
+          "item.", ""]
+
     nc = d["not_converted"]
     L += ["## Not converted", "", "These papers have a PDF but no usable text. Run `seedgraph convert --queued`.", ""]
     L += ([f"- {_t(r['title'], r['paper_id'])} (`{r['paper_id']}`)" for r in nc] or ["None."]) + [""]
@@ -617,6 +637,11 @@ def render_attention_md(d: Mapping[str, Any]) -> str:
         for a in groups[kind]:
             flag = " **notes hidden**" if a["hides_notes"] else ""
             who = _t(a["title"], a["paper_id"]) if a["paper_id"] else json.dumps(a["subject"], sort_keys=True)
+            if kind == "shared_pdf":
+                sides = a.get("sides", [])
+                L.append(f"- `{a['item_id']}` PDF `{a['subject'].get('source_file_id')}`: {len(sides)} papers")
+                L += [f"  - {_t(s['title'], s['paper_id'])}: title check {s['title_check']}" for s in sides]
+                continue
             L.append(f"- `{a['item_id']}` {who}{flag}")
             if a["detail"]:
                 L.append(f"  - {a['detail']}")

@@ -437,7 +437,7 @@ class _Builder:
     # 3. papers, identifiers, files, defects --------------------------------------------
     def build_papers(self) -> None:
         provider_rows = self.s.cache.rows("provider_cache")
-        merged_titles, repaired = [], []
+        merged_titles, repaired, malformed_unheld = [], [], []
         for p in self.papers:
             pp = p.planned
             assert pp is not None
@@ -445,6 +445,7 @@ class _Builder:
             p.dois = tuple(v for t, v in pp.ids if t == "doi")
             p.title, p.title_source = pp.title, ("v2" if pp.title else None)
             reason = defects.malformed_reason(p.title)
+            malformed = None
             if reason:
                 fix = defects.title_from_provider_cache(p.dois, provider_rows)
                 if fix:
@@ -452,8 +453,7 @@ class _Builder:
                                      "provider": fix.provider, "request_key": fix.request_key})
                     p.title, p.title_source = fix.title, "provider_cache"
                 else:
-                    self.attn("malformed_title", {"paper_id": p.paper_id}, p.paper_id,
-                              f"malformed title ({reason}): {p.title!r}; no cached metadata for its DOI")
+                    malformed = f"malformed title ({reason}): {p.title!r}; no cached metadata for its DOI"
             authors = pp.authors
             self.lib["papers"].append({
                 "paper_id": p.paper_id, "title": p.title, "title_source": p.title_source,
@@ -473,6 +473,12 @@ class _Builder:
                         p.primary_wsf = r
                         p.primary_sf = self.sf_by_hash[r["file_hash"]]["source_file_id"]
             p.pdf_shas = tuple(sorted(set(shas)))
+            # Only a held paper (a PDF attached) gets an attention item; a cited-only or frontier
+            # paper's malformed title is counted and left to the stage-2 metadata refresh.
+            if malformed and p.primary_sf is not None:
+                self.attn("malformed_title", {"paper_id": p.paper_id}, p.paper_id, malformed)
+            elif malformed:
+                malformed_unheld.append(p.paper_id)
         for p in self.unheld:
             sf = self.sf_by_id[p.primary_sf]
             self.lib["papers"].append({
@@ -483,6 +489,7 @@ class _Builder:
             self.attn("metadata_needed", {"paper_id": p.paper_id}, p.paper_id,
                       f"cached PDF {sf['file_hash'][:12]} is held by no v2 project; title unknown")
         self.report["titles_repaired"] = repaired
+        self.report["malformed_unheld"] = sorted(malformed_unheld)
         self.report["merged_papers"] = merged_titles
         self.identifiers()
         self.files()
@@ -596,28 +603,31 @@ class _Builder:
 
     def title_check_attention(self) -> None:
         checks = {p.paper_id: p for p in [*self.papers, *self.unheld] if p.check}
-        covered = set()
         shared_report = []
+        on_shared: dict[str, str] = {}
         for sp in self.ident.shared_pdfs:
-            shared_report.append({"pdf_sha256": sp.pdf_hash, "paper_ids": list(sp.paper_ids)})
+            sf_id = self.sf_by_hash[sp.pdf_hash]["source_file_id"]
+            shared_report.append({"source_file_id": sf_id, "pdf_sha256": sp.pdf_hash, "paper_ids": list(sp.paper_ids)})
+            sides = []
             for pid in sp.paper_ids:
                 p = checks.get(pid)
-                miss = bool(p and p.check.status == "miss" and self.sf_by_id[p.primary_sf]["file_hash"] == sp.pdf_hash)
-                if miss:
-                    covered.add(pid)
-                self.attn("shared_pdf", {"pdf_sha256": sp.pdf_hash, "paper_id": pid}, pid,
-                          json.dumps({"papers": list(sp.paper_ids), "title_check": p.check.status if p else None},
-                                     sort_keys=True), hides=miss)
+                sides.append({"paper_id": pid, "title_check": p.check.status if p else None})
+                on_shared.setdefault(pid, sf_id)
+            # One item per PDF. It hides nothing itself: a side whose title misses is hidden by its
+            # own pdf_title_miss item below (hiding is per paper: attention_items.paper_id).
+            self.attn("shared_pdf", {"source_file_id": sf_id}, None,
+                      json.dumps({"papers": sides, "pdf_sha256": sp.pdf_hash}, sort_keys=True))
         weak, miss = [], []
         for pid, p in checks.items():
             if p.check.status == "weak":
                 weak.append(pid)
             if p.check.status == "miss":
                 miss.append(pid)
-                if pid not in covered:
-                    self.attn("pdf_title_miss", {"paper_id": pid, "source_file_id": p.primary_sf}, pid,
-                              f"title {p.title!r} not found in its PDF or markdown: this PDF may not be this paper",
-                              hides=True)
+                shared = (f"; the PDF is shared with other papers (shared-PDF item {on_shared[pid]})"
+                          if pid in on_shared else "")
+                self.attn("pdf_title_miss", {"paper_id": pid, "source_file_id": p.primary_sf}, pid,
+                          f"title {p.title!r} not found in its PDF or markdown: this PDF may not be this paper"
+                          + shared, hides=True)
         self.report.update(shared_pdfs=shared_report, title_check_weak=sorted(weak), title_check_miss=sorted(miss))
         # "check these" (identity), minus a redundant no_match on a paper already listed
         skipped = {ci.paper_id for ci in self.ident.check_items if ci.reason == "never_merge_skipped"}

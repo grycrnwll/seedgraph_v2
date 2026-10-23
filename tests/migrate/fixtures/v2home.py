@@ -820,6 +820,12 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
     b.plant("malformed_title_uncached", {"work_key": malu.key},
             {"attention": "malformed_title", "title_source": None},
             "hash-like title and no provider_cache row for its DOI")
+    malf = b.work(ST, "malformed_frontier", title="scan_0042_refs.pdf", year=2011, authors=("Ola Berg",),
+                  doi="10.5555/sg.malformed-3", inclusion="metadata_only", reason="citation_walk",
+                  at="2026-07-04T00:55:00+00:00")
+    b.plant("malformed_title_unheld", {"work_key": malf.key},
+            {"attention": None, "counted_in": "titles.malformed_cited_only"},
+            "filename-like title on a frontier paper with no PDF: left to the stage-2 metadata refresh")
 
     # Duplicate verdicts in test_proj -------------------------------------------------
     port_a = b.held(TP, "port_a", "port_a", at="2026-07-01T13:00:00+00:00", year=2018, venue=V,

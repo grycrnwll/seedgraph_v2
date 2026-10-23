@@ -166,8 +166,11 @@ def check_overlap(item, data, o, fx):
 
 def check_shared_conflict(item, data, o, fx):
     miss = pid(o, fx, item.expect["miss_side"])
-    a = _attn(data, "shared_pdf", miss)
-    assert a and a[0]["hides_notes"] is True
+    shared = [a for a in _attn(data, "shared_pdf") if a["subject"] == {"source_file_id": item.ids["source_file_id"]}]
+    assert len(shared) == 1 and shared[0]["paper_id"] is None and shared[0]["hides_notes"] is False
+    assert miss in {s["paper_id"] for s in json.loads(shared[0]["detail"])["papers"]}
+    hide = _attn(data, "pdf_title_miss", miss)  # the suspect side stays hidden, per paper
+    assert hide and hide[0]["hides_notes"] is True
     assert _merge_of(data, miss) is None
 
 
@@ -213,6 +216,11 @@ def check_title_repaired(item, data, o, fx):
 
 def check_malformed(item, data, o, fx):
     assert _attn(data, "malformed_title", pid(o, fx, item.ids["work_key"]))
+
+
+def check_malformed_unheld(item, data, o, fx):
+    assert not _attn(data, "malformed_title", pid(o, fx, item.ids["work_key"]))
+    assert data["totals"]["titles.malformed_cited_only"] >= 1
 
 
 def check_dup_decision(item, data, o, fx):
@@ -318,6 +326,7 @@ CHECKS = {
     "wrong_pdf": check_wrong_pdf,
     "malformed_title_cached": check_title_repaired,
     "malformed_title_uncached": check_malformed,
+    "malformed_title_unheld": check_malformed_unheld,
     "duplicate_verdict_different": check_dup_decision,
     "duplicate_verdict_same": check_dup_decision,
     "citation_review_decided": check_citation_decided,
@@ -382,8 +391,8 @@ def test_graph_membership_totals(data):
     # did: second_test's held papers (overlap, dbl_a+dbl_b as one, mix_a, victim, foreign, lattice,
     # noid_ambig, noid_none, moji, malformed_cached) = 10, plus 7 test_proj held papers folded in
     # (shared_a, moji_title, malformed_uncached, port_a, port_b, auction_pub, unconv); frontier: cited,
-    # market_1.
-    assert (t["graph.did.member"], t["graph.did.frontier"], t["graph.did.excluded"]) == (17, 2, 0)
+    # market_1, malformed_frontier.
+    assert (t["graph.did.member"], t["graph.did.frontier"], t["graph.did.excluded"]) == (17, 3, 0)
     assert t["graph.did.folded_in"] == 7
     # land-value: mix_b, noconv, wrong, external, scan; frontier: noid_match (lattice), market_2,
     # near_miss; excluded: the Bronze Age toll roads work.
@@ -448,11 +457,23 @@ def test_every_attention_kind_has_a_total(fx, data):
     t = data["totals"]
     for kind in rep.ATTENTION_KINDS:
         assert f"attention.{kind}" in t, kind
-    assert t["attention.shared_pdf"] == 2              # mix_a and mix_b
-    assert t["attention.pdf_title_miss"] == len(fx.by_kind("wrong_pdf"))
+    assert t["attention.shared_pdf"] == 1              # one item per shared PDF (mix_a and mix_b)
+    # wrong_pdf, plus the shared PDF's missing side (hidden through its own title-miss item)
+    assert t["attention.pdf_title_miss"] == len(fx.by_kind("wrong_pdf")) + 1
+    assert t["attention.malformed_title"] == 1         # held papers only
+    assert t["titles.malformed_cited_only"] == 1
+    assert t["shared_pdfs.pdfs"] == 1 and t["shared_pdfs.papers"] == 2
     assert t["attention.metadata_needed"] == 2
     assert t["attention.concept_contradiction"] == 1
     assert t["attention.identity_collision"] == 0
+
+
+def test_report_md_counts_shared_pdfs_and_unheld_malformed_titles(outcome):
+    md = outcome.files.report_md.read_text(encoding="utf-8")
+    assert "1 PDFs (2 papers)" in md
+    assert "fixed by the metadata refresh in stage 2" in md
+    att = outcome.files.attention_md.read_text(encoding="utf-8")
+    assert "2 papers" in att and "title check miss" in att
 
 
 def test_concept_grid_is_always_present(data):

@@ -23,7 +23,7 @@ QUERIES = {"did": ["eleven percent", "responds to"], "land-value": ["eleven perc
 # two cached PDFs held by no project, one test-converter text, one contradiction).
 EXPECTED_TOTALS = {"answers.exported": 3, "answers.run_scoped_not_carried": 1, "concepts.contradictions": 1,
                    "unaccounted": 0, "errors": 0, "graph.did.member": {"expected": 18, "tolerance": 6}}
-EXPECTED_ATTENTION = {"shared_pdf": 2, "pdf_title_miss": 1, "malformed_title": 1, "metadata_needed": 2,
+EXPECTED_ATTENTION = {"shared_pdf": 1, "pdf_title_miss": 2, "malformed_title": 1, "metadata_needed": 2,
                       "test_converter_markdown": 1, "concept_contradiction": 1,
                       "identity_check": {"expected": 4, "tolerance": 2}}
 

@@ -151,7 +151,7 @@ def test_manifest_lists_every_planted_class(fx):
         "overlap_diverging_notes", "double_import", "shared_pdf_conflicting_dois", "shared_pdf_one_side_no_id",
         "foreign_markdown", "foreign_markdown_unconverted", "noid_title_year_match", "noid_ambiguous",
         "noid_unmatched", "mojibake_markdown", "mojibake_title", "wrong_pdf", "malformed_title_cached",
-        "malformed_title_uncached", "cited_only", "metadata_only_unreferenced", "duplicate_verdict_different",
+        "malformed_title_uncached", "malformed_title_unheld", "cited_only", "metadata_only_unreferenced", "duplicate_verdict_different",
         "duplicate_verdict_same", "citation_review_decided", "citation_review_open", "concept_llm_merge",
         "concept_user_must_link", "concept_user_cannot_link", "concept_contradiction",
         "concept_agent_and_researcher_same_pair", "lens_with_outputs", "conversion_failed",

@@ -163,10 +163,19 @@ def c_shared_pdf_conflicting_dois(w: World, it):
     for key, pid in ((a, pa), (b, pb)):
         assert w.check(pid)["source_file_id"] == it.ids["source_file_id"]
         assert w.check(pid)["pdf_check_status"] == it.expect["pdf_check"][key]
-        items = w.attention(pid, "shared_pdf")
-        assert len(items) == 1 and items[0]["hides_notes"] == it.expect["hides_notes"][key]
+        assert not w.attention(pid, "shared_pdf")  # the item is about the PDF, not one side
+        # a side whose title misses is hidden through its own per-paper title-miss item
+        misses = w.attention(pid, "pdf_title_miss")
+        assert len(misses) == int(bool(it.expect["hides_notes"][key]))
+        assert all(m["hides_notes"] == 1 for m in misses)
         assert (pid in w.hidden()) == bool(it.expect["hides_notes"][key])
-    assert not w.attention(pb, "pdf_title_miss")  # the shared_pdf item carries the hiding
+    items = [r for r in w.attention(kind="shared_pdf")
+             if json.loads(r["subject_json"]) == {"source_file_id": it.ids["source_file_id"]}]
+    assert len(items) == 1
+    item = items[0]
+    assert item["paper_id"] is None and item["hides_notes"] == 0
+    sides = {s["paper_id"]: s["title_check"] for s in json.loads(item["detail"])["papers"]}
+    assert sides == {pa: it.expect["pdf_check"][a], pb: it.expect["pdf_check"][b]}
 
 
 def c_shared_pdf_one_side_no_id(w: World, it):
@@ -270,6 +279,12 @@ def c_malformed_title_uncached(w: World, it):
     assert w.one("SELECT title_source FROM papers WHERE paper_id = ?", pid)[0] == "v2"
     # a malformed title says nothing about the PDF: no title-miss item, notes not hidden
     assert not w.attention(pid, "pdf_title_miss") and pid not in w.hidden()
+
+
+def c_malformed_title_unheld(w: World, it):
+    pid = w.paper(it.ids["work_key"])
+    assert w.status(pid) != "held"
+    assert not w.attention(pid, "malformed_title")  # only held papers get the attention item
 
 
 def c_duplicate_verdict_different(w: World, it):
