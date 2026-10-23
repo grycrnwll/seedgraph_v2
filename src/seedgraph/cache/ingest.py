@@ -14,8 +14,13 @@ fail-closed to ``user_supplied_private`` and is set to ``open_access`` only when
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..errors import ValidationError
 from ..vocab import AccessClass, AcquisitionMethod, FileType
@@ -29,6 +34,75 @@ try:  # raw connection opener (foreign_keys=ON already applied by the foundation
     from ..db.connection import open_cache_db
 except ImportError:  # pragma: no cover - foundation is always present
     raise
+
+if TYPE_CHECKING:  # pragma: no cover - typing only (library imports cache)
+    from ..library.store import Library
+
+
+# --- store location (v3 design §1.1) ---------------------------------------------------
+
+
+@dataclass
+class _Target:
+    """Where a cache operation reads and writes: a connection plus a blob root.
+
+    Two shapes, chosen by the public functions' ``root=`` / ``library=`` keywords:
+
+    - **cache.db** (``library=None``): the stage-0 behaviour. The function opens
+      ``<home>/cache/cache.db`` itself, commits at the end of each write and closes it.
+    - **library** (``library=Library``): the open library connection and the library
+      folder as blob root. Every write runs in ``library.write()``, which is a SAVEPOINT
+      when the caller already holds a transaction, so the caller's transaction governs.
+      Nothing here calls ``commit``/``rollback``/``BEGIN`` and the connection is never
+      closed.
+    """
+
+    conn: sqlite3.Connection
+    blob_root: Path
+    library: "Library | None" = None
+
+    @contextmanager
+    def write(self) -> Iterator[sqlite3.Connection]:
+        if self.library is not None:
+            with self.library.write() as conn:
+                yield conn
+            return
+        yield self.conn
+        self.conn.commit()  # an exception skips this: close() discards the work
+
+    def close(self) -> None:
+        if self.library is None:
+            self.conn.close()
+
+    # content-addressed blob layout, identical under both roots
+    def pdf_path(self, file_hash: str) -> Path:
+        return self.blob_root / "pdfs" / f"{file_hash}.pdf"
+
+    def html_path(self, file_hash: str) -> Path:
+        return self.blob_root / "html" / f"{file_hash}.html"
+
+    def markdown_path(self, markdown_hash: str) -> Path:
+        return self.blob_root / "markdown" / f"{markdown_hash}.md"
+
+    def relative_uri(self, path: Path) -> str:
+        return Path(path).resolve().relative_to(self.blob_root.resolve()).as_posix()
+
+    def resolve_uri(self, storage_uri: str) -> Path:
+        return self.blob_root / storage_uri
+
+
+def open_target(
+    root: Path | str | None = None, library: "Library | None" = None
+) -> _Target:
+    """Resolve the store location. ``library`` wins; passing both is refused. Library
+    mode never touches ``<home>/cache`` (with ``root=None`` that would be the real home).
+    """
+    if library is not None:
+        if root is not None:
+            raise ValidationError("pass either root= (cache.db) or library=, not both")
+        return _Target(conn=library.conn, blob_root=Path(library.root), library=library)
+    init_cache_db(root)
+    return _Target(conn=open_cache_db(root), blob_root=store.cache_root(root))
 
 
 def _now_iso() -> str:
@@ -82,6 +156,7 @@ def ingest_file(
     access_class: AccessClass,
     acquisition_method: "AcquisitionMethod",
     root: Path | str | None = None,
+    library: "Library | None" = None,
 ) -> "SourceFile":
     """Hash, dedup, store, and record a source file; return its ``SourceFile`` row.
 
@@ -93,6 +168,10 @@ def ingest_file(
 
     ``root`` (additive over the plan signature) lets the CLI thread its ``--root``
     override; ``None`` resolves the cache root from ``$SEEDGRAPH_HOME``/default.
+
+    ``library`` (v3 design §1.1) stores into an open library instead: the row goes into
+    ``library.db`` inside ``library.write()`` (the caller's transaction governs when one
+    is open) and the blob into ``<library>/pdfs/``.
     """
     src_path = Path(path)
     if not src_path.is_file():
@@ -107,99 +186,111 @@ def ingest_file(
         access_class, _default_access_for_acquisition(acquisition_method)
     )
 
-    init_cache_db(root)
+    target = open_target(root, library)
     file_hash = sha256_file(src_path)
-    source_file_id = f"sf_{file_hash}"
     file_type = _detect_file_type(src_path)
 
-    conn = open_cache_db(root)
     try:
-        existing = conn.execute(
-            "SELECT * FROM source_files WHERE file_hash = ?", (file_hash,)
-        ).fetchone()
-        now = _now_iso()
+        with target.write() as conn:
+            return _ingest(conn, target, src_path, file_hash, file_type, incoming,
+                           acquisition_method)
+    finally:
+        target.close()
 
-        if existing is not None:
-            # Dedup hit: NO second blob, NO new row. Reconcile access_class.
-            src = SourceFile(**dict(existing))
-            stored = AccessClass(src.access_class)
-            reconciled = reconcile_access_class(stored, incoming)
-            if reconciled != stored:
-                conn.execute(
-                    "UPDATE source_files SET access_class = ?, updated_at = ? "
-                    "WHERE source_file_id = ?",
-                    (reconciled.value, now, src.source_file_id),
-                )
-                record_event(
-                    conn,
-                    "source_file",
-                    src.source_file_id,
-                    "access_class_reconciled",
-                    {"from": stored.value, "to": reconciled.value},
-                )
-                src.access_class = reconciled.value
-                src.updated_at = now
+
+def _ingest(
+    conn: sqlite3.Connection,
+    target: _Target,
+    src_path: Path,
+    file_hash: str,
+    file_type: str,
+    incoming: AccessClass,
+    acquisition_method: AcquisitionMethod,
+) -> SourceFile:
+    """The ingest body on an open write; never commits."""
+    source_file_id = f"sf_{file_hash}"
+    existing = conn.execute(
+        "SELECT * FROM source_files WHERE file_hash = ?", (file_hash,)
+    ).fetchone()
+    now = _now_iso()
+
+    if existing is not None:
+        # Dedup hit: NO second blob, NO new row. Reconcile access_class.
+        src = SourceFile(**dict(existing))
+        stored = AccessClass(src.access_class)
+        reconciled = reconcile_access_class(stored, incoming)
+        if reconciled != stored:
+            conn.execute(
+                "UPDATE source_files SET access_class = ?, updated_at = ? "
+                "WHERE source_file_id = ?",
+                (reconciled.value, now, src.source_file_id),
+            )
             record_event(
                 conn,
                 "source_file",
                 src.source_file_id,
-                "source_file_deduped",
-                {"file_hash": file_hash},
+                "access_class_reconciled",
+                {"from": stored.value, "to": reconciled.value},
             )
-            conn.commit()
-            return src
-
-        # Miss: content-address the bytes into the store (atomic copy), insert row.
-        if file_type == FileType.pdf.value:
-            dest = store.pdf_path(file_hash, root)
-        elif file_type == FileType.html.value:
-            dest = store.html_path(file_hash, root)
-        else:  # pragma: no cover - _detect_file_type never returns anything else
-            raise ValidationError(f"ingest_file: unsupported file type {file_type!r}")
-        store.copy_file_atomic(src_path, dest)
-        storage_uri = store.relative_uri(dest, root)
-        byte_size = dest.stat().st_size
-
-        conn.execute(
-            "INSERT INTO source_files "
-            "(source_file_id, file_hash, file_type, access_class, acquisition_method, "
-            " storage_uri, byte_size, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                source_file_id,
-                file_hash,
-                file_type,
-                incoming.value,
-                acquisition_method.value,
-                storage_uri,
-                byte_size,
-                now,
-                now,
-            ),
-        )
+            src.access_class = reconciled.value
+            src.updated_at = now
         record_event(
             conn,
             "source_file",
+            src.source_file_id,
+            "source_file_deduped",
+            {"file_hash": file_hash},
+        )
+        return src
+
+    # Miss: content-address the bytes into the store (atomic copy), insert row.
+    if file_type == FileType.pdf.value:
+        dest = target.pdf_path(file_hash)
+    elif file_type == FileType.html.value:
+        dest = target.html_path(file_hash)
+    else:  # pragma: no cover - _detect_file_type never returns anything else
+        raise ValidationError(f"ingest_file: unsupported file type {file_type!r}")
+    store.copy_file_atomic(src_path, dest)
+    storage_uri = target.relative_uri(dest)
+    byte_size = dest.stat().st_size
+
+    conn.execute(
+        "INSERT INTO source_files "
+        "(source_file_id, file_hash, file_type, access_class, acquisition_method, "
+        " storage_uri, byte_size, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
             source_file_id,
-            "source_file_ingested",
-            {
-                "file_hash": file_hash,
-                "file_type": file_type,
-                "access_class": incoming.value,
-                "acquisition_method": acquisition_method.value,
-            },
-        )
-        conn.commit()
-        return SourceFile(
-            source_file_id=source_file_id,
-            file_hash=file_hash,
-            file_type=file_type,
-            access_class=incoming.value,
-            acquisition_method=acquisition_method.value,
-            storage_uri=storage_uri,
-            byte_size=byte_size,
-            created_at=now,
-            updated_at=now,
-        )
-    finally:
-        conn.close()
+            file_hash,
+            file_type,
+            incoming.value,
+            acquisition_method.value,
+            storage_uri,
+            byte_size,
+            now,
+            now,
+        ),
+    )
+    record_event(
+        conn,
+        "source_file",
+        source_file_id,
+        "source_file_ingested",
+        {
+            "file_hash": file_hash,
+            "file_type": file_type,
+            "access_class": incoming.value,
+            "acquisition_method": acquisition_method.value,
+        },
+    )
+    return SourceFile(
+        source_file_id=source_file_id,
+        file_hash=file_hash,
+        file_type=file_type,
+        access_class=incoming.value,
+        acquisition_method=acquisition_method.value,
+        storage_uri=storage_uri,
+        byte_size=byte_size,
+        created_at=now,
+        updated_at=now,
+    )

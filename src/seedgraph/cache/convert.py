@@ -19,6 +19,17 @@ Implements the load-bearing dedup + validation algorithm (plan §6):
 7. Backend exception -> run ``failed`` + ``error`` + ``conversion_failed`` (append-only;
    retry mints a fresh run).
 
+Store location (v3 design §1.1): every public function takes either ``root=`` (the
+stage-0 ``<home>/cache/cache.db``, unchanged) or ``library=`` (an open library: rows go
+into ``library.db``, blobs into the library folder). With a library nothing here commits
+or rolls back; each write is a ``library.write()`` block, which nests as a SAVEPOINT
+inside a caller's transaction. A conversion is split into short writes - (1) dedup +
+pending run, (2) the result - and the converter runs between them with no transaction
+open, so a multi-minute GPU job never holds the library's write lock. For the same
+reason a library conversion refuses to start inside a caller's open transaction. The
+per-run ``marker/{conv}/`` side files are cache-mode only: the library layout (§1.3) has
+no ``marker/`` folder and the provenance lives in ``conversion_runs``.
+
 Dedup is SELECT-based, not constraint-based (no unique index on
 ``(source_file_hash, conversion_fingerprint)``): multiple ``success`` rows with the
 same fingerprint may coexist under append-only / ``--force``; the canonical run is
@@ -34,8 +45,8 @@ import platform
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from ..db.connection import open_cache_db
 from ..errors import SeedgraphError
 from ..ids import new_id
 from ..vocab import (
@@ -46,12 +57,15 @@ from ..vocab import (
     RunStatus,
 )
 from . import store
-from .db import init_cache_db
 from .events import record_event
 from .hashing import sha256_text
+from .ingest import _Target, open_target
 from .marker_backend import FakeMarkerBackend, MarkerBackend
 from .models import MarkdownDocument, SourceFile
 from .validate import validate_markdown
+
+if TYPE_CHECKING:  # pragma: no cover - typing only (library imports cache)
+    from ..library.store import Library
 
 
 class CacheError(SeedgraphError):
@@ -268,12 +282,32 @@ def store_markdown_document(
     reconciliation: a later, LESS-restrictive writer (e.g. an open_access fetch) must
     NOT repoint a user_supplied_private row and leak it.
     """
+    return _store_markdown(
+        conn,
+        _Target(conn=conn, blob_root=store.cache_root(root)),
+        source_file_id=source_file_id,
+        source_access_class=source_access_class,
+        conversion_run_id=conversion_run_id,
+        markdown_text=markdown_text,
+    )
+
+
+def _store_markdown(
+    conn,
+    target: _Target,
+    *,
+    source_file_id: str,
+    source_access_class: str,
+    conversion_run_id: str,
+    markdown_text: str,
+) -> MarkdownDocument:
+    """:func:`store_markdown_document` against any store location; never commits."""
     markdown_bytes = markdown_text.encode("utf-8")
     markdown_hash = sha256_text(markdown_text)
     markdown_id = f"md_{markdown_hash}"
-    blob_path = store.markdown_blob_path(markdown_hash, root)
+    blob_path = target.markdown_path(markdown_hash)
     store.write_bytes_atomic(markdown_bytes, blob_path)
-    storage_uri = store.relative_uri(blob_path, root)
+    storage_uri = target.relative_uri(blob_path)
     md_created_at = _now_iso()
 
     existing = conn.execute(
@@ -333,6 +367,7 @@ def import_external_markdown(
     markdown_text: str,
     converter_name: str = "external_import",
     root: Path | str | None = None,
+    library: "Library | None" = None,
 ) -> "MarkdownDocument":
     """Store EXTERNALLY-converted markdown for a source file WITHOUT running Marker.
 
@@ -345,84 +380,92 @@ def import_external_markdown(
     read it the same way). No dedup SELECT, no backend, no validation gate — the
     caller vouches for the markdown. Append-only (a re-import mints a fresh run; the
     content-addressed markdown row is idempotent on ``markdown_id``).
+    ``library=`` stores into an open library (one ``library.write()``).
     """
-    init_cache_db(root)
-    conn = open_cache_db(root)
+    target = open_target(root, library)
     try:
-        src_row = conn.execute(
-            "SELECT * FROM source_files WHERE source_file_id = ?", (source_file_id,)
-        ).fetchone()
-        if src_row is None:
-            raise CacheError(
-                f"import_external_markdown: unknown source_file_id {source_file_id!r}"
-            )
-        src = SourceFile(**dict(src_row))
-
-        run_id = new_id("conv")
-        now = _now_iso()
-        markdown_hash = sha256_text(markdown_text)
-        # HONEST provenance: converter_name says Marker never ran; the fingerprint is
-        # namespaced so a later real Marker convert of the same PDF never dedup-reuses
-        # this externally-imported markdown (its fingerprint is Marker-version derived).
-        fingerprint = sha256_text(f"external_import:{markdown_hash}")
-        conn.execute(
-            "INSERT INTO conversion_runs "
-            "(conversion_run_id, source_file_id, source_file_hash, converter_name, "
-            " converter_package, converter_version, python_version, config_json, "
-            " conversion_fingerprint, llm_enabled, llm_service, llm_model, "
-            " llm_prompt_version, conversion_epistemic_type, run_status, "
-            " warnings_json, error, markdown_hash, created_at, completed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                run_id,
-                src.source_file_id,
-                src.file_hash,
-                converter_name,
-                converter_name,
-                "n/a",
-                platform.python_version(),
-                _canonical_json({}),
-                fingerprint,
-                0,
-                None,
-                None,
-                None,
-                ConversionEpistemicType.local_deterministic_conversion.value,
-                RunStatus.success.value,
-                None,
-                None,
-                markdown_hash,
-                now,
-                now,
-            ),
-        )
-        md = store_markdown_document(
-            conn,
-            source_file_id=src.source_file_id,
-            source_access_class=src.access_class,
-            conversion_run_id=run_id,
-            markdown_text=markdown_text,
-            root=root,
-        )
-        record_event(
-            conn,
-            "conversion_run",
-            run_id,
-            "markdown_imported",
-            {"markdown_id": md.markdown_id, "source_file_id": source_file_id,
-             "converter_name": converter_name},
-        )
-        record_event(
-            conn,
-            "markdown_document",
-            md.markdown_id,
-            "markdown_written",
-            {"conversion_run_id": run_id, "byte_size": md.byte_size},
-        )
-        conn.commit()
-        return md
+        with target.write() as conn:
+            return _import_markdown(conn, target, source_file_id, markdown_text,
+                                    converter_name)
     finally:
-        conn.close()
+        target.close()
+
+
+def _import_markdown(
+    conn, target: _Target, source_file_id: str, markdown_text: str, converter_name: str
+) -> MarkdownDocument:
+    """The import body on an open write; never commits."""
+    src_row = conn.execute(
+        "SELECT * FROM source_files WHERE source_file_id = ?", (source_file_id,)
+    ).fetchone()
+    if src_row is None:
+        raise CacheError(
+            f"import_external_markdown: unknown source_file_id {source_file_id!r}"
+        )
+    src = SourceFile(**dict(src_row))
+
+    run_id = new_id("conv")
+    now = _now_iso()
+    markdown_hash = sha256_text(markdown_text)
+    # HONEST provenance: converter_name says Marker never ran; the fingerprint is
+    # namespaced so a later real Marker convert of the same PDF never dedup-reuses
+    # this externally-imported markdown (its fingerprint is Marker-version derived).
+    fingerprint = sha256_text(f"external_import:{markdown_hash}")
+    conn.execute(
+        "INSERT INTO conversion_runs "
+        "(conversion_run_id, source_file_id, source_file_hash, converter_name, "
+        " converter_package, converter_version, python_version, config_json, "
+        " conversion_fingerprint, llm_enabled, llm_service, llm_model, "
+        " llm_prompt_version, conversion_epistemic_type, run_status, "
+        " warnings_json, error, markdown_hash, created_at, completed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id,
+            src.source_file_id,
+            src.file_hash,
+            converter_name,
+            converter_name,
+            "n/a",
+            platform.python_version(),
+            _canonical_json({}),
+            fingerprint,
+            0,
+            None,
+            None,
+            None,
+            ConversionEpistemicType.local_deterministic_conversion.value,
+            RunStatus.success.value,
+            None,
+            None,
+            markdown_hash,
+            now,
+            now,
+        ),
+    )
+    md = _store_markdown(
+        conn,
+        target,
+        source_file_id=src.source_file_id,
+        source_access_class=src.access_class,
+        conversion_run_id=run_id,
+        markdown_text=markdown_text,
+    )
+    record_event(
+        conn,
+        "conversion_run",
+        run_id,
+        "markdown_imported",
+        {"markdown_id": md.markdown_id, "source_file_id": source_file_id,
+         "converter_name": converter_name},
+    )
+    record_event(
+        conn,
+        "markdown_document",
+        md.markdown_id,
+        "markdown_written",
+        {"conversion_run_id": run_id, "byte_size": md.byte_size},
+    )
+    return md
 
 
 def convert_source_file(
@@ -433,6 +476,7 @@ def convert_source_file(
     force: bool = False,
     allow_external_llm: bool = False,
     root: Path | str | None = None,
+    library: "Library | None" = None,
 ) -> "MarkdownDocument":
     """Convert a stored source file to validated markdown (or reuse a cache hit).
 
@@ -448,12 +492,40 @@ def convert_source_file(
     ``user_supplied_private`` source is refused unless this override is passed —
     the document text would otherwise leave the machine. ``root`` (additive) lets
     the CLI thread its ``--root`` override.
+
+    ``library`` stores into an open library instead of cache.db. The work is split
+    into short ``library.write()`` blocks with the converter call between them and no
+    transaction open, so calling this inside a caller's open transaction is refused
+    (:class:`seedgraph.library.store.LibraryError`).
     """
+    if library is not None and library.conn.in_transaction:
+        from ..library.store import LibraryError  # local: library imports cache
+
+        raise LibraryError(
+            "convert_source_file: refusing to convert inside an open library transaction "
+            "(a conversion can take minutes; it records its own short writes)"
+        )
     if backend is None:
         backend = _default_backend()
-    init_cache_db(root)
-    conn = open_cache_db(root)
+    target = open_target(root, library)
     try:
+        return _convert(target, source_file_id, config, backend, force, allow_external_llm,
+                        root)
+    finally:
+        target.close()
+
+
+def _convert(
+    target: _Target,
+    source_file_id: str,
+    config: MarkerConfig,
+    backend: MarkerBackend,
+    force: bool,
+    allow_external_llm: bool,
+    root: Path | str | None,
+) -> MarkdownDocument:
+    # --- write 1: checks, dedup, pending run (cache mode: the stage-0 first commit) ---
+    with target.write() as conn:
         src_row = conn.execute(
             "SELECT * FROM source_files WHERE source_file_id = ?", (source_file_id,)
         ).fetchone()
@@ -511,7 +583,6 @@ def convert_source_file(
                     "conversion_reused",
                     {"markdown_id": md.markdown_id, "source_file_id": source_file_id},
                 )
-                conn.commit()
                 return md
 
         # Mint a fresh run (append-only). --force lands here directly.
@@ -533,28 +604,30 @@ def convert_source_file(
             "conversion_started",
             {"source_file_id": source_file_id, "conversion_fingerprint": fingerprint},
         )
-        conn.commit()
 
-        # Invoke the backend.
-        pdf_path = store.resolve_uri(src.storage_uri, root)
-        try:
-            result = backend(pdf_path, config)
-        except Exception as exc:  # backend failure -> failed run (append-only; retry mints fresh)
+    # --- the converter, with no transaction open ---------------------------------------
+    pdf_path = target.resolve_uri(src.storage_uri)
+    try:
+        result = backend(pdf_path, config)
+    except Exception as exc:  # backend failure -> failed run (append-only; retry mints fresh)
+        # The failed finish is its own completed write; the error is raised after it so
+        # the rollback of an exception never takes the failed row with it.
+        with target.write() as conn:
             _finish_run(
                 conn, run_id, status=RunStatus.failed, warnings=[], error=f"backend error: {exc}"
             )
             record_event(
                 conn, "conversion_run", run_id, "conversion_failed", {"error": str(exc)}
             )
-            conn.commit()
-            raise ConversionError(
-                f"Marker backend failed for source_file_id={source_file_id!r}: {exc}"
-            ) from exc
+        raise ConversionError(
+            f"Marker backend failed for source_file_id={source_file_id!r}: {exc}"
+        ) from exc
 
-        validation = validate_markdown(result.markdown)
-        warnings = list(result.warnings) + list(validation.warnings)
-        if not validation.ok:
-            fatal_reason = validation.warnings[0] if validation.warnings else "validation failed"
+    validation = validate_markdown(result.markdown)
+    warnings = list(result.warnings) + list(validation.warnings)
+    if not validation.ok:
+        fatal_reason = validation.warnings[0] if validation.warnings else "validation failed"
+        with target.write() as conn:
             _finish_run(
                 conn,
                 run_id,
@@ -565,22 +638,23 @@ def convert_source_file(
             record_event(
                 conn, "conversion_run", run_id, "conversion_failed", {"error": fatal_reason}
             )
-            conn.commit()
-            raise ConversionError(
-                f"conversion produced invalid markdown ({fatal_reason}) for "
-                f"source_file_id={source_file_id!r}; run {run_id} marked failed, no markdown stored."
-            )
+        raise ConversionError(
+            f"conversion produced invalid markdown ({fatal_reason}) for "
+            f"source_file_id={source_file_id!r}; run {run_id} marked failed, no markdown stored."
+        )
 
-        # Success: content-address-store the markdown + upsert the shared row (the
-        # single markdown-storage surface, shared with the external-import path), then
-        # finish this run.
-        md = store_markdown_document(
+    # --- write 2: success --------------------------------------------------------------
+    # Content-address-store the markdown + upsert the shared row (the single
+    # markdown-storage surface, shared with the external-import path), then finish
+    # this run.
+    with target.write() as conn:
+        md = _store_markdown(
             conn,
+            target,
             source_file_id=src.source_file_id,
             source_access_class=src.access_class,
             conversion_run_id=run_id,
             markdown_text=result.markdown,
-            root=root,
         )
         markdown_id = md.markdown_id
         markdown_hash = md.markdown_hash
@@ -593,20 +667,23 @@ def convert_source_file(
             markdown_hash=markdown_hash,
         )
 
-        # Best-effort raw block/metadata dump (never parsed; doc 11 §7).
-        if result.block_json is not None:
-            meta_path = store.marker_dir(run_id, root) / "meta.json"
-            store.write_bytes_atomic(
-                json.dumps(result.block_json, indent=2, default=str).encode("utf-8"), meta_path
+        if target.library is None:
+            # Cache-mode side files (see module doc): best-effort raw block/metadata
+            # dump (never parsed; doc 11 §7) and the provenance manifest.
+            if result.block_json is not None:
+                meta_path = store.marker_dir(run_id, root) / "meta.json"
+                store.write_bytes_atomic(
+                    json.dumps(result.block_json, indent=2, default=str).encode("utf-8"),
+                    meta_path,
+                )
+            write_manifest(
+                run_id,
+                source_file_hash=src.file_hash,
+                markdown_hash=markdown_hash,
+                cfg=config,
+                converter_version=converter_version,
+                root=root,
             )
-        write_manifest(
-            run_id,
-            source_file_hash=src.file_hash,
-            markdown_hash=markdown_hash,
-            cfg=config,
-            converter_version=converter_version,
-            root=root,
-        )
         record_event(
             conn,
             "conversion_run",
@@ -621,10 +698,7 @@ def convert_source_file(
             "markdown_written",
             {"conversion_run_id": run_id, "byte_size": md.byte_size},
         )
-        conn.commit()
-        return md
-    finally:
-        conn.close()
+    return md
 
 
 def add_document(
@@ -637,6 +711,7 @@ def add_document(
     backend: MarkerBackend | None = None,
     allow_external_llm: bool = False,
     root: Path | str | None = None,
+    library: "Library | None" = None,
 ) -> "MarkdownDocument":
     """Convenience: :func:`ingest_file` then :func:`convert_source_file` in one call.
 
@@ -649,13 +724,14 @@ def add_document(
     :class:`FakeMarkerBackend` so the milestone's "Marker runs zero additional
     times" (``call_count``) is observable offline.
     """
-    from .ingest import ingest_file  # local import avoids an ingest<->convert cycle
+    from .ingest import ingest_file
 
     src = ingest_file(
         path,
         access_class=access_class,
         acquisition_method=acquisition_method,
         root=root,
+        library=library,
     )
     return convert_source_file(
         src.source_file_id,
@@ -664,4 +740,5 @@ def add_document(
         force=force,
         allow_external_llm=allow_external_llm,
         root=root,
+        library=library,
     )
