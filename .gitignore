@@ -21,3 +21,4 @@ docs/*
 !docs/AGENT_WORKFLOWS.md
 !docs/DEPENDENCY_POLICY.md
 !docs/CONVERTER_PROTOCOL.md
+!docs/V3_LIBRARY_DESIGN.md
