@@ -19,17 +19,32 @@ def test_version_prints_versions():
     assert "sqlite" in result.output
 
 
-def test_migrate_applies_and_is_idempotent():
-    from seedgraph.db.migrations import latest_version
+def test_v3_core_commands_are_registered():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    for name in ("setup", "migrate", "convert", "library"):
+        assert name in result.output
 
-    expected = f"version {latest_version('cache')}"
-    first = runner.invoke(app, ["migrate"])
-    assert first.exit_code == 0
-    assert expected in first.output
 
-    second = runner.invoke(app, ["migrate"])
-    assert second.exit_code == 0
-    assert expected in second.output
+def test_stage1_deleted_commands_are_gone():
+    """Design §9: the old top-level `search --project` is deleted, and `migrate` is now the
+    v3 migration group (the old v2 schema upgrade, `migrate [--project]`, is gone)."""
+    old_search = runner.invoke(app, ["search", "x", "--project", "p"])
+    assert old_search.exit_code == 2
+    assert "No such command" in old_search.output
+    old_migrate = runner.invoke(app, ["migrate", "--project", "p"])
+    assert old_migrate.exit_code == 2
+    assert "cache: schema at version" not in old_migrate.output
+
+
+def test_top_level_command_names_are_unique():
+    import typer.main
+
+    group = typer.main.get_command(app)
+    registered = len(app.registered_commands) + len(app.registered_groups)
+    # Click keys commands by name, so a duplicate name would silently shadow another.
+    assert len(group.commands) == registered
+    assert "search" not in group.commands
 
 
 def test_doctor_exits_zero_on_fresh_home():

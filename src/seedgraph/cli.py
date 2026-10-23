@@ -1,10 +1,9 @@
-"""Typer CLI.
+"""Typer CLI entry point (``seedgraph-v3`` / ``python -m seedgraph``).
 
-Phase-0 verbs (``version``, ``migrate``, ``doctor``) are the fully-wired surface.
-The wiring stage additively mounts grouped sub-apps and top-level commands for
-every later phase as STUB callables (each echoes ``not yet implemented (<phase>)``
-then exits 2) so ``seedgraph --help`` lists the full command surface before the
-phase logic lands (decision 81 — CLI is the complete surface)."""
+The v3 core commands (``setup``, ``migrate``, ``convert``, ``library``) live in
+:mod:`seedgraph.commands` and are mounted by one ``commands.register(app)`` call.
+The old v2 groups below stay registered until the stage that replaces each one
+deletes it (v3 design §9, §10); this module shrinks to registration as they go."""
 
 from __future__ import annotations
 
@@ -16,11 +15,10 @@ from typing import List, Optional
 
 import typer
 
-from . import __version__, doctor as doctor_mod
+from . import __version__, commands, doctor as doctor_mod
 from .cache.cli import cache_app
-from .db.bootstrap import ensure_cache_db, ensure_project_db
-from .db.connection import cache_db_path, connect_project_raw, project_db_path
-from .db.migrations import current_version
+from .db.bootstrap import ensure_project_db
+from .db.connection import connect_project_raw, project_db_path
 from .golden.cli import golden_app
 from .graph.run_view import build_and_export
 from .project.cli import project_app, review_app
@@ -48,35 +46,11 @@ _root_option = typer.Option(None, "--root", help="Override the seedgraph home di
 _project_option = typer.Option(None, "--project", help="Project slug (^[a-z0-9._-]+$).")
 
 
-def _scope_version(db_path: Path) -> int:
-    conn = sqlite3.connect(str(db_path))
-    try:
-        return current_version(conn)
-    finally:
-        conn.close()
-
-
 @app.command()
 def version() -> None:
     """Print package + SQLite versions."""
     typer.echo(f"seedgraph {__version__}")
     typer.echo(f"sqlite {sqlite3.sqlite_version}")
-
-
-@app.command()
-def migrate(
-    root: Optional[Path] = _root_option,
-    project: Optional[str] = _project_option,
-) -> None:
-    """Apply pending numbered .sql migrations for the named scope(s). Idempotent."""
-    ensure_cache_db(root)
-    typer.echo(f"cache: schema at version {_scope_version(cache_db_path(root))}")
-    if project is not None:
-        ensure_project_db(project, root)
-        typer.echo(
-            f"project '{project}': schema at version "
-            f"{_scope_version(project_db_path(project, root))}"
-        )
 
 
 def _span_doctor_checks(root: Optional[Path], slug: str) -> list:
@@ -3042,41 +3016,8 @@ app.add_typer(llm_app, name="llm")  # Stage C: LLM backend admin (profiles/keys/
 app.add_typer(secrets_app, name="secrets")  # ADR-0001: machine-global OS-keyring store
 app.add_typer(mcp_app, name="mcp")  # MCP server (design 00 / plan 01; optional [mcp] extra)
 
-
-@app.command("search")
-def search(
-    query: str = typer.Argument(..., help="Exact-term search query (phrase-safe)."),
-    project: str = typer.Option(..., "--project", help="Project slug."),
-    work_id: Optional[str] = typer.Option(None, "--work", help="Filter by work id."),
-    section_kind: Optional[str] = typer.Option(None, "--section-kind", help="Filter by section_kind."),
-    limit: int = typer.Option(20, "--limit", help="Max hits."),
-    root: Optional[Path] = _root_option,
-) -> None:
-    """Exact-term FTS5 span search over a project's evidence spans (no stemming)."""
-    from sqlmodel import Session
-
-    from .db.adapter import raw_conn
-    from .fts.search import search_spans
-    from .project.service import open_project
-
-    h = open_project(project, root=root)
-    with Session(h.engine) as session:
-        conn = raw_conn(session)
-        hits = search_spans(
-            conn, query, work_id=work_id, section_kind=section_kind, limit=limit
-        )
-    if not hits:
-        typer.echo("no matches")
-        return
-    typer.echo("span_id\twork_id\tsection_id\tpage\trank\tquote")
-    for hit in hits:
-        snippet = hit.quote_text.replace("\n", " ")
-        if len(snippet) > 80:
-            snippet = snippet[:77] + "..."
-        typer.echo(
-            f"{hit.span_id}\t{hit.work_id}\t{hit.section_id or ''}\t"
-            f"{hit.page_start or ''}\t{hit.rank:.3f}\t{snippet}"
-        )
+# v3 core commands: setup, migrate, convert, library (design §10).
+commands.register(app)
 
 
 @app.command("ask")
