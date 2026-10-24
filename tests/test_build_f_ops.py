@@ -3,8 +3,8 @@
 done-vs-crashed ``interrupted`` sweep.
 
 Offline / keyless throughout: CLI verbs run under Typer's ``CliRunner`` on the
-autouse throwaway ``SEEDGRAPH_HOME``; the events route is exercised in-process via
-Starlette's ``TestClient`` with the ``require_local_session`` dependency override.
+autouse throwaway ``SEEDGRAPH_HOME``. (The old web UI's serve-sweep and events-route
+tests went with web/ in stage 2.)
 """
 
 from __future__ import annotations
@@ -13,10 +13,8 @@ import importlib
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from seedgraph.api.app import app as api_app
 from seedgraph.cli import app
 from seedgraph.config.loader import (
     _FORBIDDEN_SECRET_KEYS,
@@ -36,7 +34,6 @@ from seedgraph.run import (
     read_events,
     read_manifest,
 )
-from seedgraph.web import serve
 
 runner = CliRunner()
 
@@ -233,42 +230,3 @@ def test_sweep_on_project_without_runs_dir_is_noop():
     assert mark_interrupted_runs("swnone") == []
 
 
-def test_serve_sweeps_stale_runs_before_uvicorn_binds(monkeypatch):
-    """`serve` stamps every project's stale runs BEFORE uvicorn binds, so no
-    status request can ever be served inside the restart window (design 9)."""
-    import uvicorn
-
-    service.create_project("swserve")
-    rid = ensure_run("swserve")
-    append_event("swserve", rid, phase="p", event="started")
-
-    seen_at_bind: dict = {}
-
-    def fake_run(app_obj, host, port):
-        seen_at_bind["status"] = list_runs("swserve")[0]["status"]
-
-    monkeypatch.setattr(uvicorn, "run", fake_run)
-    result = runner.invoke(app, ["serve"])
-    assert result.exit_code == 0, result.output
-    assert seen_at_bind["status"] == "interrupted"
-    assert f"marked stale run as interrupted: swserve/{rid}" in result.output
-
-
-def test_swept_stale_run_reports_interrupted_via_events_route():
-    """Route-level: the UNCHANGED events route over swept state (poll.js stops on
-    any terminal status, so `interrupted` ends the polling loop)."""
-    service.create_project("swroute")
-    rid = ensure_run("swroute")
-    append_event("swroute", rid, phase="p", event="started")
-    mark_interrupted_runs("swroute")
-
-    api_app.dependency_overrides[serve.require_local_session] = lambda: None
-    try:
-        client = TestClient(api_app)
-        resp = client.get(f"/api/projects/swroute/runs/{rid}/events")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["status"] == "interrupted"
-        assert body["events"][-1]["event"] == "interrupted"
-    finally:
-        api_app.dependency_overrides.pop(serve.require_local_session, None)

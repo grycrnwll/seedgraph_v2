@@ -90,20 +90,33 @@ def _title_and_doi(lib: Library, paper_id: str) -> tuple[str | None, str | None]
 
 
 def current_markdown_id(conn, source_file_id: str) -> str | None:
-    """The markdown of the file's latest successful conversion run, or ``None``."""
-    row = conn.execute(
-        "SELECT markdown_hash FROM conversion_runs WHERE source_file_id = ? "
-        "AND run_status = 'success' AND markdown_hash IS NOT NULL "
-        "ORDER BY created_at DESC, conversion_run_id DESC LIMIT 1",
+    """The markdown a newly attached paper should link for this file, or ``None``.
+
+    In order: the markdown other papers on this file already link (a failed forced-OCR
+    run must not reach a later attach, design §5.5), else the latest successful run
+    whose text passed the gate, else the latest successful run.
+    """
+    linked = conn.execute(
+        "SELECT markdown_id FROM paper_files WHERE source_file_id = ? AND markdown_id IS NOT NULL "
+        "GROUP BY markdown_id ORDER BY COUNT(*) DESC, MAX(attached_at) DESC LIMIT 1",
         (source_file_id,),
     ).fetchone()
-    if row is None:
+    if linked is not None:
+        return linked[0]
+    rows = conn.execute(
+        "SELECT r.markdown_hash, q.status FROM conversion_runs r "
+        "JOIN markdown_documents m ON m.markdown_id = 'md_' || r.markdown_hash "
+        "LEFT JOIN text_quality q ON q.markdown_id = m.markdown_id "
+        "WHERE r.source_file_id = ? AND r.run_status = 'success' AND r.markdown_hash IS NOT NULL "
+        "ORDER BY r.created_at DESC, r.conversion_run_id DESC",
+        (source_file_id,),
+    ).fetchall()
+    if not rows:
         return None
-    md_id = f"md_{row[0]}"
-    exists = conn.execute(
-        "SELECT 1 FROM markdown_documents WHERE markdown_id = ?", (md_id,)
-    ).fetchone()
-    return md_id if exists else None
+    for md_hash, status in rows:
+        if status == "pass":
+            return f"md_{md_hash}"
+    return f"md_{rows[0][0]}"
 
 
 def _markdown_pages(lib: Library, markdown_id: str) -> list[str]:
@@ -346,10 +359,47 @@ def convert_file(
                 title, doi = _title_and_doi(lib, pid)
                 _store_check(lib, conn, pid, source_file_id,
                              check_pdf_text(title, doi, pages), "markdown")
+    index_sections(lib, md.markdown_id)
     return ConvertOutcome(source_file_id=source_file_id, status="converted",
                           markdown_id=md.markdown_id, error=None,
                           paper_ids=_papers_of(lib, source_file_id),
                           text_quality=_assess_text(lib, md.markdown_id))
+
+
+def index_sections(lib: Library, markdown_id: str) -> int:
+    """Parse and store ``document_sections`` for a converted markdown (v2's
+    ``parse_sections``, deterministic ``sec_`` ids), so its reference ranges exist for
+    packaging and the gate. A markdown that already has sections (migrated, or an
+    earlier conversion of the same bytes) is left as it is. Returns rows written."""
+    from ..notes.spans import read_markdown  # local: notes imports the library
+    from ..sections.parser import SECTION_PARSER_VERSION, parse_sections
+
+    conn = lib.conn
+    if conn.execute("SELECT 1 FROM document_sections WHERE markdown_id = ? LIMIT 1",
+                    (markdown_id,)).fetchone() is not None:
+        return 0
+    row = conn.execute(
+        "SELECT m.markdown_hash, m.source_file_id, s.file_hash FROM markdown_documents m "
+        "JOIN source_files s ON s.source_file_id = m.source_file_id WHERE m.markdown_id = ?",
+        (markdown_id,)).fetchone()
+    text = read_markdown(conn, markdown_id) if row is not None else None
+    if text is None:
+        return 0
+    sections = parse_sections(text, markdown_id=markdown_id, markdown_hash=row[0], source_file_id=row[1],
+                              source_file_hash=row[2], work_id="")
+    now = _now()
+    with lib.write() as wconn:
+        for sec in sections:
+            wconn.execute(
+                "INSERT INTO document_sections (section_id, markdown_id, markdown_hash, source_file_id, "
+                "source_file_hash, parent_section_id, level, ordinal, heading_text, heading_path, section_kind, "
+                "start_char, end_char, page_start, page_end, section_parser_version, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (sec.section_id, sec.markdown_id, sec.markdown_hash, sec.source_file_id, sec.source_file_hash,
+                 sec.parent_section_id, sec.level, sec.ordinal, sec.heading_text, sec.heading_path,
+                 sec.section_kind, sec.start_char, sec.end_char, sec.page_start, sec.page_end,
+                 SECTION_PARSER_VERSION, now))
+    return len(sections)
 
 
 def _assess_text(lib: Library, markdown_id: str) -> str | None:

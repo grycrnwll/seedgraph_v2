@@ -8,7 +8,7 @@ run — superseded note generations contribute nothing; see
 BEFORE clustering → per-``concept_type`` :func:`canon.candidate_clusters` (the
 D9 type fence: fuzzy + acronym tiers never span types; a cross-type
 ``must_link`` still merges — human decision outranks the fence) → optional
-:class:`llm_propose.ConceptProposer` → :func:`canon.passes_guardrails` disposes →
+:class:`proposer.ConceptProposer` → :func:`canon.passes_guardrails` disposes →
 relabel-then-one-merge → upsert ``concepts`` (preserving ``user_confirmed`` /
 ``user_split`` and inheriting ``concept_type`` from ``ClaimType``; ``definition``
 sliced from a contributing claim) + ``concept_aliases`` → write
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from ..vocab import EpistemicType, normalize_claim_type
 from . import audit, canon, merge
 from .access import resolve_access_class
-from .llm_propose import ConceptProposer, NullProposer
+from .proposer import ConceptProposer, NullProposer
 
 if TYPE_CHECKING:
     from . import SemanticBuildReport
@@ -214,7 +214,7 @@ def build_concepts(
     deterministic ``concept_id`` so unchanged labels keep identity and
     ``user_confirmed``/``user_split`` status + ``concept_constraints`` survive
     (doc 07 §7). ``concept_mode`` is ``'deterministic'`` under a
-    :class:`~llm_propose.NullProposer` (no synonym folds, no ``provisional`` rows),
+    :class:`~proposer.NullProposer` (no synonym folds, no ``provisional`` rows),
     ``'llm'`` when an LLM participates, ``'none'`` when there are zero claims.
     Stamps ``run_id`` + ``access_class`` (:func:`access.resolve_access_class`).
     Enqueues borderline folds as ``concept_merge_candidate`` (concepts stay split).

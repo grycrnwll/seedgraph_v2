@@ -30,11 +30,6 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # avoid importing config at runtime; annotation only.
-    from ..config.models import LLMProfile, ProjectConfig
-    from ..llm.backend import LLMBackend
 
 __all__ = ["SemanticBuildReport", "build_semantic_overlay"]
 
@@ -66,20 +61,18 @@ def build_semantic_overlay(
     conn: sqlite3.Connection,
     *,
     run_id: str,
-    profile: "LLMProfile | None",
     tau: float = 0.6,
     min_shared: int = 2,
-    config: "ProjectConfig | None" = None,
-    backend: "LLMBackend | None" = None,
+    proposer=None,
 ) -> SemanticBuildReport:
     """Build (or idempotently rebuild) the semantic overlay for one project.
 
     Orchestrates the full pipeline over the current ``extracted_claims`` set:
     gather type-scoped ``normalized_label``s → apply sticky
     ``concept_constraints`` (must/cannot-link) BEFORE clustering → deterministic
-    candidate clustering (token-Jaccard ≥ ``tau`` ∨ acronym) → optional LLM
-    synonym proposal (``profile`` is ``None`` or a no-LLM profile ⇒ deterministic
-    mode, no fuzzy folds) → three deterministic guardrails dispose →
+    candidate clustering (token-Jaccard ≥ ``tau`` ∨ acronym) → optional synonym
+    proposal (``proposer``; ``None`` ⇒ :class:`~.proposer.NullProposer`, deterministic
+    mode, no fuzzy folds; the hosted-LLM proposer was removed in stage 2) → three deterministic guardrails dispose →
     relabel-then-one-merge → upsert ``concepts`` (preserving ``user_confirmed`` /
     ``user_split`` status and any ``concept_constraints``) + ``concept_aliases``
     → write ``claim_concepts`` → build ``Work --discusses--> Concept`` and
@@ -98,9 +91,9 @@ def build_semantic_overlay(
 
     from . import concepts as concepts_mod
     from . import edges as edges_mod
-    from .llm_propose import make_proposer
+    from .proposer import NullProposer
 
-    proposer = make_proposer(profile, config=config, backend=backend)
+    proposer = proposer if proposer is not None else NullProposer()
     report = concepts_mod.build_concepts(
         conn, run_id=run_id, proposer=proposer, tau=tau
     )

@@ -1,5 +1,5 @@
 """Opt-in cold-start smoke over real stdio (design §7.1, §11 P7): spawns
-``python -m seedgraph.mcp.server_v3`` against a temp home, times the cold start, and
+``python -m seedgraph mcp serve`` against a temp home, times the cold start, and
 round-trips non-ASCII text (μ in a title, the Windows stdio encoding risk).
 
 Deselected by default (``mcp_client`` marker; the suite does not spawn processes).
@@ -28,7 +28,7 @@ COLD_START_TARGET_S = 3.0
 def test_cold_start_and_utf8_round_trip(seeded, home):
     env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
     env["SEEDGRAPH_HOME"] = str(home)
-    params = StdioServerParameters(command=sys.executable, args=["-m", "seedgraph.mcp.server_v3"], env=env)
+    params = StdioServerParameters(command=sys.executable, args=["-m", "seedgraph", "mcp", "serve"], env=env)
 
     async def _drive():
         started = time.perf_counter()

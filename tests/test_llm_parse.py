@@ -1,6 +1,7 @@
 r"""Shared LLM JSON parser (``llm/parse.py``; Build C chunk 1, D1).
 
-One robust brace-depth parser, four adopters. These tests pin the behaviors the
+One robust brace-depth parser; since stage 2 its adopters are the work routine and
+the note format (the v2 adopters were deleted). These tests pin the behaviors the
 consolidation was bought for: fence stripping, prose tolerance, string-literal
 brace safety, and first-balanced-object-wins — strictly better than the greedy
 ``\{.*\}`` regexes it replaced, which glued two objects into one unparseable
@@ -71,28 +72,14 @@ def test_empty_and_none_ish_input():
 
 
 # --------------------------------------------------------------------------
-# the four adopters share the one implementation (own return shapes kept)
+# the protocol adopters share the one implementation
 # --------------------------------------------------------------------------
 
 
-def test_validator_reexport_is_the_shared_impl():
-    from seedgraph.extraction import validator
+def test_protocol_adopters_share_the_one_implementation():
     from seedgraph.llm import parse
+    from seedgraph.notes import format as note_format
+    from seedgraph.work import routine
 
-    assert validator.extract_json_object is parse.extract_json_object
-
-
-def test_adopters_first_object_wins_with_own_shapes():
-    # Two concatenated objects: the pre-consolidation greedy regexes (compose,
-    # llm_propose) and find/rfind bracketing (metadata) all returned None here.
-    two = '{"synonym_groups": [["a", "b"]]} {"junk": true}'
-
-    from seedgraph.answer.compose import _parse_json
-    from seedgraph.extraction.metadata import parse_biblio_json
-    from seedgraph.semantic.llm_propose import _parse_groups
-
-    assert _parse_json(two) == {"synonym_groups": [["a", "b"]]}
-    assert parse_biblio_json(two) == {"synonym_groups": [["a", "b"]]}
-    assert _parse_groups(two) == ({"synonym_groups": [["a", "b"]]}, None)
-    # llm_propose keeps its (parsed, error) executor-parse shape on failure.
-    assert _parse_groups("no json here") == (None, "invalid json")
+    assert routine.extract_json_object is parse.extract_json_object
+    assert note_format.extract_json_object is parse.extract_json_object

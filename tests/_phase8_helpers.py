@@ -1,9 +1,8 @@
-"""Shared offline fixtures for the phase_8 answer-harness test suite.
+"""Shared offline v2 project fixture (kept from the phase_8 suite, whose answer
+harness was deleted in stage 2).
 
 A tiny ``project.db`` (~3 works + spans + claims + notes + citation_edges + one
-``metadata_only`` work) plus routing-config builders and a canned-envelope helper.
-Everything is fully offline: the LLM seam is the phase_4 :class:`FakeLLMBackend`
-injected through ``compose._BACKEND_OVERRIDE`` — no network, no key, no real provider.
+``metadata_only`` work). Fully offline.
 """
 
 from __future__ import annotations
@@ -11,13 +10,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from seedgraph.answer.types import AllowedSet, AnswerEnvelope, Citation, QuerySpec, QueryType
-from seedgraph.config.models import (
-    GlobalConfig,
-    LLMConfig,
-    TaskRoute,
-    default_profiles,
-)
 from seedgraph.project import service
 
 
@@ -181,101 +173,3 @@ def empty_fts_project(slug: str = "ph8empty"):
     return handle
 
 
-def make_answer_config(
-    *,
-    preferred: str = "local_ollama_default",
-    fallback: str | None = "no_llm",
-    private_external: bool = False,
-    usd_limit: float | None = None,
-    profiles: dict | None = None,
-) -> GlobalConfig:
-    """Build a routing config whose ``answer_generation`` task points at ``preferred``.
-
-    Defaults route to ``local_ollama_default`` (always available offline) so the
-    injected fake backend is dispatched without a key. ``private_external`` sets
-    ``content_policy.external_llm_for_answer_generation``; ``usd_limit`` arms the
-    fail-closed pricing gate.
-    """
-    profs = profiles if profiles is not None else default_profiles()
-    routes = {
-        "answer_generation": TaskRoute(
-            task_type="answer_generation",
-            preferred_profile=preferred,
-            fallback_profile=fallback,
-            requires_source_text=False,
-            deterministic_fallback=False,
-        )
-    }
-    cfg = GlobalConfig(llm=LLMConfig(profiles=profs, routes=routes))
-    cfg.content_policy.external_llm_for_answer_generation = private_external
-    if usd_limit is not None:
-        cfg.budget.usd_limit = usd_limit
-    return cfg
-
-
-def canned_envelope_json(
-    *,
-    answer_text: str,
-    cited_markers: list[int],
-    query_type: str = "factual",
-    answer_category: str = "source_grounded",
-    insufficient_evidence: bool = False,
-) -> dict:
-    """The strict-JSON envelope sub-schema the answer LLM is contracted to emit."""
-    return {
-        "query_type": query_type,
-        "answer_category": answer_category,
-        "answer_text": answer_text,
-        "cited_markers": cited_markers,
-        "insufficient_evidence": insufficient_evidence,
-    }
-
-
-def make_spec(question: str, *, phrases: list[str] | None = None,
-              protocol: QueryType = QueryType.factual, **kw) -> QuerySpec:
-    return QuerySpec(
-        question=question,
-        protocol_hint=protocol,
-        phrases=phrases or [],
-        **kw,
-    )
-
-
-def make_allowed(work_ids, span_ids) -> AllowedSet:
-    return AllowedSet(
-        work_ids=frozenset(work_ids),
-        span_ids=frozenset(span_ids),
-        retrieved_item_ids=tuple(work_ids) + tuple(span_ids),
-    )
-
-
-def make_envelope(*, answer_text="", citations=None, category="source_grounded",
-                  mode="project_only", insufficient=False, query_type="factual") -> AnswerEnvelope:
-    citations = citations or []
-    return AnswerEnvelope(
-        answer_id="ans_" + "0" * 32,
-        question="q?",
-        query_type=query_type,
-        answer_category=category,
-        answer_text=answer_text,
-        citations=citations,
-        cited_work_ids=[c.work_id for c in citations],
-        cited_span_ids=[s for c in citations for s in c.span_ids],
-        insufficient_evidence=insufficient,
-        retrieved_item_ids=[],
-        mode=mode,
-    )
-
-
-def make_citation(work_id, span_ids, *, epistemic="llm_extracted", assertion="stated",
-                  quote="q", title="T", year=2020) -> Citation:
-    return Citation(
-        work_id=work_id,
-        title=title,
-        year=year,
-        span_ids=list(span_ids),
-        quote=quote,
-        section=None,
-        epistemic_type=epistemic,
-        assertion_status=assertion,
-    )

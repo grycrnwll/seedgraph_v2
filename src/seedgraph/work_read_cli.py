@@ -23,9 +23,6 @@ def register_work_read(app: typer.Typer) -> None:
         max_chars: int = typer.Option(12000, "--max-chars"),
         section_offset: int = typer.Option(0, "--section-offset"),
         section_limit: int = typer.Option(50, "--section-limit"),
-        external: bool = typer.Option(False, "--external"),
-        confirm_external: bool = typer.Option(False, "--confirm-external"),
-        redact_private: bool = typer.Option(False, "--redact-private"),
         json_output: bool = typer.Option(False, "--json"),
         root: Path | None = typer.Option(None, "--root"),
     ) -> None:
@@ -34,9 +31,7 @@ def register_work_read(app: typer.Typer) -> None:
             handle = open_project(project, root=root, read_only=True)
             result = read_work(handle, work_id=work_id, section_id=section_id, subtree=subtree,
                                span_id=span_id, cursor=cursor, max_chars=max_chars,
-                               section_offset=section_offset, section_limit=section_limit,
-                               external=external, confirm_external=confirm_external,
-                               redact_private=redact_private)
+                               section_offset=section_offset, section_limit=section_limit)
         except SeedgraphError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc

@@ -1,12 +1,10 @@
-"""Seedgraph MCP server package (design 00, plan 01 chunk 0).
+"""The Seedgraph MCP server (v3 design §7): ``seedgraph mcp serve``.
 
-A thin, in-process consumer of the service layer (decision 81) exposing the
-read/query surface over the Model Context Protocol. Every `mcp` SDK import is
-confined to this package's modules (chiefly ``server.py``); the base package and
-``seedgraph.cli`` never import the SDK, so a no-extra install imports and runs
-the full existing suite (the ``[mcp]`` extra is optional).
+:mod:`.server` builds the stdio FastMCP server over the library, its context graphs
+(:mod:`.tools_library`) and the work protocol (:mod:`.tools_work`). The v2 server
+(project.db handles, ``ask``, ``extraction_*``, the content-access gate) was replaced
+in place in stage 2.
 
-This ``__init__`` imports nothing eagerly — not even ``server`` — so ``import
-seedgraph.mcp`` alone does not require the SDK. Import the submodules directly:
-``from seedgraph.mcp.server import build_server``.
+This ``__init__`` imports nothing eagerly, so ``import seedgraph.mcp`` does not load
+the SDK. Import the submodules directly: ``from seedgraph.mcp.server import build_server``.
 """

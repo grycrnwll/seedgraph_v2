@@ -1,10 +1,9 @@
-"""Post-conversion bibliographic metadata backfill — OFFLINE, LLM MOCKED.
+"""Post-conversion bibliographic metadata backfill — OFFLINE, deterministic.
 
-The live LLM (local Ollama) is used only at runtime; every test here either
-monkeypatches the extractor (:func:`extract_biblio_metadata`) or exercises the
-pure regex / JSON / identity paths. Markdown is pushed through the real cache
-(ingest + FakeMarkerBackend convert) and bridged work->markdown exactly as
-phase_4 does, so the runner + CLI round-trip with no network and no key.
+Since stage 2 the backfill is regex-only (the LLM path moved to the work protocol's
+``metadata`` task). Markdown is pushed through the real cache (ingest +
+FakeMarkerBackend convert) and bridged work->markdown, so the runner + CLI
+round-trip with no network and no key.
 """
 
 from __future__ import annotations
@@ -21,15 +20,9 @@ from seedgraph.cache.convert import convert_source_file
 from seedgraph.cache.ingest import ingest_file
 from seedgraph.cache.marker_backend import FakeMarkerBackend
 from seedgraph.cli import app
-from seedgraph.config.models import default_profiles, default_routes
 from seedgraph.db.project_models import Identifier, ReviewQueueItem, Work
 from seedgraph.extraction import metadata
-from seedgraph.extraction.metadata import (
-    BiblioMeta,
-    deterministic_identifiers,
-    parse_biblio_json,
-)
-from seedgraph.extraction.metadata import _meta_from_dict  # tolerant coercion
+from seedgraph.extraction.metadata import BiblioMeta, deterministic_identifiers
 from seedgraph.project import identity, service
 from seedgraph.vocab import AccessClass, AcquisitionMethod
 
@@ -75,54 +68,6 @@ def _project_with_markdown(
         )
         s.commit()
     return h, w.work_id
-
-
-# ==========================================================================
-# 0. routing defaults
-# ==========================================================================
-
-def test_metadata_extraction_route_defaults():
-    routes = default_routes()
-    r = routes["metadata_extraction"]
-    assert r.preferred_profile == "local_ollama_default"
-    assert r.fallback_profile == "no_llm"
-    assert r.deterministic_fallback is True
-    profs = default_profiles()
-    assert "metadata_extraction" in profs["local_ollama_default"].allowed_tasks
-    assert "metadata_extraction" in profs["anthropic_api_default"].allowed_tasks
-
-
-# ==========================================================================
-# 1. tolerant JSON parse
-# ==========================================================================
-
-def test_parse_biblio_json_fenced():
-    raw = '```json\n{"title": "A Title: A Subtitle", "authors": ["X Y"], "year": 2020}\n```'
-    data = parse_biblio_json(raw)
-    assert data is not None
-    meta = _meta_from_dict(data)
-    assert meta.title == "A Title: A Subtitle"
-    assert meta.authors == ["X Y"]
-    assert meta.year == 2020
-
-
-def test_parse_biblio_json_plain_and_trailing_prose():
-    data = parse_biblio_json('Here you go: {"title": "T"} — done')
-    assert data == {"title": "T"}
-
-
-def test_parse_biblio_json_missing_keys_are_tolerant():
-    meta = _meta_from_dict(parse_biblio_json('{"title": "Only Title"}'))
-    assert meta.title == "Only Title"
-    assert meta.authors == []
-    assert meta.year is None
-    assert meta.doi is None and meta.arxiv_id is None and meta.venue is None
-
-
-def test_parse_biblio_json_garbage_returns_none():
-    assert parse_biblio_json("no json object here at all") is None
-    assert parse_biblio_json("") is None
-    assert parse_biblio_json("[1, 2, 3]") is None  # top-level array, not an object
 
 
 # ==========================================================================
@@ -310,86 +255,50 @@ def test_force_conflicting_doi_routes_to_review_not_second_row():
 
 
 # ==========================================================================
-# 4. runner + merge (extractor MOCKED)
+# 4. runner (deterministic)
 # ==========================================================================
 
-def test_backfill_replaces_title_and_merges_regex_doi(monkeypatch):
-    md = (
-        "# The Converted Real Title\n\n"
-        "Ada Lovelace and Alan Turing\n\n"
-        "Stable URL: https://www.jstor.org/stable/27086719\n"
-        "DOI: 10.2307/27086719\n"
-    )
-    h, wid = _project_with_markdown("id_run", title="2023 santanna", markdown=md)
+MD_DOI = (
+    "# The Converted Real Title\n\n"
+    "Ada Lovelace and Alan Turing\n\n"
+    "Stable URL: https://www.jstor.org/stable/27086719\n"
+    "DOI: 10.2307/27086719\n"
+)
 
-    # LLM returns title/authors but no doi -> the regex JSTOR doi must fill in.
-    def _fake_extract(markdown_head, **kwargs):
-        return BiblioMeta(title="The Converted Real Title", authors=["Ada Lovelace", "Alan Turing"], year=2011)
 
-    monkeypatch.setattr(metadata, "extract_biblio_metadata", _fake_extract)
-
+def test_backfill_attaches_the_head_doi_and_keeps_the_title():
+    h, wid = _project_with_markdown("id_run", title="2023 santanna", markdown=MD_DOI)
     res = metadata.backfill_work_metadata(h, wid, cache_root=None)
     assert res.status == "ok"
-    assert res.title_changed is True
     assert ("doi", "10.2307/27086719") in res.ids_attached
+    assert res.title_changed is False
     with Session(h.engine) as s:
         work = s.get(Work, wid)
-        assert work.canonical_title == "The Converted Real Title"
-        assert work.authors == ["Ada Lovelace", "Alan Turing"]
-        assert work.doi == "10.2307/27086719"  # filled from the deterministic scan
+        assert work.doi == "10.2307/27086719"
+        assert work.canonical_title == "2023 santanna"
 
 
-def test_backfill_idempotent_skips_authoritative_unless_forced(monkeypatch):
+def test_backfill_idempotent_skips_authoritative_unless_forced():
     # A work carrying a strong id is authoritative -> skipped without --force.
     h, wid = _project_with_markdown("id_idem", title="Good Title", doi="10.1/authoritative")
-
-    calls = {"n": 0}
-
-    def _fake_extract(markdown_head, **kwargs):
-        calls["n"] += 1
-        return BiblioMeta(title="Should Not Apply")
-
-    monkeypatch.setattr(metadata, "extract_biblio_metadata", _fake_extract)
-
-    res = metadata.backfill_work_metadata(h, wid, cache_root=None)
-    assert res.status == "skipped_idempotent"
-    assert calls["n"] == 0  # extraction not even attempted
-
-    forced = metadata.backfill_work_metadata(h, wid, cache_root=None, force=True)
-    assert forced.status == "ok"
-    assert calls["n"] == 1
+    assert metadata.backfill_work_metadata(h, wid, cache_root=None).status == "skipped_idempotent"
+    assert metadata.backfill_work_metadata(h, wid, cache_root=None, force=True).status == "ok"
 
 
-def test_backfill_best_effort_swallows_a_raising_extractor(monkeypatch):
-    h, wid = _project_with_markdown("id_raise", title="2020 junk")
-
-    def _boom(markdown_head, **kwargs):
-        raise RuntimeError("extractor exploded")
-
-    monkeypatch.setattr(metadata, "extract_biblio_metadata", _boom)
-
-    # best_effort_backfill must NOT propagate — the conversion never fails.
-    assert metadata.best_effort_backfill(h, wid, cache_root=None) is None
-    with Session(h.engine) as s:
-        work = s.get(Work, wid)
-        assert work.canonical_title == "2020 junk"  # untouched
+def test_backfill_unknown_work_is_skipped():
+    h, _ = _project_with_markdown("id_none", title="2020 junk")
+    assert metadata.backfill_work_metadata(h, "w_missing", cache_root=None).status == "skipped_no_work"
 
 
 # ==========================================================================
 # 5. CLI smoke — `corpus identify`
 # ==========================================================================
 
-def test_cli_corpus_identify_reports(monkeypatch):
-    h, wid = _project_with_markdown("id_cli", title="2023 santanna")
-
-    def _fake_extract(markdown_head, **kwargs):
-        return BiblioMeta(title="Extracted Real Title", authors=["Foo Bar"], year=2021)
-
-    monkeypatch.setattr(metadata, "extract_biblio_metadata", _fake_extract)
-
+def test_cli_corpus_identify_reports():
+    h, wid = _project_with_markdown("id_cli", title="2023 santanna", markdown=MD_DOI)
     result = cli.invoke(app, ["corpus", "identify", "id_cli"])
     assert result.exit_code == 0, result.output
-    assert "Extracted Real Title" in result.output
     assert wid in result.output
+    assert "doi:10.2307/27086719" in result.output
     with Session(h.engine) as s:
-        assert s.get(Work, wid).canonical_title == "Extracted Real Title"
+        assert s.get(Work, wid).doi == "10.2307/27086719"

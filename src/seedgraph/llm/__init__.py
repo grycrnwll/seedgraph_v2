@@ -1,36 +1,10 @@
-"""LLM access substrate: profiles, per-task routing, secrets, usage logging.
+"""Local LLM helpers that survive stage 2.
 
-Phase 0 validates config and routes only — it invokes no model and ships no
-backend dispatch layer.
+- :mod:`.ollama`: the Ollama client the metadata worker uses (``work ollama``).
+- :mod:`.parse`: tolerant JSON-object extraction from model or agent output.
+- :mod:`.tokens`: the cheap token estimate used to size work packages.
+
+The hosted layer (profiles, routing, cost and budgets, keyring secrets, the executor
+and the Anthropic/OpenAI/Gemini adapters) was deleted in stage 2: agents do the model
+work through the protocol. Importing this package imports nothing else.
 """
-
-from .cost import (
-    BudgetStatus,
-    budget_status,
-    estimate_cost,
-    monthly_spend,
-    preflight_estimate,
-    this_month,
-)
-from .profiles import is_profile_available, resolve_profile
-from .routing import NoLlmRoute, Route, resolve_route
-from .secrets import resolve_secret
-from .usage import UsageEvent, hash_text, log_usage
-
-__all__ = [
-    "BudgetStatus",
-    "NoLlmRoute",
-    "Route",
-    "UsageEvent",
-    "budget_status",
-    "estimate_cost",
-    "hash_text",
-    "is_profile_available",
-    "log_usage",
-    "monthly_spend",
-    "preflight_estimate",
-    "resolve_profile",
-    "resolve_route",
-    "resolve_secret",
-    "this_month",
-]

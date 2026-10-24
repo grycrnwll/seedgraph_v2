@@ -34,10 +34,10 @@ from seedgraph.semantic import (
     edges,
     export,
     graph_build,
-    llm_propose,
     merge,
 )
 from seedgraph.semantic import build_semantic_overlay
+from seedgraph.semantic.proposer import NullProposer
 from seedgraph.semantic.query import concept_detail, list_concepts
 
 
@@ -237,7 +237,7 @@ def test_concept_overmerge_guard(tmp_path):
     _add_claim(conn, "c3", "extr_a", "work_a", "method", "pre trained language model")
     _add_claim(conn, "c4", "extr_a", "work_a", "method", "pre trained language models")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     ids = {r[0] for r in conn.execute("SELECT concept_id FROM concepts")}
     assert "concept::bert base" in ids and "concept::bert large" in ids
     assert "concept::pre trained language model" in ids
@@ -254,7 +254,7 @@ def test_concept_merge(tmp_path):
     _add_claim(conn, "claim_5", "extr_a", "work_a", "method", "BERT")
     _add_claim(conn, "claim_6", "extr_a", "work_a", "background", "bert")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
 
     # relabel-then-one-merge: the acronym folds under the expanded canonical id.
     row = conn.execute(
@@ -329,7 +329,7 @@ def test_concept_type_fence(tmp_path):
     conn = _migrated_conn(tmp_path / "fence")
     _seed_acronym_pair(conn, "method", "background")
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     ids = {r[0] for r in conn.execute("SELECT concept_id FROM concepts")}
     assert ids == {"concept::mlm", "concept::masked language modeling"}
@@ -341,7 +341,7 @@ def test_concept_type_fence(tmp_path):
     # deterministic across a rebuild (per-type cluster order is stable).
     snap1 = _fence_snapshot(conn)
     concepts.build_concepts(
-        conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r2", proposer=NullProposer(), tau=0.6
     )
     assert _fence_snapshot(conn) == snap1
     conn.close()
@@ -350,7 +350,7 @@ def test_concept_type_fence(tmp_path):
     conn = _migrated_conn(tmp_path / "fold")
     _seed_acronym_pair(conn, "method", "method")
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     ids = {r[0] for r in conn.execute("SELECT concept_id FROM concepts")}
     assert ids == {"concept::masked language modeling"}
@@ -374,7 +374,7 @@ def test_concept_type_fence(tmp_path):
     )
     conn.commit()
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     ids = {r[0] for r in conn.execute("SELECT concept_id FROM concepts")}
     assert len(ids) == 1
@@ -385,7 +385,7 @@ def test_concept_type_fence(tmp_path):
     # --- deterministic output across two builds ------------------------------
     snap1 = _fence_snapshot(conn)
     concepts.build_concepts(
-        conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r2", proposer=NullProposer(), tau=0.6
     )
     assert _fence_snapshot(conn) == snap1
     conn.close()
@@ -395,7 +395,7 @@ def test_claim_concepts(tmp_path):
     """Every concept has >=1 claim_concepts mention; no orphan concept is created."""
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     orphans = conn.execute(
         "SELECT c.concept_id FROM concepts c "
         "LEFT JOIN claim_concepts cc ON cc.concept_id=c.concept_id "
@@ -483,7 +483,7 @@ def test_project_graph_edges(tmp_path):
         _add_claim(conn2, f"al_{wid}", extr, wid, "method", "alpha concept")
         _add_claim(conn2, f"be_{wid}", extr, wid, "method", "beta concept")
     conn2.commit()
-    build_semantic_overlay(conn2, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn2, run_id="r1", tau=0.6)
     co = conn2.execute(
         "SELECT epistemic_type FROM project_graph_edges WHERE edge_type='co_occurs_with'"
     ).fetchall()
@@ -505,7 +505,7 @@ def test_co_occurs_strength_provenance(tmp_path):
         wid = f"work_{i}"
         _add_claim(conn, f"be_{wid}", f"extr_{wid}", wid, "method", "beta concept")
     conn.commit()
-    report = build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    report = build_semantic_overlay(conn, run_id="r1", tau=0.6)
     assert report.co_occurs_edges == 1
     conf, shared = conn.execute(
         "SELECT confidence, shared_count FROM project_graph_edges "
@@ -529,7 +529,7 @@ def test_co_occurs_strength_provenance(tmp_path):
     assert ",2" in co_row and "0.666666" in co_row
 
     # min_shared=3 drops the 2-shared pair (idempotent rebuild clears first).
-    report3 = build_semantic_overlay(conn, run_id="r2", profile=None, tau=0.6,
+    report3 = build_semantic_overlay(conn, run_id="r2", tau=0.6,
                                      min_shared=3)
     assert report3.co_occurs_edges == 0
     assert conn.execute(
@@ -623,7 +623,7 @@ def test_concept_review(tmp_path):
     assert alias is not None
 
     # sticky: the next build folds the pair into ONE concept and does not flip.
-    concepts.build_concepts(conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6)
+    concepts.build_concepts(conn, run_id="r2", proposer=NullProposer(), tau=0.6)
     conn.commit()
     rows = conn.execute("SELECT concept_id, status FROM concepts").fetchall()
     assert rows == [("concept::pre trained language models", "user_confirmed")]
@@ -672,7 +672,7 @@ def test_concept_edge_review(tmp_path):
     conn = sqlite3.connect(str(h.db_path))
     conn.execute("PRAGMA foreign_keys=ON")
     _seed_basic(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     edges.build_interpretive_edges(
         conn, run_id="r1",
         proposals=[("concept::masked language modeling", "concept::bert base",
@@ -700,7 +700,7 @@ def test_concept_edge_review(tmp_path):
     conn = sqlite3.connect(str(h2.db_path))
     conn.execute("PRAGMA foreign_keys=ON")
     _seed_basic(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     edges.build_interpretive_edges(
         conn, run_id="r1",
         proposals=[("concept::masked language modeling", "concept::bert base",
@@ -753,7 +753,7 @@ def test_access_export_guard(tmp_path):
     _add_claim(conn, "c2", "extr_b", "work_a", "method", "open method",
                text="an open sentence", access_class="open_access")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     # the private concept's denormalized access_class is private.
     assert conn.execute(
         "SELECT access_class FROM concepts WHERE concept_id='concept::private method'"
@@ -799,7 +799,7 @@ def test_graph_export(tmp_path):
         (_now(),),
     )
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
 
     g = graph_build.build_graph(conn, run_id="r1")
     # ConceptAlias nodes + has_alias edges present.
@@ -846,7 +846,7 @@ def test_no_llm_overlay(tmp_path):
         _add_claim(conn, f"al_{wid}", extr, wid, "method", "alpha concept")
         _add_claim(conn, f"be_{wid}", extr, wid, "method", "beta concept")
     conn.commit()
-    report = build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    report = build_semantic_overlay(conn, run_id="r1", tau=0.6)
     assert report.concept_mode == "deterministic"
     assert report.co_occurs_edges >= 1  # alpha + beta co-occur in 2 works
     assert conn.execute(
@@ -859,7 +859,7 @@ def test_no_llm_overlay(tmp_path):
     conn2 = _migrated_conn(tmp_path / "empty")
     _add_work(conn2, "work_a")
     conn2.commit()
-    report2 = build_semantic_overlay(conn2, run_id="r1", profile=None, tau=0.6)
+    report2 = build_semantic_overlay(conn2, run_id="r1", tau=0.6)
     assert report2.concept_mode == "none"
     assert report2.concepts_written == 0
     assert conn2.execute("SELECT COUNT(*) FROM concepts").fetchone()[0] == 0
@@ -873,14 +873,11 @@ def test_no_llm_overlay(tmp_path):
 
 def test_concept_select_milestone(tmp_path):
     """concepts build then concepts show <id> returns the concept's linked papers,
-    claims, and evidence spans; the FastAPI route returns the same triple."""
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
+    claims, and evidence spans (the old web route went with web/ in stage 2)."""
     from typer.testing import CliRunner
 
     from seedgraph.cli import app as cli_app
     from seedgraph.project import service
-    from seedgraph.web.routes import router
 
     h = service.create_project("milestone")
     conn = sqlite3.connect(str(h.db_path))
@@ -903,22 +900,6 @@ def test_concept_select_milestone(tmp_path):
     show = runner.invoke(cli_app, ["concepts", "show", "milestone", cid])
     assert show.exit_code == 0, show.output
     assert "work_a" in show.output and "claim_1" in show.output and "span_1" in show.output
-
-    # equivalent FastAPI read route returns the same triple. The concept route is a
-    # private-evidence GET behind require_local_session (cross-cutting #1); the test
-    # uses the dependency-override seam rather than TestClient loopback quirks.
-    from seedgraph.web.serve import require_local_session
-
-    api = FastAPI()
-    api.include_router(router)
-    api.dependency_overrides[require_local_session] = lambda: None
-    client = TestClient(api)
-    resp = client.get(f"/projects/milestone/concepts/{cid}")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert {p["work_id"] for p in body["papers"]} == {"work_a", "work_b"}
-    assert {c["claim_id"] for c in body["claims"]} == {"claim_1", "claim_2"}
-    assert {s["span_id"] for s in body["spans"]} == {"span_1"}
 
 
 # --------------------------------------------------------------------------
@@ -1001,7 +982,7 @@ def test_concept_merge_audit_hook(tmp_path):
 
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     written = audit.emit_merge_audit_sample(conn, run_id="r1", sample_size=10, seed=7)
     conn.commit()
     assert written >= 1  # the MLM/Masked-Language-Modeling fold is a merge candidate

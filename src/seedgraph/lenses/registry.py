@@ -241,46 +241,6 @@ def list_lenses(session: "Session") -> list[LensRow]:
     return [_row_to_lens_row(tuple(r)) for r in rows]
 
 
-def lens_staleness(
-    session: "Session", project_dir: Path, lens_id: str
-) -> dict:
-    """Coverage + staleness read-model for ``lens_id`` (the ``lens status`` lift).
-
-    Bundles the registry ``status``, the per-status :func:`lenses.results.coverage`,
-    and the pull-based :func:`lenses.results.stale_outputs` run ids into one dict
-    shared by the CLI ``lens status`` command and the web lens-detail screen.
-    Defensive: an unregistered lens (no row) or a lens whose on-disk YAML is absent
-    yields zeroed coverage / no stale list rather than raising, so the UI renders a
-    clean "unregistered" state."""
-    from .results import coverage as _coverage, stale_outputs as _stale_outputs
-
-    row = get_lens_row(session, lens_id)
-    cov = _coverage(session, lens_id)
-    stale: list[str] = []
-    definition_hash: str | None = row.definition_hash if row else None
-    try:
-        lens = load_lens(project_dir, lens_id)
-        definition_hash = lens.definition_hash()
-        stale = _stale_outputs(session, lens)
-    except Exception:  # noqa: BLE001 — missing/invalid YAML => unregistered display
-        pass
-    return {
-        "lens_id": lens_id,
-        "status": row.status if row else "unregistered",
-        "found": cov.found,
-        "not_found": cov.not_found,
-        "ambiguous": cov.ambiguous,
-        "extraction_failed": cov.extraction_failed,
-        "not_applicable": cov.not_applicable,
-        "skipped_no_markdown": cov.skipped_no_markdown,
-        "works_total": cov.works_total,
-        "works_covered": cov.works_covered,
-        "stale_run_ids": stale,
-        "stale_count": len(stale),
-        "definition_hash": definition_hash,
-    }
-
-
 def promote_to_active(session: "Session", lens: "LensDefinition") -> LensRow:
     """Promote a ``draft``/``calibrating`` lens to ``active`` and snapshot
     `definition_yaml` once (frozen reproducibility, decision 50). Idempotent if

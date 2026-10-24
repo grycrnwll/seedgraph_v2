@@ -90,7 +90,7 @@ def home(isolated_home):
 
 @pytest.fixture
 def server(home):
-    from seedgraph.mcp.server_v3 import build_server
+    from seedgraph.mcp.server import build_server
 
     return build_server(home=home)
 

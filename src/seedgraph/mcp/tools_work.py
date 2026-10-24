@@ -13,12 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import Context
 
-from .server_v3 import MUTATION, READ, client_name, tool_error
+from .server import MUTATION, READ, client_name, tool_error
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-    from .server_v3 import V3Context
+    from .server import V3Context
 
 MAX_ITEMS = 500
 

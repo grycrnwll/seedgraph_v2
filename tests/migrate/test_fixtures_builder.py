@@ -421,15 +421,6 @@ def test_saved_answers(fx):
     assert (fx.home / run.ids["path"]).is_file()
 
 
-def test_answers_validate_against_v2_models(fx):
-    types = pytest.importorskip("seedgraph.answer.types")
-    trace = pytest.importorskip("seedgraph.answer.trace")
-    for item in fx.by_kind("saved_answer"):
-        base = fx.home / "projects" / item.ids["slug"] / "answers"
-        types.AnswerEnvelope.model_validate_json((base / f"{item.ids['answer_id']}.json").read_bytes())
-        trace.AnswerTrace.model_validate_json((base / f"{item.ids['answer_id']}.trace.json").read_bytes())
-
-
 def test_graph_shapes_and_not_carried_items(fx):
     excl = fx.one("excluded_in_graph")
     assert work_row(fx, excl.ids["work_key"])["inclusion_status"] == "excluded"

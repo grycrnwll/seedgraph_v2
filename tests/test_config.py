@@ -4,7 +4,6 @@ import yaml
 from seedgraph.config.loader import (
     clamp_project_ceiling,
     load_global_config,
-    load_llm_capabilities,
     load_project_config,
     write_project_overrides,
 )
@@ -55,59 +54,6 @@ def test_project_overrides_merge_over_global():
     assert cfg.slug == "proj"
     assert cfg.log_level == "WARNING"      # project wins
     assert cfg.budget.usd_limit == 10.0    # global value preserved
-
-
-def test_load_llm_capabilities_bundled():
-    caps = load_llm_capabilities()
-    assert str(caps.snapshot_date) == "2026-07-02"
-    assert "claude-opus-4-8" in caps.models
-    opus = caps.models["claude-opus-4-8"]
-    assert opus.context_window_tokens == 200000
-    assert opus.input_usd_per_mtok == 5.00
-    assert opus.pricing_status  # present
-
-
-def test_anthropic_rows_pricing_verified():
-    """Regression for the live-run budget-gate refusal: every Anthropic row must
-    carry pricing_status 'verified' (checked against the official pricing page),
-    or check_pricing_allowed fail-closes any USD-limited Anthropic dispatch."""
-    caps = load_llm_capabilities()
-    anthropic_rows = {
-        mid: cap for mid, cap in caps.models.items() if cap.provider == "anthropic"
-    }
-    assert anthropic_rows  # snapshot must keep Anthropic coverage
-    for mid, cap in anthropic_rows.items():
-        assert cap.pricing_status == "verified", mid
-        assert cap.input_usd_per_mtok is not None and cap.input_usd_per_mtok > 0, mid
-        assert cap.output_usd_per_mtok is not None and cap.output_usd_per_mtok > 0, mid
-
-
-def test_local_qwen_row_present_for_oversize_gate():
-    """Regression for the live-run fail-closed refusal of qwen3.5:latest: the row
-    must exist with a positive context window (the oversize gate's load-bearing
-    field) and mirror the zero-cost local-model convention (llama3)."""
-    caps = load_llm_capabilities()
-    assert "qwen3.5:latest" in caps.models
-    qwen = caps.models["qwen3.5:latest"]
-    assert qwen.provider == "ollama"
-    assert qwen.context_window_tokens == 262144  # from `ollama show qwen3.5:latest`
-    assert qwen.access_modes == ["local"]
-    assert qwen.input_usd_per_mtok == 0.0
-    assert qwen.output_usd_per_mtok == 0.0
-    assert qwen.pricing_status == "not_applicable"  # same convention as llama3
-
-
-def test_load_llm_capabilities_rejects_malformed(tmp_path):
-    bad = tmp_path / "bad_caps.yaml"
-    bad.write_text(
-        "snapshot_date: 2026-06-26\n"
-        "models:\n"
-        "  broken:\n"
-        "    provider: x\n",  # missing required context_window_tokens + pricing_status
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError):
-        load_llm_capabilities(bad)
 
 
 # ==========================================================================

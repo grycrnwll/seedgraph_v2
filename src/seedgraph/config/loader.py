@@ -22,9 +22,8 @@ from pydantic import ValidationError as PydanticValidationError
 
 from .. import paths
 from ..errors import ConfigError
-from .models import CEILING_SPEC, GlobalConfig, LlmCapabilities, ProjectConfig
+from .models import CEILING_SPEC, GlobalConfig, ProjectConfig
 
-_BUNDLED_CAPABILITIES = Path(__file__).resolve().parent.parent / "llm_capabilities.yaml"
 
 #: Key NAMES that would carry a RAW secret value if present in a config patch. We
 #: store only env-var *references* (``env_var`` / ``key_source``), never the secret
@@ -408,15 +407,3 @@ def write_project_overrides(
     )
 
 
-def load_llm_capabilities(path: Path | str | None = None) -> LlmCapabilities:
-    """Load + validate the bundled (or provided) ``llm_capabilities.yaml`` (D9)."""
-    cap_path = Path(path) if path is not None else _BUNDLED_CAPABILITIES
-    if not cap_path.exists():
-        raise ConfigError(f"llm_capabilities snapshot not found at {cap_path}")
-    data = yaml.safe_load(cap_path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ConfigError(f"llm_capabilities snapshot {cap_path} must be a YAML mapping")
-    try:
-        return LlmCapabilities(**data)
-    except PydanticValidationError as exc:
-        raise ConfigError(f"malformed llm_capabilities snapshot at {cap_path}: {exc}") from exc

@@ -139,24 +139,18 @@ def test_continuation_and_span_pin_old_conversion(isolated_home):
     assert gone["text"] is None and "restart" in gone["next_action"]
 
 
-def test_policy_withholds_all_source_fields_and_bounds_headings(isolated_home):
+def test_private_text_is_read_with_its_access_class_as_provenance_and_headings_bounded(isolated_home):
+    # Stage 2 removed the content-access send gate (ADR-0012): access_class is provenance only.
     from seedgraph.work_read import read_work
 
     private_heading = "Private heading" * 100
     handle, work_id, _, _ = _document(isolated_home, f"# {private_heading}\nPrivate body.\n",
                                      AccessClass.user_supplied_private)
     local = read_work(handle, work_id=work_id)
+    assert local["status"] == "ok" and "Private body." in local["text"]
+    assert local["access_class"] == "user_supplied_private"
     assert len(local["sections"]["items"][0]["heading_text"]) == 256
     assert local["sections"]["items"][0]["heading_truncated"] is True
-    external = read_work(handle, work_id=work_id, external=True)
-    redacted = read_work(handle, work_id=work_id, redact_private=True, confirm_external=True)
-    for response in (external, redacted):
-        assert response["status"] == "policy_withheld"
-        assert response["text"] is None and response["sections"]["items"] == []
-        assert "Private body" not in json.dumps(response)
-        assert "Private heading" not in json.dumps(response)
-    consent = read_work(handle, work_id=work_id, external=True, confirm_external=True)
-    assert consent["status"] == "ok" and consent["text"] == local["text"]
 
 
 def test_cursor_is_bound_and_limits_are_validated(isolated_home):
@@ -174,9 +168,7 @@ def test_cursor_is_bound_and_limits_are_validated(isolated_home):
         read_work(handle, work_id="different_work", cursor=cursor)
 
 
-def test_cli_and_mcp_share_reader_and_external_policy(isolated_home):
-    from seedgraph.mcp.context import ServerContext
-    from seedgraph.mcp.tools_source import register_source_tools
+def test_cli_reads_private_text_with_its_access_class(isolated_home):
     from seedgraph.work_read_cli import register_work_read
 
     handle, work_id, _, _ = _document(isolated_home, access_class=AccessClass.user_supplied_private)
@@ -186,19 +178,9 @@ def test_cli_and_mcp_share_reader_and_external_policy(isolated_home):
                                      "--json", "--max-chars", "11"])
     assert result.exit_code == 0, result.output
     local = json.loads(result.stdout)
-    assert local["text"] == MD[:11]
-    class Registry:
-        def tool(self):
-            def register(fn):
-                self.call = fn
-                return fn
-            return register
-    registry = Registry()
-    register_source_tools(registry, ServerContext(root=isolated_home))
-    withheld = registry.call("reader", work_id)
-    assert withheld["status"] == "policy_withheld"
-    shared = registry.call("reader", work_id, confirm_external=True, max_chars=11)
-    assert shared["text"] == local["text"]
+    assert local["text"] == MD[:11] and local["access_class"] == "user_supplied_private"
+    assert CliRunner().invoke(cli, ["reader", work_id, "--root", str(isolated_home),
+                                    "--confirm-external"]).exit_code == 2  # the gate flags are gone
 
 
 def test_reupload_continues_only_with_existing_work_provenance(isolated_home):
@@ -235,18 +217,18 @@ def test_reupload_continues_only_with_existing_work_provenance(isolated_home):
     assert continued["newer_markdown_id"] == new_md.markdown_id
 
 
-def test_cursor_rechecks_access_on_each_page(isolated_home):
+def test_each_page_reports_the_current_access_class(isolated_home):
     from seedgraph.work_read import read_work
 
     handle, work_id, source, _ = _document(isolated_home)
-    first = read_work(handle, work_id=work_id, external=True, max_chars=10)
+    first = read_work(handle, work_id=work_id, max_chars=10)
     with sqlite3.connect(cache_db_path(isolated_home)) as conn:
         conn.execute("UPDATE source_files SET access_class='user_supplied_private' WHERE source_file_id=?",
                      (source.source_file_id,))
     _checkpoint(handle)
-    second = read_work(handle, work_id=work_id, external=True, cursor=first["continuation"])
-    assert second["status"] == "policy_withheld"
-    assert second["text"] is None and second["sections"]["items"] == []
+    second = read_work(handle, work_id=work_id, cursor=first["continuation"])
+    assert second["status"] == "ok" and first["text"] + second["text"] == MD
+    assert second["access_class"] == "user_supplied_private"
 
 
 def test_preamble_has_no_descendant_sections(isolated_home):
@@ -282,22 +264,11 @@ def test_unavailable_cache_schema_returns_metadata_without_migration(isolated_ho
     assert cache_db_path(isolated_home).read_bytes() == before
 
 
-def test_policy_denial_explains_disabled_external_handoff(isolated_home):
-    from seedgraph.work_read import read_work
-
-    handle, work_id, _, _ = _document(isolated_home)
-    (isolated_home / "config.yaml").write_text("content_policy:\n  allow_external_llm: false\n", encoding="utf-8")
-    result = read_work(handle, work_id=work_id, external=True, confirm_external=True)
-    assert result["status"] == "policy_withheld"
-    assert "allow_external_llm=false" in result["policy_reason"]
-    assert "confirm" not in result["next_action"]
-
-
 def test_shared_markdown_keeps_producer_lineage_when_access_representative_changes(isolated_home):
     from seedgraph.work_read import read_work
 
     handle, first_work, first_source, md = _document(isolated_home)
-    first_page = read_work(handle, work_id=first_work, max_chars=10, external=True)
+    first_page = read_work(handle, work_id=first_work, max_chars=10)
     assert first_page["status"] == "ok" and first_page["text"] == MD[:10]
     other = service.add_work(handle, title="Other source, identical converted text")
     pdf = isolated_home / "second_source.pdf"
@@ -328,5 +299,3 @@ def test_shared_markdown_keeps_producer_lineage_when_access_representative_chang
     assert continued["source"]["source_file_id"] == first_source.source_file_id
     assert continued["access_class"] == "user_supplied_private"
     assert continued["newer_version_available"] is False
-    withheld = read_work(handle, work_id=first_work, cursor=first_page["continuation"], external=True)
-    assert withheld["status"] == "policy_withheld" and withheld["text"] is None

@@ -3,7 +3,6 @@
 from .loader import (
     clamp_project_ceiling,
     load_global_config,
-    load_llm_capabilities,
     load_project_config,
     write_global_config,
     write_project_overrides,
@@ -38,7 +37,6 @@ __all__ = [
     "TaskRoute",
     "clamp_project_ceiling",
     "load_global_config",
-    "load_llm_capabilities",
     "load_project_config",
     "write_global_config",
     "write_project_overrides",

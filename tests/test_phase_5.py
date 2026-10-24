@@ -13,7 +13,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlmodel import Session, select
@@ -144,7 +143,6 @@ def test_phase5_schema_parity(tmp_path):
     targets = [
         src_root / "db" / "engine.py",
         src_root / "db" / "project_models.py",
-        src_root / "web" / "routes.py",
         *(src_root / "project").glob("*.py"),
     ]
     call_re = re.compile(r"\.create_all\s*\(")
@@ -434,38 +432,6 @@ def test_phase5_cli_project_flow(tmp_path):
 
 # --------------------------------------------------------------------------
 # test_api_read_routes (scaffold-critic gap 1)
-# --------------------------------------------------------------------------
-
-def test_phase5_api_read_routes():
-    from seedgraph.api.app import app
-    from seedgraph.web.serve import require_local_session
-
-    h = service.create_project("apiproj")
-    service.add_work(h, ids={"doi": "10.1/a"}, title="Paper A", is_seed=True)
-    service.add_work(h, ids={"arxiv": "2101.1"}, title="Paper B", inclusion_status="metadata_only")
-
-    client = TestClient(app)
-    assert "apiproj" in client.get("/projects").json()
-
-    # /documents is a private-evidence GET behind require_local_session (cross-cutting
-    # #1); exercise it via the dependency-override seam, restoring the gate after.
-    app.dependency_overrides[require_local_session] = lambda: None
-    try:
-        resp = client.get("/projects/apiproj/documents")
-        assert resp.status_code == 200
-        assert len(resp.json()) == 2
-
-        only_included = client.get("/projects/apiproj/documents", params={"status": "included"})
-        titles = {row["title"] for row in only_included.json()}
-        assert titles == {"Paper A"}
-
-        assert client.get("/projects/does-not-exist/documents").status_code == 404
-    finally:
-        app.dependency_overrides.pop(require_local_session, None)
-
-
-# --------------------------------------------------------------------------
-# Milestone acceptance (doc 10 §6 Phase 4) — GROUPED CLI surface
 # --------------------------------------------------------------------------
 
 def test_phase5_milestone_acceptance(tmp_path):

@@ -15,8 +15,8 @@ import string
 from datetime import datetime, timezone
 
 import seedgraph.db.migrations as migrations
-from seedgraph.eval import audit as eval_audit
-from seedgraph.semantic import audit, concepts, llm_propose
+from seedgraph.semantic import audit, concepts
+from seedgraph.semantic.proposer import NullProposer
 
 
 def _now() -> str:
@@ -135,7 +135,7 @@ def test_one_build_writes_exactly_one_decision_log_row(tmp_path):
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     rows = _log_rows(conn)
     assert len(rows) == 1
@@ -225,10 +225,10 @@ def test_two_identical_builds_compare_to_zero_flips(tmp_path):
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     concepts.build_concepts(
-        conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r2", proposer=NullProposer(), tau=0.6
     )
     rows = _log_rows(conn)
     assert len(rows) == 2  # one row PER build
@@ -247,7 +247,7 @@ def test_forced_flip_detected_on_unchanged_set(tmp_path):
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     conn.execute(
         "INSERT INTO concept_constraints (kind, label_a, label_b, source, "
@@ -255,7 +255,7 @@ def test_forced_flip_detected_on_unchanged_set(tmp_path):
         ("cannot_link", "masked language modeling", "mlm", "user", _now()),
     )
     concepts.build_concepts(
-        conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r2", proposer=NullProposer(), tau=0.6
     )
     report = audit.compare_canon_decision_logs(conn)
     assert report.status == "same_set"
@@ -275,12 +275,12 @@ def test_corpus_growth_reported_honestly_not_as_flip(tmp_path):
     conn = _migrated_conn(tmp_path)
     _seed_basic(conn)
     concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     _add_claim(conn, "claim_5", "work_a", "dataset", "SQuAD")
     conn.commit()
     concepts.build_concepts(
-        conn, run_id="r2", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r2", proposer=NullProposer(), tau=0.6
     )
     report = audit.compare_canon_decision_logs(conn)
     assert report.status == "set_changed"
@@ -303,48 +303,10 @@ def test_empty_build_writes_no_decision_log(tmp_path):
     """A zero-claim ('none') build performs no canonicalization ⇒ no log row."""
     conn = _migrated_conn(tmp_path)
     report = concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
+        conn, run_id="r1", proposer=NullProposer(), tau=0.6
     )
     assert report.concept_mode == "none"
     assert _log_rows(conn) == []
     conn.close()
 
 
-# --------------------------------------------------------------------------
-# eval/audit.py closed-set extension
-# --------------------------------------------------------------------------
-
-
-def test_eval_soft_vocab_admits_canon_decision_log(tmp_path):
-    """'canon_decision_log'/'concept_set' joined the closed soft-vocab sets, so
-    the decision-log rows are in-vocab (open_audit validation accepts them)."""
-    assert "canon_decision_log" in eval_audit.AUDIT_TYPES
-    assert "concept_set" in eval_audit.SUBJECT_TYPES
-    conn = _migrated_conn(tmp_path)
-    audit_id = eval_audit.open_audit(
-        conn, "canon_decision_log", "concept_set", "deadbeef" * 8, None,
-        "user_supplied_private",
-    )
-    assert audit_id.startswith("audit_")
-    conn.close()
-
-
-def test_payload_column_migrated_and_null_for_other_rows(tmp_path):
-    """0016 adds a nullable payload column: decision-log rows fill it, every
-    other producer leaves it NULL (additive, no backfill)."""
-    conn = _migrated_conn(tmp_path)
-    _seed_basic(conn)
-    concepts.build_concepts(
-        conn, run_id="r1", proposer=llm_propose.NullProposer(), tau=0.6
-    )
-    eval_audit.open_audit(
-        conn, "concept_merge", "concept_merge", "alias_1", "r1", "open_access"
-    )
-    assert conn.execute(
-        "SELECT payload IS NOT NULL FROM audit_records "
-        "WHERE audit_type='canon_decision_log'"
-    ).fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT payload IS NULL FROM audit_records WHERE audit_type='concept_merge'"
-    ).fetchone()[0] == 1
-    conn.close()

@@ -1,10 +1,10 @@
-"""Chunk-5 acquisition-key unification (ADR-0001 §acquisition, decision D2).
+"""Scholarly-API keys come from environment variables only (stage 2).
 
-``build_default_providers`` is the single acquisition resolution seam:
-config attr -> keyring ``seedgraph/{service}/default`` -> env var. Provider
-classes stay BYO-key and secret-ignorant. The suite-wide autouse fixture nulls
-``_keyring_get``; tests here re-patch it with a dict-backed fake (their later
-patch wins), never touching the real OS store.
+``build_default_providers`` is the single acquisition resolution seam: keys are read
+from ``S2_API_KEY``, ``OPENALEX_API_KEY`` and ``CORE_API_KEY`` (legacy
+``SEEDGRAPH_CORE_KEY``); the polite-pool contact email from ``SEEDGRAPH_CONTACT_EMAIL``,
+else ``contact_email`` in config. Config key attributes and the OS keyring are no
+longer consulted. Provider classes stay key-ignorant. All values are invented.
 """
 
 from __future__ import annotations
@@ -12,15 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 
-import pytest
-
 from seedgraph.config.models import GlobalConfig
-from seedgraph.llm import secrets
-from seedgraph.providers import build_default_providers
-
-
-def _fake_ring(monkeypatch, entries: dict[str, str]) -> None:
-    monkeypatch.setattr(secrets, "_keyring_get", entries.get)
+from seedgraph.providers import SCHOLARLY_ENV_VARS, build_default_providers, env_key
 
 
 def _by_attr(providers, attr):
@@ -30,36 +23,38 @@ def _by_attr(providers, attr):
 
 
 # --------------------------------------------------------------------------
-# Resolution precedence: config attr > keyring > env
+# Environment only
 # --------------------------------------------------------------------------
-def test_config_attr_beats_keyring_and_env(monkeypatch):
-    _fake_ring(monkeypatch, {"seedgraph/s2/default": "ring-s2", "seedgraph/core/default": "ring-core"})
+def test_env_keys_reach_the_providers(monkeypatch):
     monkeypatch.setenv("S2_API_KEY", "env-s2")
     monkeypatch.setenv("CORE_API_KEY", "env-core")
-    cfg = {"s2_api_key": "cfg-s2", "core_key": "cfg-core"}
-
-    providers = build_default_providers(cfg)
-    assert _by_attr(providers, "s2_api_key").s2_api_key == "cfg-s2"
-    assert _by_attr(providers, "core_key").core_key == "cfg-core"
-
-
-def test_keyring_beats_env(monkeypatch):
-    _fake_ring(monkeypatch, {"seedgraph/s2/default": "ring-s2", "seedgraph/core/default": "ring-core"})
-    monkeypatch.setenv("S2_API_KEY", "env-s2")
-    monkeypatch.setenv("CORE_API_KEY", "env-core")
-
-    providers = build_default_providers(GlobalConfig())
-    assert _by_attr(providers, "s2_api_key").s2_api_key == "ring-s2"
-    assert _by_attr(providers, "core_key").core_key == "ring-core"
-
-
-def test_env_is_last_resort(monkeypatch):
-    monkeypatch.setenv("S2_API_KEY", "env-s2")
-    monkeypatch.setenv("CORE_API_KEY", "env-core")
+    monkeypatch.setenv("OPENALEX_API_KEY", "env-oa")
 
     providers = build_default_providers(GlobalConfig())
     assert _by_attr(providers, "s2_api_key").s2_api_key == "env-s2"
     assert _by_attr(providers, "core_key").core_key == "env-core"
+    assert _by_attr(providers, "api_key").api_key == "env-oa"
+
+
+def test_config_key_attributes_are_ignored(monkeypatch):
+    cfg = {"s2_api_key": "cfg-s2", "core_key": "cfg-core", "openalex_key": "cfg-oa"}
+
+    providers = build_default_providers(cfg)
+    assert _by_attr(providers, "s2_api_key").s2_api_key is None
+    assert _by_attr(providers, "api_key").api_key is None
+    assert not [p for p in providers if hasattr(p, "core_key")]
+
+
+def test_env_beats_config_key_attributes(monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "env-s2")
+    providers = build_default_providers({"s2_api_key": "cfg-s2"})
+    assert _by_attr(providers, "s2_api_key").s2_api_key == "env-s2"
+
+
+def test_blank_env_value_counts_as_unset(monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "   ")
+    assert env_key("S2_API_KEY") is None
+    assert _by_attr(build_default_providers(GlobalConfig()), "s2_api_key").s2_api_key is None
 
 
 def test_legacy_seedgraph_core_key_still_works(monkeypatch):
@@ -68,6 +63,12 @@ def test_legacy_seedgraph_core_key_still_works(monkeypatch):
 
     providers = build_default_providers(GlobalConfig())
     assert _by_attr(providers, "core_key").core_key == "legacy-core"
+
+
+def test_core_api_key_beats_the_legacy_name(monkeypatch):
+    monkeypatch.setenv("CORE_API_KEY", "env-core")
+    monkeypatch.setenv("SEEDGRAPH_CORE_KEY", "legacy-core")
+    assert _by_attr(build_default_providers(GlobalConfig()), "core_key").core_key == "env-core"
 
 
 def test_no_core_key_means_no_core_provider(monkeypatch):
@@ -79,22 +80,28 @@ def test_no_core_key_means_no_core_provider(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# OpenAlex premium key: chain -> provider -> request query param
+# Contact email: env first, config fallback
 # --------------------------------------------------------------------------
-def test_openalex_key_resolves_from_keyring(monkeypatch):
-    _fake_ring(monkeypatch, {"seedgraph/openalex/default": "ring-oa"})
-
-    providers = build_default_providers(GlobalConfig())
-    assert _by_attr(providers, "api_key").api_key == "ring-oa"
-
-
-def test_openalex_key_env_fallback(monkeypatch):
-    monkeypatch.setenv("OPENALEX_API_KEY", "env-oa")
-
-    providers = build_default_providers(GlobalConfig())
-    assert _by_attr(providers, "api_key").api_key == "env-oa"
+def test_contact_email_env_beats_config(monkeypatch):
+    monkeypatch.setenv("SEEDGRAPH_CONTACT_EMAIL", "env@example.invalid")
+    providers = build_default_providers({"contact_email": "cfg@example.invalid"})
+    assert _by_attr(providers, "contact_email").contact_email == "env@example.invalid"
 
 
+def test_contact_email_falls_back_to_config(monkeypatch):
+    monkeypatch.delenv("SEEDGRAPH_CONTACT_EMAIL", raising=False)
+    providers = build_default_providers({"contact_email": "cfg@example.invalid"})
+    assert _by_attr(providers, "contact_email").contact_email == "cfg@example.invalid"
+
+
+def test_env_var_names_are_documented():
+    assert set(SCHOLARLY_ENV_VARS) == {"SEEDGRAPH_CONTACT_EMAIL", "S2_API_KEY", "OPENALEX_API_KEY",
+                                       "CORE_API_KEY"}
+
+
+# --------------------------------------------------------------------------
+# OpenAlex premium key: provider -> request query param
+# --------------------------------------------------------------------------
 def _openalex_with_capture(api_key):
     import httpx
 

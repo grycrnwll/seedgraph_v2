@@ -95,40 +95,6 @@ def test_graph_build_stamps_labels(tmp_path):
     conn.close()
 
 
-def test_titleless_work_placeholder_in_3d_payload_and_csv(tmp_path):
-    from seedgraph.semantic import export
-    from seedgraph.semantic.graph_build import build_graph
-    from seedgraph.web.graph3d import build_3d_payload
-
-    conn = _seed(tmp_path)
-    import networkx as nx  # noqa: F401 — via export
-
-    g = build_graph(conn, run_id="r1")
-    payload = build_3d_payload(nx_node_link(g))
-    names = {n["id"]: n["name"] for n in payload["nodes"]}
-    assert names["work_titled"] == "Titled Paper"
-    assert names["work_stub"] == "doi:10.9/stub"          # placeholder, not a UUID
-    assert names["work_bare12345"] == "untitled work_bar"  # never the raw id alone
-    assert all(name.strip() for name in names.values())    # never blank
-
-    written = export.export_graph(conn, slug="x", run_id="r1", fmt="csv",
-                                  root=tmp_path / "h")
-    nodes_csv = [p for p in written if p.name == "nodes.csv"][0].read_text()
-    rows = {line.split(",")[0]: line for line in nodes_csv.splitlines()[1:] if line}
-    assert "doi:10.9/stub" in rows["work_stub"]
-    assert "untitled work_bar" in rows["work_bare12345"]
-    conn.close()
-
-
-def nx_node_link(graph) -> dict:
-    import networkx as nx
-
-    try:
-        return nx.node_link_data(graph, edges="links")
-    except TypeError:  # pragma: no cover - older networkx
-        return nx.node_link_data(graph)
-
-
 def test_list_documents_carries_label(tmp_path, monkeypatch):
     from seedgraph.project import service
 

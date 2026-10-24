@@ -10,9 +10,12 @@ import typer
 
 
 def register(app: typer.Typer) -> None:
-    from . import convert, library, migrate, setup
+    from . import convert, library, mcp, migrate, setup, work
 
-    app.command("setup")(setup.setup)
+    setup.setup_app.command("agents")(mcp.agents)
+    app.add_typer(setup.setup_app, name="setup")
+    app.add_typer(mcp.mcp_app, name="mcp")
     app.add_typer(migrate.migrate_app, name="migrate")
     app.command("convert")(convert.convert)
     app.add_typer(library.library_app, name="library")
+    app.add_typer(work.work_app, name="work")

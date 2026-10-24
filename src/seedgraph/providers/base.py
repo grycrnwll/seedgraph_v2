@@ -142,11 +142,11 @@ class ProviderChain:
         cls, config: "GlobalConfig", *, cache_engine, run_id: str | None = None
     ) -> "ProviderChain":
         """Build a chain from config: default providers + ``contact_email`` (polite
-        pool) + optional ``S2_API_KEY`` / ``core_key`` (decisions 39/73)."""
-        from . import build_default_providers
+        pool) + the optional ``S2_API_KEY`` from the environment (decisions 39/73)."""
+        from . import build_default_providers, env_key
 
-        contact_email = _config_get(config, "contact_email")
-        s2_api_key = _config_get(config, "s2_api_key") or _config_get(config, "S2_API_KEY")
+        contact_email = env_key("SEEDGRAPH_CONTACT_EMAIL") or _config_get(config, "contact_email")
+        s2_api_key = env_key("S2_API_KEY")
         return cls(
             build_default_providers(config),
             cache_engine=cache_engine,

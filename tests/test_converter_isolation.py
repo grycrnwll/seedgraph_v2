@@ -42,8 +42,8 @@ def test_converter_package_never_imports_seedgraph():
     assert offenders == []
 
 
-def test_app_and_web_import_without_attempting_heavy_imports():
-    """Import the package, CLI and web app in a fresh interpreter with an import hook
+def test_app_cli_and_mcp_server_import_without_attempting_heavy_imports():
+    """Import the package, CLI and MCP server in a fresh interpreter with an import hook
     that records any attempt to import a heavy module (even a guarded one)."""
     code = f"""
 import json, sys
@@ -55,8 +55,8 @@ class Spy:
             attempts.append(name)
         return None
 sys.meta_path.insert(0, Spy())
-import seedgraph, seedgraph.cli, seedgraph.api.app, seedgraph.web.ui
-import seedgraph.web.marker_queue, seedgraph.conversion, seedgraph.cache.convert
+import seedgraph, seedgraph.cli, seedgraph.commands.work, seedgraph.mcp.server
+import seedgraph.conversion, seedgraph.cache.convert, seedgraph.library.files
 print(json.dumps(sorted(set(attempts))))
 """
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,

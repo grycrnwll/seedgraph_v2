@@ -2,8 +2,8 @@
 
 Bootstraps + migrates both scopes (cache always; project when ``--project`` is
 given and the slug is valid), then runs the doc 13 §13 checks. Any error-severity
-failure makes the command exit non-zero; warnings (e.g. a missing external key in
-a local-first setup) do not.
+failure makes the command exit non-zero; warnings (e.g. Ollama not reachable with
+``--probe-ollama``) do not. Scholarly-API keys are listed by environment variable name.
 """
 
 from __future__ import annotations
@@ -13,16 +13,13 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from datetime import date as _date
 
 from . import paths
-from .config.loader import load_global_config, load_llm_capabilities, load_project_config
+from .config.loader import load_global_config, load_project_config
 from .db.bootstrap import ensure_cache_db, ensure_project_db
 from .db.connection import cache_db_path, project_db_path
 from .db.migrations import current_version, latest_version
 from .errors import SeedgraphError, ValidationError
-from .llm.profiles import is_local_profile
-from .llm.secrets import resolve_profile_key
 
 _SQLITE_BASELINE = (3, 35, 0)
 
@@ -319,218 +316,39 @@ def _reference_entries_reconcile(root: Path | str | None, slug: str) -> list[Che
 def _check_config(root: Path | str | None, slug: str | None) -> CheckResult:
     try:
         if slug is not None:
-            cfg = load_project_config(slug, root)
+            load_project_config(slug, root)
             label = f"project '{slug}'"
         else:
-            cfg = load_global_config(root)
+            load_global_config(root)
             label = "global"
-        n_profiles = len(cfg.llm.profiles)
-        n_routes = len(cfg.llm.routes)
-        return CheckResult(
-            "config",
-            True,
-            f"{label} config parses; {n_profiles} profiles, {n_routes} routes; "
-            f"routing references resolve",
-        )
+        return CheckResult("config", True, f"{label} config parses")
     except SeedgraphError as exc:
         return CheckResult("config", False, f"config invalid: {exc}")
 
 
-def _check_key_refs(root: Path | str | None, slug: str | None) -> list[CheckResult]:
-    try:
-        cfg = load_project_config(slug, root) if slug is not None else load_global_config(root)
-    except SeedgraphError:
-        return []  # config check already reported the failure
-    results: list[CheckResult] = []
-    for profile_id, profile in sorted(cfg.llm.profiles.items()):
-        if is_local_profile(profile):
-            continue
-        # Full chain (ADR-0002): keyring entry then env var — a keyring-only
-        # profile (no env_var) is checkable now, so no env_var skip.
-        present = resolve_profile_key(profile) is not None
-        ref = profile.key_name or f"seedgraph/{profile.provider}/default"
-        via = f"keyring {ref}" + (f" or env {profile.env_var}" if profile.env_var else "")
-        results.append(
-            CheckResult(
-                f"key_ref_{profile_id}",
-                present,
-                f"profile '{profile_id}': key ({via}) "
-                f"{'present' if present else 'absent (local-first; warning only)'}",
-                severity="error" if present else "warning",
-            )
-        )
-    return results
+def _check_scholarly_keys() -> CheckResult:
+    """Which scholarly-API environment variables are set (names only, never values).
+    Keys come from the environment only; every one is optional, so this never fails."""
+    from .providers import SCHOLARLY_ENV_VARS, env_key
+
+    parts = [f"{name}={'set' if env_key(name) else 'unset'}" for name in SCHOLARLY_ENV_VARS]
+    return CheckResult("scholarly_api_keys", True,
+                       "from environment variables only: " + ", ".join(parts))
 
 
-# --- Stage C LLM-backend doctor checks (no default paid calls) --------------
+def _check_ollama() -> CheckResult:
+    """Opt-in (``--probe-ollama``) reachability of the local Ollama server used by
+    ``work ollama``: ``GET /api/tags``, no model call. Unreachable is a warning (Ollama
+    is optional)."""
+    from .llm.ollama import ENV_URL, check_reachable
 
-_PRICING_SNAPSHOT_MAX_AGE_DAYS = 180
-
-
-def _load_cfg(root, slug):
-    """Best-effort config load (project if a valid slug, else global). ``None`` on error."""
-    try:
-        if slug is not None:
-            paths.validate_slug(slug)
-            return load_project_config(slug, root)
-        return load_global_config(root)
-    except SeedgraphError:
-        return None
-
-
-def _check_pricing_snapshot_age() -> CheckResult:
-    """Warn when the bundled ``llm_capabilities.yaml`` pricing snapshot is stale.
-
-    The snapshot is a hand-pinned static file (re-verify before budget enforcement);
-    an aged snapshot is a WARNING, never a hard failure, so a keyless/offline home
-    still passes the gate."""
-    try:
-        caps = load_llm_capabilities()
-    except SeedgraphError as exc:
-        return CheckResult("pricing_snapshot", False, f"capabilities snapshot invalid: {exc}")
-    age = (_date.today() - caps.snapshot_date).days
-    fresh = age <= _PRICING_SNAPSHOT_MAX_AGE_DAYS
-    return CheckResult(
-        "pricing_snapshot_age",
-        fresh,
-        f"pricing snapshot {caps.snapshot_date.isoformat()} is {age} day(s) old"
-        + ("" if fresh else f" (> {_PRICING_SNAPSHOT_MAX_AGE_DAYS}d — re-verify pricing before budget enforcement)"),
-        severity="warning",
-    )
-
-
-def _check_llm_capabilities(root, slug) -> list[CheckResult]:
-    """Task/model capability + structured-output mismatch warnings (no dispatch).
-
-    For each routed task, resolve the preferred profile's model and check it against
-    the capability snapshot: a model with no capability row, or a route that
-    ``requires_structured_output`` against a model whose ``supports_structured_output``
-    is False, is a WARNING (the executor parses/validates JSON app-side regardless)."""
-    cfg = _load_cfg(root, slug)
-    if cfg is None:
-        return []  # _check_config already reported the load failure
-    try:
-        caps = load_llm_capabilities()
-    except SeedgraphError:
-        return []  # pricing-snapshot check reports the snapshot failure
-    missing: list[str] = []
-    structured: list[str] = []
-    for task_type, route in sorted(cfg.llm.routes.items()):
-        profile = cfg.llm.profiles.get(route.preferred_profile)
-        if profile is None or not profile.model:
-            continue  # no_llm / deterministic route — no model to validate
-        cap = caps.models.get(profile.model)
-        if cap is None:
-            missing.append(f"{task_type}->{profile.model}")
-            continue
-        if route.requires_structured_output and cap.supports_structured_output is False:
-            structured.append(f"{task_type}->{profile.model}")
-    results: list[CheckResult] = []
-    results.append(
-        CheckResult(
-            "llm_capability_coverage",
-            not missing,
-            "every routed model has a capability row"
-            if not missing
-            else f"{len(missing)} routed model(s) absent from the snapshot: {missing}",
-            severity="warning",
-        )
-    )
-    results.append(
-        CheckResult(
-            "llm_structured_output_match",
-            not structured,
-            "no structured-output capability mismatch"
-            if not structured
-            else f"{len(structured)} route(s) require structured output from a model that "
-            f"lacks a native structured-output API (validated app-side): {structured}",
-            severity="warning",
-        )
-    )
-    return results
-
-
-def _check_private_content_policy(root, slug) -> CheckResult:
-    """Flag a private-content policy conflict (a route that would block real work).
-
-    Conflict = a ``requires_source_text`` task whose preferred profile is EXTERNAL
-    while ``external_llm_for_private_full_text`` is off AND no local fallback is
-    configured: such a route refuses every non-open-access work (skipped_policy) with
-    no local path. Also flags the privacy-reducing case where private full text is
-    permitted to leave the machine. Both are WARNINGS."""
-    cfg = _load_cfg(root, slug)
-    if cfg is None:
-        return CheckResult("private_content_policy", True, "config unavailable (skipped)", severity="warning")
-
-    if cfg.content_policy.external_llm_for_private_full_text:
-        return CheckResult(
-            "private_content_policy",
-            True,
-            "content_policy.external_llm_for_private_full_text=TRUE — private full text "
-            "may leave the machine for an external LLM (privacy notice)",
-            severity="warning",
-        )
-
-    conflicts: list[str] = []
-    for task_type, route in sorted(cfg.llm.routes.items()):
-        if not route.requires_source_text:
-            continue
-        pref = cfg.llm.profiles.get(route.preferred_profile)
-        if pref is None or is_local_profile(pref):
-            continue  # local-first preferred — no conflict
-        fb = cfg.llm.profiles.get(route.fallback_profile) if route.fallback_profile else None
-        has_local_fallback = fb is not None and is_local_profile(fb)
-        if not has_local_fallback:
-            conflicts.append(task_type)
-    if conflicts:
-        return CheckResult(
-            "private_content_policy",
-            True,
-            f"{len(conflicts)} source-text task(s) prefer an external profile with no "
-            f"local fallback while private full text is forbidden — non-open-access works "
-            f"will skip (skipped_policy): {conflicts}. Add a local profile or "
-            f"--confirm-external.",
-            severity="warning",
-        )
-    return CheckResult(
-        "private_content_policy",
-        True,
-        "no private-content policy conflict (source-text tasks keep a local path)",
-    )
-
-
-def _probe_ollama(root, slug) -> CheckResult:
-    """Opt-in TCP probe of the configured Ollama endpoint (``--probe-ollama``).
-
-    A pure socket connect (no model call, no key) to the local-first profile's
-    ``base_url`` host:port. A closed port is a WARNING (Ollama is optional in a
-    local-first setup), never a hard failure."""
-    import socket
-    from urllib.parse import urlparse
-
-    from .llm.providers.ollama import DEFAULT_BASE_URL
-
-    cfg = _load_cfg(root, slug)
-    base_url = DEFAULT_BASE_URL
-    if cfg is not None:
-        for profile in cfg.llm.profiles.values():
-            if profile.provider == "ollama" and profile.base_url:
-                base_url = profile.base_url
-                break
-    parsed = urlparse(base_url)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 11434
-    try:
-        with socket.create_connection((host, port), timeout=1.0):
-            return CheckResult("ollama_probe", True, f"Ollama reachable at {host}:{port}")
-    except OSError as exc:
-        return CheckResult(
-            "ollama_probe",
-            True,
-            f"Ollama not reachable at {host}:{port} ({exc.__class__.__name__}); local-first "
-            f"extraction will fall back to the hosted profile if configured",
-            severity="warning",
-        )
+    r = check_reachable(timeout=1.0)
+    if r.ok:
+        models = ", ".join(r.models[:8]) or "no models pulled"
+        return CheckResult("ollama", True, f"Ollama reachable at {r.base_url} ({models})")
+    return CheckResult("ollama", True,
+                       f"Ollama not reachable at {r.base_url} ({r.error}); `work ollama` needs it "
+                       f"(set {ENV_URL} or OLLAMA_HOST for another address)", severity="warning")
 
 
 def _check_gpu_probe() -> CheckResult:
@@ -613,14 +431,9 @@ def collect_checks(
         )
 
     results.append(_check_config(root, slug))
-    results.extend(_check_key_refs(root, slug))
-    # Stage C LLM-backend checks (offline; no paid calls). All advisory/warning so a
-    # keyless local-first home still passes the gate.
-    results.append(_check_pricing_snapshot_age())
-    results.extend(_check_llm_capabilities(root, slug))
-    results.append(_check_private_content_policy(root, slug))
+    results.append(_check_scholarly_keys())
     if probe_ollama:
-        results.append(_probe_ollama(root, slug))
+        results.append(_check_ollama())
     # Build E ch5a: informational GPU probe — reports, never gates (design 8).
     results.append(_check_gpu_probe())
     # Cross-DB reference scan hook — no-op in Phase 0, structure in place for later phases.

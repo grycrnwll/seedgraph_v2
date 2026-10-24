@@ -1,6 +1,6 @@
 """Deterministic guardrails — the disposing half of the canonicalizer.
 
-The LLM only *proposes* (see :mod:`.llm_propose`); these three deterministic
+The LLM only *proposes* (stage 4 brings agent proposals); these three deterministic
 guardrails *dispose*, so the worst failure is benign under-merge, never
 over-merge (doc 07 §12; D10):
 

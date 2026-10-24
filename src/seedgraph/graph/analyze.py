@@ -463,7 +463,6 @@ def analyze_summary(
           "read_next": [{"work_id": str, "title": str}, ...],        # ranked
         }
     """
-    from ..answer.traverse import bridges_in
     from ..db.connection import connect_project_raw
     from ..display import derive_label
     from ..run import latest_run_id
@@ -517,6 +516,37 @@ def analyze_summary(
             {"work_id": wid, "title": _label(wid)} for wid in block["read_next"]
         ],
     }
+
+
+def bridges_in(graph) -> dict:
+    """Query-time bridge re-derivation (flagged vs derived), moved here from the
+    deleted ``answer.traverse`` (stage 2).
+
+    Re-derives cross-community bridges from the ``community`` node labels on any
+    annotated (sub)graph. Each derived bridge edge carries ``flagged_is_bridge`` (was
+    it also stamped by :func:`annotate_citation_communities`?). Nodes without a
+    community label never form bridges.
+    """
+    if graph is None:
+        return {"bridge_edges": [], "bridge_nodes": [], "flagged_bridge_nodes": []}
+    comm = {n: d.get("community") for n, d in graph.nodes(data=True)}
+    bridge_edges: list[dict] = []
+    bridge_nodes: set[str] = set()
+    for u, v, d in graph.edges(data=True):
+        if not d.get("is_citation", "is_citation" not in d):
+            continue
+        cu, cv = comm.get(u), comm.get(v)
+        if cu is None or cv is None:
+            continue
+        if cu != cv:
+            bridge_edges.append({"source_work_id": u, "target_work_id": v, "source_community": cu,
+                                 "target_community": cv, "flagged_is_bridge": bool(d.get("is_bridge", False))})
+            bridge_nodes.add(u)
+            bridge_nodes.add(v)
+    bridge_edges.sort(key=lambda e: (e["source_work_id"], e["target_work_id"]))
+    flagged = sorted(n for n, d in graph.nodes(data=True)
+                     if d.get("is_bridge") and d.get("node_type", "Work") == "Work")
+    return {"bridge_edges": bridge_edges, "bridge_nodes": sorted(bridge_nodes), "flagged_bridge_nodes": flagged}
 
 
 # ---------------------------------------------------------------------------

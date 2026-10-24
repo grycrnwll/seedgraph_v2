@@ -2,7 +2,7 @@
 
 Offsets are Unicode codepoints, half-open [start, end). Cursors contain IDs and
 selection state, never paths; they are fingerprints, not authorization tokens.
-Access policy is checked afresh on every request, before any source text leaves.
+``access_class`` is reported as provenance only; there is no send gate (ADR-0012, stage 2).
 """
 
 from __future__ import annotations
@@ -15,16 +15,13 @@ from dataclasses import asdict
 from typing import Any
 
 from . import anchor, cache_access
-from .config.loader import load_project_config
 from .db.connection import cache_db_path, connect_readonly
 from .db.migrations import current_version, latest_version
-from .errors import ConfigError, ValidationError
+from .errors import ValidationError
 from .ids import sha256_hex
-from .llm.routing import assert_external_content_allowed
 from .project.service import ProjectHandle
 from .sections.parser import Section, parse_sections
 from .sections.store import load_sections
-from .semantic.access import is_shareable
 from .vocab import AccessClass
 
 
@@ -77,12 +74,11 @@ def read_work(
     handle: ProjectHandle, *, work_id: str, section_id: str | None = None,
     subtree: bool = False, span_id: str | None = None, cursor: str | None = None,
     max_chars: int = 12000, section_offset: int = 0, section_limit: int = 50,
-    redact_private: bool = False, external: bool = False, confirm_external: bool = False,
 ) -> dict[str, Any]:
     """Read a work, one section (own/subtree), or an anchored span's source.
 
     A span selects its full source document, starting at zero; ``anchor`` in the
-    result identifies its exact location and section. Missing source and policy
+    result identifies its exact location and section. Missing source outcomes
     outcomes carry metadata and next actions without acquisition or conversion.
     """
     for name, value, lower, upper in (("max_chars", max_chars, 1, 48000),
@@ -196,28 +192,6 @@ def read_work(
                                   "source_file_id": source_id,
                                   "source_file_hash": source_hash,
                                   "total_chars": len(md.text)}
-            if redact_private and not is_shareable(access_class):
-                return unavailable("private_content_redacted", "Use an authorized local reading session.",
-                                   status="policy_withheld")
-            if external:
-                cfg = load_project_config(handle.slug, handle.root)
-                if confirm_external:
-                    cfg = cfg.model_copy(deep=True)
-                    cfg.content_policy.external_llm_for_private_full_text = True
-                try:
-                    assert_external_content_allowed(access_class, cfg, task_type="work_read")
-                except ConfigError as exc:
-                    response["policy_reason"] = str(exc)[:600]
-                    route = cfg.llm.routes.get("work_read")
-                    if not cfg.content_policy.allow_external_llm:
-                        action = "Read locally or enable external LLM handoff in the applicable content policy."
-                    elif (route is not None and route.allowed_access_classes is not None
-                          and access_class not in route.allowed_access_classes):
-                        action = "Read locally or change the route's allowed access classes."
-                    else:
-                        action = "Read locally or explicitly confirm external sharing for this request."
-                    return unavailable("external_content_forbidden",
-                                       action, status="policy_withheld")
             try:
                 newest = cache_access.current_markdown_for_source(cache, source_id, source_hash)
             except sqlite3.Error:

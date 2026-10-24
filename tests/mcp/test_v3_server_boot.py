@@ -15,7 +15,7 @@ GRAPH_SCOPED = {"graph_show", "paper_list", "search", "lens_results", "batch_cre
 
 
 def test_build_touches_no_disk(home):
-    from seedgraph.mcp.server_v3 import build_server
+    from seedgraph.mcp.server import build_server
 
     server = build_server(home=home)
     assert list(home.iterdir()) == []

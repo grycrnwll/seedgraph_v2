@@ -1,6 +1,6 @@
 # Build F ch8 — the one required gate on every push/PR. Offline by construction:
 # pyproject addopts deselect every real-integration marker (marker/network/
-# llm_network/browser), so the suite is keyless and network-free.
+# llm_network/corpus/mcp_client), so the suite is keyless and network-free.
 name: CI
 
 on:
@@ -50,8 +50,8 @@ jobs:
               ("seedgraph.citation.edges", "write_edge"),
               ("seedgraph.citation.bib_parser", "parse_references"),
               ("seedgraph.sections.parser", "parse_sections"),
-              ("seedgraph.llm.executor", "run_llm"),
-              ("seedgraph.llm.secrets", "resolve_named_secret"),
+              ("seedgraph.work.routine", "claim_next"),
+              ("seedgraph.llm.ollama", "check_reachable"),
               ("seedgraph.project.identity", "upsert_work"),
               ("seedgraph.project.identity", "merge_decision"),
               ("seedgraph.doctor", "collect_checks"),

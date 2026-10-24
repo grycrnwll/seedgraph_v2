@@ -1,7 +1,8 @@
 """`seedgraph setup`: create the v3 home and library.db, check the converter env and GPUs.
 
 Idempotent. The converter check is static (folder, lock file, uv on PATH, GPU count);
-it never starts a converter.
+it never starts a converter. ``seedgraph setup agents`` (in :mod:`.mcp`) is mounted on
+the same group.
 """
 
 from __future__ import annotations
@@ -16,12 +17,19 @@ from ..conversion import pool
 from ..library.store import ORIGIN_SETUP, is_dirty, library_db_path, library_dir, open_library
 from . import _common
 
+setup_app = typer.Typer(name="setup", help="Create the v3 home and library; `setup agents` registers "
+                                           "the MCP server and skills with Claude Code and Codex.")
 
+
+@setup_app.callback(invoke_without_command=True)
 def setup(
+    ctx: typer.Context,
     root: Optional[Path] = _common.ROOT_OPTION,
     json_out: bool = _common.JSON_OPTION,
 ) -> None:
     """Create the v3 home and its library (if missing) and check the PDF converter."""
+    if ctx.invoked_subcommand is not None:
+        return
     with _common.cli_errors():
         home = _common.home(root)
         lib_dir = library_dir(home)

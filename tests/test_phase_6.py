@@ -1,27 +1,16 @@
-"""Phase 6 (project lenses) acceptance tests — fully OFFLINE.
+"""Phase 6 (project lenses) definition tests — fully OFFLINE.
 
-Every plan §11 acceptance check is implemented with real assertions and runs with
-NO network, NO real LLM, NO key: a synthetic markdown is pushed through the real
-cache (ingest + FakeMarkerBackend convert), bridged work->markdown, then a lens is
-authored as project-local YAML, synced, and run through the phase-6 surface with a
-deterministic FakeLLMBackend that returns canned strict-JSON records. The
-module-level imports double as a whole-phase import-cleanliness check.
-
-Contracts exercised (plan §11): lens schema parse / malformed-reject / hash
-stability / validate_record gates; registry sync + snapshot-on-freeze +
-edit-after-active reject; runner found/not_found/invalid-JSON/access-class/anchor/
-no-markdown; idempotency no-op + --force + un-skip on YAML/markdown change;
-deterministic no-LLM fallback honesty; ORM<->migration parity (D6); results +
-coverage + staleness; CLI validate exit-code + results --json; the doc-10 §10
-milestone end-to-end.
+What stays after stage 2 (the lens runner, results, calibrate and the `lens
+run|results|calibrate|status` commands moved to the work protocol's `lens:<id>` task,
+tested in tests/work/test_routine_lens.py): lens schema parse / malformed-reject /
+hash stability / validate_record gates; registry sync + snapshot-on-freeze +
+edit-after-active reject; ORM<->migration parity (D6); `lens new` / `lens validate`.
+The module-level imports double as an import-cleanliness check of the kept modules.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import sqlite3
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -30,111 +19,15 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlmodel import Session
 from typer.testing import CliRunner
 
-from seedgraph import anchor, cache_access
-from seedgraph.acquisition.bridge import resolve_work_markdown, write_bridge
-from seedgraph.cache.convert import convert_source_file
-from seedgraph.cache.ingest import ingest_file
-from seedgraph.cache.marker_backend import FakeMarkerBackend
 from seedgraph.cli import app
 from seedgraph.db.migrations import discover_migrations
 from seedgraph.db.models_project import ExtractionRun, Lens, LensOutput
-from seedgraph.lenses import (  # noqa: F401 — whole-package import-cleanliness
-    calibrate,
-    fallback,
-    prompt,
-    registry,
-    results,
-    runner,
-    schema,
-)
-from seedgraph.lenses.runner import LensRouter, run_lens
-from seedgraph.llm.backend import FakeLLMBackend, LLMCompletion
+from seedgraph.lenses import prompt, registry, schema  # noqa: F401 — import-cleanliness
 from seedgraph.project import service
-from seedgraph.vocab import AccessClass, AcquisitionMethod, is_shareable, lens_claim_type
 
 cli = CliRunner()
 
 TEMPLATE = Path(schema.__file__).resolve().parent / "templates" / "regularity_conditions_v1.yaml"
-
-# A paper that carries regularity conditions; each found quote is a UNIQUE verbatim
-# substring so the phase_3 anchor path locates it exactly.
-MD_REG = (
-    "# Asymptotic Theory for a GMM Estimator\n\n"
-    "## Assumptions\n\n"
-    "The parameter space is compact.\n\n"
-    "The moment matrix has full rank.\n\n"
-    "## Identification\n\n"
-    "The estimator is consistent under standard regularity conditions.\n"
-)
-
-# A paper with NO regularity conditions / positive anchors.
-MD_PLAIN = (
-    "# A Survey of Minimum Wage Studies\n\n"
-    "## Introduction\n\n"
-    "We summarize the empirical literature on labor market effects.\n"
-)
-
-
-# --------------------------------------------------------------------------
-# Offline fixtures / helpers
-# --------------------------------------------------------------------------
-
-def _add_work(h, tag, markdown, *, access_class=AccessClass.open_access, doi=None):
-    """Add one work + bridged converted markdown; return (work_id, md)."""
-    method = (
-        AcquisitionMethod.open_access_fetch
-        if access_class == AccessClass.open_access
-        else AcquisitionMethod.upload
-    )
-    w = service.add_work(h, ids={"doi": doi or f"10.1/{tag}"}, title="W " + tag)
-    p = Path(os.environ["SEEDGRAPH_HOME"]) / f"{tag}.pdf"
-    p.write_bytes(b"%PDF-1.4 " + tag.encode() + b" body content here")
-    src = ingest_file(p, access_class=access_class, acquisition_method=method, root=None)
-    md = convert_source_file(
-        src.source_file_id, backend=FakeMarkerBackend(markdown=markdown), root=None
-    )
-    with Session(h.engine) as s:
-        write_bridge(
-            s,
-            work_id=w.work_id,
-            source_file_id=src.source_file_id,
-            file_hash=src.file_hash,
-            markdown_id=md.markdown_id,
-            markdown_hash=md.markdown_hash,
-            acquisition_method=method.value,
-        )
-        s.commit()
-    return w.work_id, md
-
-
-def _rebridge(h, work_id, markdown, nonce):
-    """Re-point a work's bridge at a GENUINELY new markdown (distinct source bytes,
-    so convert produces a new markdown_id/hash rather than returning the cache)."""
-    method = AcquisitionMethod.open_access_fetch
-    p = Path(os.environ["SEEDGRAPH_HOME"]) / f"{nonce}.pdf"
-    p.write_bytes(b"%PDF-1.4 " + nonce.encode() + b" CHANGED distinct body bytes")
-    src = ingest_file(p, access_class=AccessClass.open_access, acquisition_method=method, root=None)
-    md = convert_source_file(
-        src.source_file_id, backend=FakeMarkerBackend(markdown=markdown), root=None
-    )
-    with Session(h.engine) as s:
-        write_bridge(
-            s,
-            work_id=work_id,
-            source_file_id=src.source_file_id,
-            file_hash=src.file_hash,
-            markdown_id=md.markdown_id,
-            markdown_hash=md.markdown_hash,
-            acquisition_method=method.value,
-        )
-        s.commit()
-    return md
-
-
-def _add_metadata_only_work(h, tag):
-    """Add an included work with NO source/bridge (metadata-only)."""
-    w = service.add_work(h, ids={"doi": f"10.1/{tag}"}, title="W " + tag)
-    return w.work_id
 
 
 def _install_lens(h, lens_id="regularity_conditions_v1", content=None):
@@ -149,70 +42,6 @@ def _install_lens(h, lens_id="regularity_conditions_v1", content=None):
     with Session(h.engine) as session:
         registry.sync_lens(session, project_dir, lens_id)
     return project_dir, registry.load_lens(project_dir, lens_id)
-
-
-def _router(backend):
-    return LensRouter(config=GlobalConfigFactory(), backend=backend)
-
-
-def GlobalConfigFactory():
-    from seedgraph.config.models import GlobalConfig
-
-    return GlobalConfig()  # default profiles+routes now include project_lens_extraction
-
-
-def _conn(h):
-    c = sqlite3.connect(str(h.db_path))
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON")
-    return c
-
-
-def _found_resp():
-    return {
-        "records": [
-            {
-                "status": "found",
-                "condition_text_verbatim": "The parameter space is compact.",
-                "normalized_condition_label": "compact parameter space",
-                "condition_type": ["compactness"],
-                "attached_result": "consistency of the estimator",
-                "section": "Assumptions",
-                "equation_or_assumption_number": "Assumption 1",
-                "stated_or_inferred": "stated",
-                "evidence_span_ids": [],
-                "confidence": 0.95,
-                "notes": "",
-            }
-        ],
-        "not_found": {"searched_sections": ["Assumptions"], "notes": "", "confidence": 0.0},
-    }
-
-
-def _not_found_resp():
-    return {
-        "records": [],
-        "not_found": {
-            "searched_sections": ["Introduction"],
-            "notes": "no regularity conditions present",
-            "confidence": 0.2,
-        },
-    }
-
-
-@dataclass
-class _ContentAwareBackend:
-    """A deterministic offline backend that returns found/not_found by markdown
-    content (so a multi-work CLI run gets the right record per work regardless of
-    order). Records every call so router-call assertions hold."""
-
-    calls: list = field(default_factory=list)
-
-    def complete(self, system_prompt, user_prompt, *, model=None, temperature=0.0, max_tokens=4096):
-        self.calls.append({"user": user_prompt, "model": model})
-        body = _found_resp() if "The parameter space is compact." in user_prompt else _not_found_resp()
-        text = json.dumps(body)
-        return LLMCompletion(text=text, input_tokens=12, output_tokens=12)
 
 
 # --------------------------------------------------------------------------
@@ -352,247 +181,6 @@ def test_lens_registry():
 
 
 # --------------------------------------------------------------------------
-# runner (plan §11 test_lens_runner)
-# --------------------------------------------------------------------------
-
-def test_lens_runner():
-    """With a mock backend: work→markdown resolves via `work_source_files`; a found
-    record yields `lens_outputs(found)` + `extracted_claims(claim_type=
-    'general_assumption')` with `condition_type[]` in `fields_json` +
-    `claim_spans(rank=0)` + a `claim_fts` row; a not-found work yields
-    `lens_outputs(not_found, claim_id NULL)` with `searched_sections[]` in
-    `fields_json`; invalid JSON → `extraction_failed` + a lens_record review item;
-    `access_class` is stamped fail-closed; the verbatim quote anchors to an
-    `evidence_span` whose `quote_hash` matches; a no-markdown work is skipped and
-    recorded in `skipped_no_markdown` (NOT `extraction_failed`)."""
-    h = service.create_project("reg_runner")
-    # wReg is INGESTED PRIVATE so we also assert private-by-default stamping.
-    w_reg, md_reg = _add_work(h, "reg", MD_REG, access_class=AccessClass.user_supplied_private)
-    w_plain, _ = _add_work(h, "plain", MD_PLAIN)
-    w_nomd = _add_metadata_only_work(h, "nomd")
-    _, lens = _install_lens(h)
-
-    fake = FakeLLMBackend(responses=[_found_resp(), _not_found_resp()])
-    with Session(h.engine) as session:
-        result = run_lens(session, None, lens, [w_reg, w_plain, w_nomd], _router(fake))
-
-    assert result.found == 1
-    assert result.not_found == 1
-    assert result.skipped_no_markdown == [w_nomd]
-    assert result.extraction_failed == 0
-    assert result.router_calls == 2  # only the two markdown-bearing works
-
-    c = _conn(h)
-    try:
-        # found -> lens_outputs(found) with claim_id + condition_type in fields_json.
-        lo = c.execute(
-            "SELECT * FROM lens_outputs WHERE work_id=? AND status='found'", (w_reg,)
-        ).fetchone()
-        assert lo is not None
-        assert lo["claim_id"] is not None
-        fields = json.loads(lo["fields_json"])
-        assert fields["condition_type"] == ["compactness"]
-        # access_class fail-closed: private source -> private stamp, withheld by export.
-        assert lo["access_class"] == AccessClass.user_supplied_private.value
-        assert is_shareable(lo["access_class"]) is False
-
-        # extracted_claims(claim_type='general_assumption') + provenance + access.
-        claim = c.execute(
-            "SELECT * FROM extracted_claims WHERE claim_id=?", (lo["claim_id"],)
-        ).fetchone()
-        assert claim["claim_type"] == "general_assumption"
-        assert claim["epistemic_type"] == "llm_extracted"
-        assert claim["assertion_status"] == "stated"
-        assert claim["claim_text"] == "The parameter space is compact."
-        assert claim["access_class"] == AccessClass.user_supplied_private.value
-        assert claim["structured_note_id"] is None  # lens claims mint no note header
-
-        # claim_spans(rank=0) + the span's quote_hash matches the verbatim quote.
-        cs = c.execute(
-            "SELECT span_id, rank FROM claim_spans WHERE claim_id=?", (lo["claim_id"],)
-        ).fetchall()
-        assert len(cs) == 1 and cs[0]["rank"] == 0
-        span = c.execute(
-            "SELECT quote_hash, exact_quote FROM evidence_spans WHERE span_id=?", (cs[0]["span_id"],)
-        ).fetchone()
-        assert span["quote_hash"] == anchor.quote_hash("The parameter space is compact.")
-
-        # claim_fts row present for the lens claim.
-        fts = c.execute(
-            "SELECT claim_id FROM claim_fts WHERE claim_id=?", (lo["claim_id"],)
-        ).fetchone()
-        assert fts is not None
-
-        # not_found work -> lens_outputs(not_found, claim_id NULL) + searched_sections.
-        nf = c.execute(
-            "SELECT * FROM lens_outputs WHERE work_id=? AND status='not_found'", (w_plain,)
-        ).fetchone()
-        assert nf is not None and nf["claim_id"] is None
-        nf_fields = json.loads(nf["fields_json"])
-        assert nf_fields["searched_sections"] == ["Introduction"]
-
-        # the extraction_run carries the lens stamp + NULL schema_id (sibling schema,
-        # mutually exclusive w/ schema_id; decision 22 / §4.3).
-        run = c.execute(
-            "SELECT lens_id, lens_definition_hash, schema_id FROM extraction_runs WHERE work_id=?",
-            (w_reg,),
-        ).fetchone()
-        assert run["lens_id"] == "regularity_conditions_v1"
-        assert run["lens_definition_hash"] == lens.definition_hash()
-        assert run["schema_id"] is None
-
-        # no extraction_run minted for the no-markdown work (skipped, not failed).
-        assert c.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE work_id=?", (w_nomd,)
-        ).fetchone()[0] == 0
-    finally:
-        c.close()
-
-    # invalid JSON overall -> extraction_failed + a lens_record review item.
-    w_bad, _ = _add_work(h, "bad", MD_REG)
-    bad_fake = FakeLLMBackend(response="this is not json at all")
-    with Session(h.engine) as session:
-        bad_result = run_lens(session, None, lens, [w_bad], _router(bad_fake))
-    assert bad_result.extraction_failed == 1
-    c = _conn(h)
-    try:
-        lo_bad = c.execute(
-            "SELECT * FROM lens_outputs WHERE work_id=? AND status='extraction_failed'", (w_bad,)
-        ).fetchone()
-        assert lo_bad is not None and lo_bad["claim_id"] is None
-        rq = c.execute(
-            "SELECT * FROM review_queue WHERE item_type='lens_record' AND status='open'"
-        ).fetchall()
-        assert any(json.loads(r["payload"])["work_id"] == w_bad for r in rq)
-    finally:
-        c.close()
-
-    # access_class fail-closed default when cache.db lacks the source row.
-    cache_conn = cache_access.open_cache_ro(None)
-    try:
-        from seedgraph.extraction.runner import resolve_source_access_class
-
-        assert resolve_source_access_class(cache_conn, "md_does_not_exist") == \
-            AccessClass.user_supplied_private.value
-    finally:
-        cache_conn.close()
-
-
-# --------------------------------------------------------------------------
-# idempotency (plan §11 test_lens_runner_idempotency)
-# --------------------------------------------------------------------------
-
-def _run_count(h, lens_id):
-    c = _conn(h)
-    try:
-        return c.execute(
-            "SELECT COUNT(*) FROM extraction_runs WHERE lens_id=?", (lens_id,)
-        ).fetchone()[0]
-    finally:
-        c.close()
-
-
-def test_lens_runner_idempotency():
-    """A second `lens run --all` with unchanged definition + markdown mints ZERO
-    new `extraction_run` rows and makes ZERO backend calls; `--force` reprocesses;
-    changing the YAML (definition_hash) or the `markdown_hash` un-skips exactly
-    the affected works."""
-    h = service.create_project("reg_idem")
-    w_reg, _ = _add_work(h, "reg", MD_REG)
-    project_dir, lens = _install_lens(h)
-
-    # First run processes the work.
-    with Session(h.engine) as session:
-        r1 = run_lens(session, None, lens, [w_reg], _router(FakeLLMBackend(response=_found_resp())))
-    assert r1.found == 1 and r1.router_calls == 1
-    assert _run_count(h, "regularity_conditions_v1") == 1
-
-    # Second unchanged run is a TRUE no-op: zero new runs AND zero backend calls.
-    fake2 = FakeLLMBackend(response=_found_resp())
-    with Session(h.engine) as session:
-        r2 = run_lens(session, None, lens, [w_reg], _router(fake2))
-    assert r2.skipped_current == [w_reg]
-    assert r2.router_calls == 0
-    assert fake2.calls == []
-    assert _run_count(h, "regularity_conditions_v1") == 1
-
-    # --force reprocesses (append-only; prior run preserved).
-    with Session(h.engine) as session:
-        r3 = run_lens(session, None, lens, [w_reg], _router(FakeLLMBackend(response=_found_resp())), force=True)
-    assert r3.router_calls == 1
-    assert _run_count(h, "regularity_conditions_v1") == 2
-
-    # Changing the YAML (definition_hash) un-skips the work (revise loop; lens is
-    # still draft/calibrating so sync_lens is allowed).
-    text = (project_dir / "lenses" / "regularity_conditions_v1.yaml").read_text()
-    (project_dir / "lenses" / "regularity_conditions_v1.yaml").write_text(
-        text.replace("- continuity", "- continuity\n  - boundedness")
-    )
-    with Session(h.engine) as session:
-        registry.sync_lens(session, project_dir, "regularity_conditions_v1")
-        lens_v2 = registry.load_lens(project_dir, "regularity_conditions_v1")
-        r4 = run_lens(session, None, lens_v2, [w_reg], _router(FakeLLMBackend(response=_found_resp())))
-    assert r4.skipped_current == []  # un-skipped by the hash change
-    assert r4.router_calls == 1
-
-    # Changing the markdown_hash un-skips the work (same definition).
-    _rebridge(h, w_reg, MD_REG + "\n\nAn additional remark.\n", "regchg")
-    with Session(h.engine) as session:
-        r5 = run_lens(session, None, lens_v2, [w_reg], _router(FakeLLMBackend(response=_found_resp())))
-    assert r5.skipped_current == []
-    assert r5.router_calls == 1
-
-
-# --------------------------------------------------------------------------
-# fallback (plan §11 test_lens_fallback)
-# --------------------------------------------------------------------------
-
-def test_lens_fallback():
-    """With no permitted LLM profile, the anchor/FTS match yields
-    `epistemic_type='deterministic'` saved-search spans with
-    `assertion_status=NULL` and no typed-claim fabrication; not-found is recorded
-    honestly; the reduced-capability gap is noted (degraded)."""
-    h = service.create_project("reg_fallback")
-    w_reg, _ = _add_work(h, "reg", MD_REG)
-    w_plain, _ = _add_work(h, "plain", MD_PLAIN)
-    _, lens = _install_lens(h)
-
-    with Session(h.engine) as session:
-        result = fallback.deterministic_lens_pass(session, lens, [w_reg, w_plain], cache_db=None)
-
-    assert result.degraded is True
-    assert result.capability_note and "deterministic" in result.capability_note
-    assert result.found == 1
-    assert result.not_found == 1
-
-    c = _conn(h)
-    try:
-        lo = c.execute(
-            "SELECT * FROM lens_outputs WHERE work_id=? AND status='found'", (w_reg,)
-        ).fetchone()
-        assert lo is not None
-        # No typed claim fabricated.
-        assert lo["claim_id"] is None
-        assert lo["confidence"] is None
-        fields = json.loads(lo["fields_json"])
-        assert fields["epistemic_type"] == "deterministic"
-        assert fields["assertion_status"] is None  # NEVER fabricated
-        assert fields["evidence_span_ids"]  # an actual saved-search span
-
-        # zero typed claims across the whole deterministic pass.
-        assert c.execute("SELECT COUNT(*) FROM extracted_claims").fetchone()[0] == 0
-
-        # honest not_found for the anchor-less work.
-        nf = c.execute(
-            "SELECT * FROM lens_outputs WHERE work_id=? AND status='not_found'", (w_plain,)
-        ).fetchone()
-        assert nf is not None
-        assert json.loads(nf["fields_json"])["epistemic_type"] == "deterministic"
-    finally:
-        c.close()
-
-
-# --------------------------------------------------------------------------
 # migration parity (plan §11 test_lens_migration; D6)
 # --------------------------------------------------------------------------
 
@@ -660,70 +248,13 @@ def test_lens_migration(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# results / coverage / staleness (plan §11 test_lens_results)
-# --------------------------------------------------------------------------
-
-def test_lens_results():
-    """`lens_results` returns all found conditions across multiple works with span
-    back-references; `coverage` separates found / not_found / skipped-no-markdown;
-    `stale_outputs` flips a run after a YAML `definition_hash` change AND after a
-    `markdown_hash` change."""
-    h = service.create_project("reg_results")
-    w1, _ = _add_work(h, "reg1", MD_REG)
-    w2, _ = _add_work(h, "reg2", MD_REG)
-    w_plain, _ = _add_work(h, "plain", MD_PLAIN)
-    w_nomd = _add_metadata_only_work(h, "nomd")
-    project_dir, lens = _install_lens(h)
-
-    with Session(h.engine) as session:
-        run_lens(
-            session, None, lens, [w1, w2, w_plain, w_nomd],
-            _router(FakeLLMBackend(responses=[_found_resp(), _found_resp(), _not_found_resp()])),
-        )
-
-        found = results.lens_results(session, "regularity_conditions_v1", status="found")
-        assert {v.work_id for v in found} == {w1, w2}
-        for v in found:
-            assert v.span_ids  # evidence-span back-reference present
-            assert v.normalized_label == "compact parameter space"
-            assert v.section == "Assumptions"
-            assert v.fields.get("condition_type") == ["compactness"]
-
-        cov = results.coverage(session, "regularity_conditions_v1")
-        assert cov.found == 2
-        assert cov.not_found == 1
-        assert cov.skipped_no_markdown == 1  # the metadata-only work
-        assert cov.works_total == 4
-
-        # No stale runs yet.
-        assert results.stale_outputs(session, lens) == []
-
-        # YAML definition_hash change flips ALL runs stale.
-        text = (project_dir / "lenses" / "regularity_conditions_v1.yaml").read_text()
-        (project_dir / "lenses" / "regularity_conditions_v1.yaml").write_text(
-            text.replace("- continuity", "- continuity\n  - boundedness")
-        )
-        lens_v2 = registry.load_lens(project_dir, "regularity_conditions_v1")
-        stale_after_yaml = results.stale_outputs(session, lens_v2)
-        assert len(stale_after_yaml) == 3  # all three processed runs are stale
-
-    # markdown_hash change flips the affected work's run stale (original lens).
-    _rebridge(h, w1, MD_REG + "\n\nA further remark.\n", "reg1chg")  # re-bridge w1's markdown
-    with Session(h.engine) as session:
-        stale_after_md = results.stale_outputs(session, lens)
-        # w1's run is now stale (markdown_hash mismatch); w2/plain runs are not.
-        assert len(stale_after_md) >= 1
-
-
-# --------------------------------------------------------------------------
 # CLI (plan §11 test_lens_cli)
 # --------------------------------------------------------------------------
 
-def test_lens_cli(monkeypatch):
-    """`lens validate` exits non-zero on bad YAML; `lens results --json` emits the
-    documented shape; `lens new --from-template` scaffolds the project-local YAML."""
+def test_lens_cli():
+    """`lens validate` exits non-zero on bad YAML and 0 on the template; `lens new
+    --from-template` scaffolds the project-local YAML."""
     h = service.create_project("reg_cli")
-    w_reg, _ = _add_work(h, "reg", MD_REG)
 
     # lens new --from-template scaffolds the YAML + registers it.
     res_new = cli.invoke(
@@ -746,97 +277,3 @@ def test_lens_cli(monkeypatch):
     res_ok = cli.invoke(app, ["lens", "validate", "regularity_conditions_v1", "--project", "reg_cli"])
     assert res_ok.exit_code == 0
 
-    # Run the lens via the CLI (injected backend) then assert results --json shape.
-    monkeypatch.setattr("seedgraph.lenses.runner._BACKEND_OVERRIDE", _ContentAwareBackend())
-    res_run = cli.invoke(app, ["lens", "run", "regularity_conditions_v1", "--all", "--project", "reg_cli"])
-    assert res_run.exit_code == 0, res_run.output
-
-    res_json = cli.invoke(
-        app, ["lens", "results", "regularity_conditions_v1", "--status", "found", "--json", "--project", "reg_cli"]
-    )
-    assert res_json.exit_code == 0
-    payload = json.loads(res_json.output)
-    assert isinstance(payload, list) and len(payload) == 1
-    row = payload[0]
-    assert row["work_id"] == w_reg
-    assert row["status"] == "found"
-    assert row["condition_type"] == ["compactness"]
-    assert row["span_ids"]
-    assert row["access_class"] == AccessClass.open_access.value
-
-
-# --------------------------------------------------------------------------
-# milestone end-to-end (plan §11 test_lens_milestone_end_to_end)
-# --------------------------------------------------------------------------
-
-def test_lens_milestone_end_to_end(monkeypatch):
-    """Milestone (doc-10 §10): `lens new --from-template` → `lens calibrate
-    --sample 3` → revise (edit YAML) → `lens run --all` → `lens results` returns
-    project-wide conditions with verbatim quotes + condition_type + section +
-    evidence span; not-found works appear; metadata-only works are skipped (not
-    failed); a repeat `lens run --all` is a no-op (zero new runs); every output
-    carries an access_class withheld by the default export allowlist."""
-    h = service.create_project("reg_milestone")
-    # Private sources so the denormalized access_class is private-by-default and the
-    # default-deny export allowlist withholds every lens output (milestone clause).
-    priv = AccessClass.user_supplied_private
-    w1, _ = _add_work(h, "reg1", MD_REG, access_class=priv)
-    w2, _ = _add_work(h, "reg2", MD_REG, access_class=priv)
-    w_plain, _ = _add_work(h, "plain", MD_PLAIN, access_class=priv)
-    w_meta = _add_metadata_only_work(h, "meta")
-
-    backend = _ContentAwareBackend()
-    monkeypatch.setattr("seedgraph.lenses.runner._BACKEND_OVERRIDE", backend)
-
-    slug = "reg_milestone"
-    assert cli.invoke(app, ["lens", "new", "regularity_conditions_v1",
-                            "--from-template", "regularity_conditions_v1", "--project", slug]).exit_code == 0
-    assert cli.invoke(app, ["lens", "calibrate", "regularity_conditions_v1",
-                            "--sample", "3", "--project", slug]).exit_code == 0
-
-    # revise loop: edit the YAML (the lens is still calibrating, edits allowed) so
-    # the subsequent full run actually reprocesses (sample runs go stale).
-    yaml_path = h.root / "projects" / slug / "lenses" / "regularity_conditions_v1.yaml"
-    yaml_path.write_text(yaml_path.read_text().replace("- continuity", "- continuity\n  - boundedness"))
-
-    assert cli.invoke(app, ["lens", "run", "regularity_conditions_v1", "--all", "--project", slug]).exit_code == 0
-
-    # lens results returns the project-wide conditions with full evidence.
-    res = cli.invoke(app, ["lens", "results", "regularity_conditions_v1", "--status", "found", "--json", "--project", slug])
-    assert res.exit_code == 0
-    found = json.loads(res.output)
-    assert {r["work_id"] for r in found} == {w1, w2}
-    for r in found:
-        assert r["claim_text"] == "The parameter space is compact."
-        assert r["condition_type"] == ["compactness"]
-        assert r["section"] == "Assumptions"
-        assert r["span_ids"]
-
-    # not-found works appear as explicit not_found records.
-    res_nf = cli.invoke(app, ["lens", "results", "regularity_conditions_v1", "--status", "not_found", "--json", "--project", slug])
-    nf = json.loads(res_nf.output)
-    assert w_plain in {r["work_id"] for r in nf}
-
-    # the lens is now active; metadata-only work skipped (not failed); export-withheld.
-    h2 = service.open_project(slug)
-    c = _conn(h2)
-    try:
-        assert c.execute("SELECT status FROM lenses WHERE lens_id='regularity_conditions_v1'").fetchone()[0] == "active"
-        assert c.execute("SELECT COUNT(*) FROM extraction_runs WHERE work_id=?", (w_meta,)).fetchone()[0] == 0
-        assert c.execute("SELECT COUNT(*) FROM lens_outputs WHERE status='extraction_failed'").fetchone()[0] == 0
-        for (ac,) in c.execute("SELECT access_class FROM lens_outputs").fetchall():
-            assert is_shareable(ac) is False  # private-by-default; default-deny export
-        runs_before = c.execute("SELECT COUNT(*) FROM extraction_runs").fetchone()[0]
-    finally:
-        c.close()
-
-    # a repeat `lens run --all` is a no-op: ZERO new extraction_runs.
-    calls_before = len(backend.calls)
-    assert cli.invoke(app, ["lens", "run", "regularity_conditions_v1", "--all", "--project", slug]).exit_code == 0
-    c = _conn(h2)
-    try:
-        runs_after = c.execute("SELECT COUNT(*) FROM extraction_runs").fetchone()[0]
-    finally:
-        c.close()
-    assert runs_after == runs_before  # zero new runs
-    assert len(backend.calls) == calls_before  # zero backend calls

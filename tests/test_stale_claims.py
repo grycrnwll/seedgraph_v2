@@ -137,7 +137,7 @@ def test_superseded_note_claims_produce_no_concept_links(tmp_path):
     )
     conn.commit()
 
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
 
     assert _concept_labels(conn) == {
         "difference in differences", "new only concept", "w2 concept",
@@ -167,7 +167,7 @@ def test_latest_note_wins_created_at_tie_by_rowid(tmp_path):
     _note_generation(conn, "w1", "g2", prompt_version="1.1.0",
                      created_at=T1, labels=["second concept"])
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     assert _concept_labels(conn) == {"second concept"}
     conn.close()
 
@@ -187,7 +187,7 @@ def test_idf_n_total_and_paper_frequency_use_current_claims(tmp_path):
                      labels=["shared thing"])
     conn.commit()
 
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
 
     rows = {
         label: (pf, weight, cid)
@@ -222,7 +222,7 @@ def test_lens_rerun_claims_excluded(tmp_path):
     _add_run(conn, "lensrun_2", "w1", created_at=T2, lens_id="lens_1")
     _add_claim(conn, "c_lens_new", "lensrun_2", "w1", "new lens concept")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     assert _concept_labels(conn) == {"new lens concept"}
     assert _linked_claim_ids(conn) == {"c_lens_new"}
     conn.close()
@@ -236,7 +236,7 @@ def test_noteless_non_lens_claims_pass_through(tmp_path):
     _add_run(conn, "extr_bare", "w1", created_at=T1)
     _add_claim(conn, "c_bare", "extr_bare", "w1", "bare concept")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     assert _concept_labels(conn) == {"bare concept"}
     assert _linked_claim_ids(conn) == {"c_bare"}
     conn.close()

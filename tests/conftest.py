@@ -26,8 +26,8 @@ _CONTRACT_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("seedgraph.citation.edges", "write_edge"),
     ("seedgraph.citation.bib_parser", "parse_references"),
     ("seedgraph.sections.parser", "parse_sections"),
-    ("seedgraph.llm.executor", "run_llm"),
-    ("seedgraph.llm.secrets", "resolve_named_secret"),
+    ("seedgraph.work.routine", "claim_next"),
+    ("seedgraph.llm.ollama", "check_reachable"),
     ("seedgraph.project.identity", "upsert_work"),
     ("seedgraph.project.identity", "merge_decision"),
     ("seedgraph.doctor", "collect_checks"),
@@ -65,16 +65,10 @@ def isolated_home(tmp_path, monkeypatch):
         "CORE_API_KEY",
         "OPENALEX_API_KEY",
         "SEEDGRAPH_CORE_KEY",
+        "SEEDGRAPH_CONTACT_EMAIL",
         "SEEDGRAPH_LOG_LEVEL",
     ):
         monkeypatch.delenv(var, raising=False)
-    # Same hermeticity for the OS keyring (ADR-0002 made `key_source: auto`
-    # consult it): the suite must never read this machine's real credential
-    # store. Tests that exercise keyring behavior re-patch ``_keyring_get``
-    # themselves (their later patch wins within the test).
-    from seedgraph.llm import secrets
-
-    monkeypatch.setattr(secrets, "_keyring_get", lambda name: None)
     return home
 
 

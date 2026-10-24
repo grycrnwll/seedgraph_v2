@@ -1,7 +1,7 @@
 """Review-list display: human decisions instead of opaque ids (TODO UX gap,
 found on the first live semantic run).
 
-``seedgraph review list`` and the web review screen share one rendering seam
+``seedgraph review list`` renders through one seam
 (:func:`seedgraph.project.review.review_rows`): a ``concept_merge_candidate`` row
 shows the merge PAIR (``member -> canonical``, surfaces preferred over the
 normalized merge-key labels); a ``citation_resolution`` row shows the payload's
@@ -9,20 +9,17 @@ human fields (``first_author (year) — title`` truncated sanely, the citing
 work's label, ``status, N candidates``) instead of ``rq_``/``ref_`` ids. The
 ``rq_`` item_id stays as a trailing column because ``review resolve`` takes it.
 
-Offline / keyless: CliRunner over the Typer app + Starlette TestClient over the
-FastAPI app, both against the ``isolated_home`` autouse fixture.
+Offline / keyless: CliRunner over the Typer app against the ``isolated_home``
+autouse fixture. (The web review screen went with web/ in stage 2.)
 """
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from seedgraph.api.app import app as web_app
 from seedgraph.cli import app as cli_app
 from seedgraph.project import review as review_mod
 from seedgraph.project import service
-from seedgraph.web import serve
 
 runner = CliRunner()
 
@@ -107,21 +104,3 @@ def test_review_list_renders_citation_human_fields():
     assert item_id in out  # … but the rq_ id stays (resolve takes it)
 
 
-def test_web_review_screen_renders_decisions():
-    h = service.create_project("dispweb")
-    citing = service.add_work(
-        h, ids={"doi": "10.1/wciting"}, title="Citing Paper"
-    ).work_id
-    _merge_item(h)
-    _citation_item(h, citing)
-    web_app.dependency_overrides[serve.require_local_session] = lambda: None
-    try:
-        resp = TestClient(web_app).get("/ui/projects/dispweb/review")
-    finally:
-        web_app.dependency_overrides.pop(serve.require_local_session, None)
-    assert resp.status_code == 200
-    text = resp.text
-    # Jinja autoescape turns the ASCII arrow's '>' into '&gt;'.
-    assert "continuous treatment -&gt; continuous treatment extension" in text
-    assert "Doe (2020)" in text and "Citing Paper" in text
-    assert "ambiguous, 2 candidates" in text

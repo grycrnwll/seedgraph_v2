@@ -71,7 +71,7 @@ def _seed_four_works(conn):
 def test_weight_zero_for_everywhere_and_log_n_for_one_of_n(tmp_path):
     conn = _conn(tmp_path)
     _seed_four_works(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     rows = dict(conn.execute("SELECT concept_id, weight FROM concepts").fetchall())
     # in EVERY staged work => log(4/4) = 0.0 (an anti-stopword, not unimportant).
     assert rows["concept::everywhere concept"] == 0.0
@@ -91,7 +91,7 @@ def test_degenerate_guards_yield_zero(tmp_path):
     _add_work(conn, "work_0")
     _add_claim(conn, "c1", "work_0", "solo concept")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     # 1 staged work, pf=1 => log(1/1) = 0.0 — bounded below at zero, no negative.
     row = conn.execute("SELECT weight FROM concepts").fetchone()
     assert row[0] == 0.0
@@ -101,7 +101,7 @@ def test_degenerate_guards_yield_zero(tmp_path):
 def test_list_concepts_sharp_first_with_weight(tmp_path):
     conn = _conn(tmp_path)
     _seed_four_works(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     rows = list_concepts(conn)
     # sharp-first: rare (weight log 4) before everywhere (weight 0) — the
     # inverse of the old hub-first paper_frequency ordering.
@@ -118,7 +118,7 @@ def test_list_concepts_sharp_first_with_weight(tmp_path):
 def test_weight_attached_to_concept_graph_nodes(tmp_path):
     conn = _conn(tmp_path)
     _seed_four_works(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     graph = build_graph(conn, run_id="r1")
     node = graph.nodes["concept::rare concept"]
     assert abs(node["weight"] - math.log(4)) < 1e-12
@@ -131,79 +131,10 @@ def test_weight_attached_to_concept_graph_nodes(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _seed_sharp_vs_ubiquitous(conn):
-    """'parallel trends' in 1 of 4 works (sharp) vs 'regression' in all 4
-    (ubiquitous), with otherwise-identical claims."""
-    for i in range(4):
-        wid = f"work_{i}"
-        _add_work(conn, wid)
-        _add_claim(conn, f"c_ubiq_{i}", wid, "regression method")
-    _add_claim(conn, "c_sharp", "work_0", "parallel trends")
-    conn.commit()
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
-
-
-def test_sharp_concept_claims_outrank_ubiquitous(tmp_path):
-    from seedgraph.answer import rank, retrieve
-    from seedgraph.answer.types import QuerySpec, QueryType
-
-    conn = _conn(tmp_path)
-    _seed_sharp_vs_ubiquitous(conn)
-    spec = QuerySpec(
-        question="q",
-        protocol_hint=QueryType.factual,
-        concept_tokens=["parallel", "regression"],
-    )
-    items = retrieve.concept_lookup(conn, spec)
-    sharp = next(it for it in items if it.item_id == "c_sharp")
-    ubiq = next(it for it in items if it.item_id == "c_ubiq_0")
-    # retrieve stamped the concept provenance onto the items.
-    assert sharp.concept_id == "concept::parallel trends"
-    assert abs(sharp.concept_weight - math.log(4)) < 1e-12
-    assert sharp.concept_paper_frequency == 1
-    assert ubiq.concept_weight == 0.0
-    assert ubiq.concept_paper_frequency == 4
-
-    ranked = rank.deterministic_rank(items, spec)
-    # the sharp concept's claim ranks FIRST; the flat treatment is gone.
-    assert ranked[0].item.item_id == "c_sharp"
-    assert ranked[0].rank_score > ranked[1].rank_score
-    # boost recorded in the per-boost breakdown, bounded 0.10*w/(w+1).
-    w = math.log(4)
-    assert abs(ranked[0].boosts["concept_sharpness"] - 0.10 * w / (w + 1)) < 1e-12
-    ubiq_ranked = next(c for c in ranked if c.item.item_id == "c_ubiq_0")
-    assert ubiq_ranked.boosts["concept_sharpness"] == 0.0
-    conn.close()
-
-
-def test_non_concept_items_score_exactly_as_before(tmp_path):
-    """Regression pin: concept_weight=None items (spans/notes/FTS claims) carry
-    no concept_sharpness boost and score bit-identically to the pre-chunk-6
-    boost table."""
-    from seedgraph.answer import rank
-    from seedgraph.answer.types import QuerySpec, QueryType, RetrievedItem
-
-    spec = QuerySpec(question="q", protocol_hint=QueryType.factual, phrases=["x"])
-    span_item = RetrievedItem(
-        item_id="s1", kind="span", work_id="w", span_id="s1", claim_id="c1",
-        text="x appears here", bm25_score=-1.0, access_class="open_access",
-    )
-    note_item = RetrievedItem(
-        item_id="n1", kind="note", work_id="w", note_id="n1",
-        text="unrelated", bm25_score=-0.5, access_class="open_access",
-    )
-    ranked = {c.item.item_id: c for c in rank.deterministic_rank([span_item, note_item], spec)}
-    assert "concept_sharpness" not in ranked["s1"].boosts
-    assert "concept_sharpness" not in ranked["n1"].boosts
-    # exact pre-existing arithmetic: base + exact_phrase + span_claim_link + membership.
-    assert abs(ranked["s1"].rank_score - (0.5 + 0.30 + 0.15 + 0.05)) < 1e-12
-    assert abs(ranked["n1"].rank_score - (0.5 / 1.5 + 0.10 + 0.05)) < 1e-12
-
-
 def test_rebuild_recomputes_weight_never_stale(tmp_path):
     conn = _conn(tmp_path)
     _seed_four_works(conn)
-    build_semantic_overlay(conn, run_id="r1", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r1", tau=0.6)
     before = conn.execute(
         "SELECT weight FROM concepts WHERE concept_id='concept::rare concept'"
     ).fetchone()[0]
@@ -213,7 +144,7 @@ def test_rebuild_recomputes_weight_never_stale(tmp_path):
         _add_work(conn, wid)
         _add_claim(conn, f"c_every_{i}", wid, "everywhere concept")
     conn.commit()
-    build_semantic_overlay(conn, run_id="r2", profile=None, tau=0.6)
+    build_semantic_overlay(conn, run_id="r2", tau=0.6)
     after = conn.execute(
         "SELECT weight FROM concepts WHERE concept_id='concept::rare concept'"
     ).fetchone()[0]

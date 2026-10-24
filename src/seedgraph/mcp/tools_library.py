@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from .server_v3 import READ, tool_error
+from .server import READ, tool_error
 
 if TYPE_CHECKING:
     import sqlite3
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from ..library.store import Library
-    from .server_v3 import V3Context
+    from .server import V3Context
 
 PAPER_STATUSES = ("held", "cited_only", "member", "frontier")
 NEEDS = ("note", "metadata")

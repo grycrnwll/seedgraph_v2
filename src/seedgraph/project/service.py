@@ -35,7 +35,6 @@ __all__ = [
     "set_inclusion_status",
     "corpus_works",
     "list_documents",
-    "project_dashboard",
 ]
 
 # Closed inclusion-status set (the DB also CHECK-enforces it; validate early for a
@@ -300,131 +299,6 @@ def corpus_works(
         )
         session.expunge_all()
     return works
-
-
-def project_dashboard(
-    h: ProjectHandle, *, cache_root: Path | str | None = None
-) -> dict:
-    """Compose the project dashboard read-model shared by the CLI and the UI.
-
-    Pure read over project.db + the run inventory + the runtime LLM/budget config +
-    a doctor badge — never opens another project, never dispatches a model, safe
-    offline/keyless. Returns:
-
-    * ``status_counts`` — corpus membership tally by ``inclusion_status``.
-    * ``extraction`` — included-work extraction coverage (works with >=1 claim / total).
-    * ``concepts`` / ``claims`` / ``lenses`` — overlay totals.
-    * ``open_reviews`` — open ``review_queue`` items (via :func:`review.list_open`).
-    * ``runs`` — :func:`run.list_runs` summaries (most-recent first).
-    * ``models`` — preferred profile + availability for each LLM-shaped task.
-    * ``budget`` — monthly soft limit + this-month DB-recorded spend.
-    * ``doctor`` — ``{ok, n_fail, n_warn}`` badge from :func:`doctor.collect_checks`.
-    """
-    from ..config.loader import load_project_config as _load_runtime_config
-    from ..db.adapter import raw_conn
-    from ..llm import cost as _cost
-    from ..llm.profiles import is_local_profile, is_profile_available
-    from ..run import list_runs
-    from . import review
-
-    with Session(h.engine, expire_on_commit=False) as session:
-        conn = raw_conn(session)
-        status_counts: dict[str, int] = {
-            row[0]: row[1]
-            for row in conn.execute(
-                "SELECT inclusion_status, COUNT(*) FROM project_documents "
-                "GROUP BY inclusion_status"
-            ).fetchall()
-        }
-        included_ids = {
-            row[0]
-            for row in conn.execute(
-                "SELECT work_id FROM project_documents WHERE inclusion_status='included'"
-            ).fetchall()
-        }
-        extracted_ids = {
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT work_id FROM extracted_claims"
-            ).fetchall()
-        }
-        n_concepts = conn.execute("SELECT COUNT(*) FROM concepts").fetchone()[0]
-        n_claims = conn.execute("SELECT COUNT(*) FROM extracted_claims").fetchone()[0]
-        n_lenses = conn.execute("SELECT COUNT(*) FROM lenses").fetchone()[0]
-        year_month = _cost.this_month()
-        monthly_spend = _cost.monthly_spend(conn, year_month)
-
-    n_included = len(included_ids)
-    covered = len(included_ids & extracted_ids)
-    open_reviews = len(review.list_open(h))
-    runs = list_runs(h.slug, root=h.root)
-
-    runtime = _load_runtime_config(h.slug, h.root)
-    models: list[dict] = []
-    for task in (
-        "note_extraction",
-        "semantic_graph_extraction",
-        "project_lens_extraction",
-        "answer_generation",
-    ):
-        route = runtime.llm.routes.get(task)
-        if route is None:
-            continue
-        profile = runtime.llm.profiles.get(route.preferred_profile)
-        models.append(
-            {
-                "task": task,
-                "preferred_profile": route.preferred_profile,
-                "fallback_profile": route.fallback_profile,
-                "local": bool(profile is not None and is_local_profile(profile)),
-                "available": bool(profile is not None and is_profile_available(profile)),
-            }
-        )
-
-    budget = runtime.budget
-    doctor_badge = _doctor_badge(h.root, h.slug)
-
-    return {
-        "slug": h.slug,
-        "project_name": getattr(h.config, "project_name", h.slug),
-        "status_counts": status_counts,
-        "corpus_total": sum(status_counts.values()),
-        "extraction": {
-            "works_included": n_included,
-            "works_covered": covered,
-            "coverage_pct": round(100.0 * covered / n_included, 1) if n_included else 0.0,
-        },
-        "concepts": n_concepts,
-        "claims": n_claims,
-        "lenses": n_lenses,
-        "open_reviews": open_reviews,
-        "runs": runs,
-        "latest_run": runs[0] if runs else None,
-        "models": models,
-        "budget": {
-            "monthly_soft_limit_usd": budget.monthly_soft_limit_usd,
-            "usd_limit": budget.usd_limit,
-            "year_month": year_month,
-            "monthly_spend_usd": monthly_spend,
-        },
-        "doctor": doctor_badge,
-    }
-
-
-def _doctor_badge(root: Path | str | None, slug: str) -> dict:
-    """Summarize ``doctor.collect_checks`` into a ``{ok, n_fail, n_warn}`` badge.
-
-    Defensive: a doctor failure becomes a not-ok badge rather than crashing the
-    dashboard."""
-    try:
-        from .. import doctor
-
-        checks = doctor.collect_checks(root, slug)
-    except Exception as exc:  # noqa: BLE001 — a doctor crash is a badge, not a 500
-        return {"ok": False, "n_fail": 1, "n_warn": 0, "error": str(exc)}
-    n_fail = sum(1 for c in checks if (not c.ok) and c.severity == "error")
-    n_warn = sum(1 for c in checks if (not c.ok) and c.severity == "warning")
-    return {"ok": n_fail == 0, "n_fail": n_fail, "n_warn": n_warn}
 
 
 def list_documents(

@@ -1,4 +1,4 @@
-"""`seedgraph library status|search|show|check|attention|remove|delete|refetch-metadata|prune-replaced`
+"""`seedgraph library status|search|show|check|attention|remove|delete|refetch-metadata|prune-replaced|textcheck|reconvert`
 and `seedgraph library graphs list|show|rename` (design §10).
 
 Thin adapters over :mod:`seedgraph.library` (``search``, ``files``, ``lifecycle``,
@@ -327,6 +327,82 @@ def prune_replaced(
     for e in entries:
         typer.echo(f"{e['name']}\t{e['bytes']} bytes")
     typer.echo(f"deleted {len(entries)} folder(s)" if yes else "nothing deleted; re-run with --yes to delete")
+
+
+# --- textcheck, reconvert ------------------------------------------------------------------------
+
+@library_app.command("textcheck")
+def textcheck(
+    paper_ids: Optional[list[str]] = typer.Argument(None, help="Papers to check (default: every held paper)."),
+    golden: bool = typer.Option(False, "--golden",
+                                help="Check the golden set (<home>/golden_set.json): verdict vs category."),
+    force: bool = typer.Option(False, "--force", help="Assess again instead of reading the cached verdict."),
+    root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
+) -> None:
+    """The text-quality gate's verdict (pass, garbled, no_text) per paper, cached for batches.
+    With --golden, exit 1 when any verdict disagrees with its golden-set category."""
+    from ..golden.errors import GoldenError
+    from ..golden.manifest import load_manifest
+    from ..library import textcheck as textcheck_mod
+
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        if golden:
+            try:
+                manifest = load_manifest(_common.home(root))
+            except GoldenError as exc:
+                _common.fail(str(exc))
+            rows: list[Any] = textcheck_mod.check_golden(lib, manifest, force=force)
+        else:
+            rows = textcheck_mod.check_papers(lib, paper_ids or None, force=force)
+    if json_out:
+        _common.echo_json(rows)
+    elif golden:
+        _common.echo_table(["golden_id", "category", "verdict", "expected", "agrees", "summary"],
+                           [[r.golden_id, r.category, r.status, r.expected, "yes" if r.agrees else "NO",
+                             _common.one_line(r.summary)] for r in rows])
+        bad = [r.golden_id for r in rows if not r.agrees]
+        typer.echo(f"{len(bad)} disagree: {', '.join(bad)}" if bad else "every verdict agrees with its category")
+    else:
+        _common.echo_table(["paper_id", "markdown_id", "verdict", "cached", "summary"],
+                           [[r.paper_id, r.markdown_id or "", r.status, "yes" if r.cached else "",
+                             _common.one_line(r.summary)] for r in rows])
+    if golden and any(not r.agrees for r in rows):
+        raise typer.Exit(_common.EXIT_FAILED)
+
+
+def reconvert_backend():
+    """The converter for ``reconvert``: the shared warm pool (one backend for every paper),
+    or the fake converter when ``SEEDGRAPH_FAKE_MARKER`` is set. Tests replace this."""
+    from ..cache.convert import _default_backend
+
+    return _default_backend()
+
+
+@library_app.command("reconvert")
+def reconvert(
+    paper_ids: list[str] = typer.Argument(..., help="Papers whose PDF to convert again."),
+    ocr: bool = typer.Option(False, "--ocr", help="Force OCR (required: the only re-conversion mode)."),
+    root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
+) -> None:
+    """Re-convert papers' PDFs with forced OCR. A paper switches to the new text only when it
+    passes the gate; its notes' quotes are then re-matched (design §5.5)."""
+    from ..library import reconvert as reconvert_mod
+
+    if not ocr:
+        raise typer.BadParameter("only forced-OCR re-conversion exists; pass --ocr", param_hint="--ocr")
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        backend = reconvert_backend()
+        results = [reconvert_mod.reconvert_ocr(lib, pid, backend=backend) for pid in paper_ids]
+    if json_out:
+        _common.echo_json([r.as_dict() for r in results])
+    else:
+        _common.echo_table(["paper_id", "status", "old_markdown_id", "new_markdown_id", "detail"],
+                           [[r.paper_id, r.status, r.old_markdown_id or "", r.new_markdown_id or "",
+                             _common.one_line(r.detail)] for r in results])
+    if any(r.status == "conversion_failed" for r in results):
+        raise typer.Exit(_common.EXIT_FAILED)
 
 
 # --- graphs -------------------------------------------------------------------------------------

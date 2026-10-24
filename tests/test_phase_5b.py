@@ -1937,48 +1937,6 @@ def test_walk_progress_steps_per_source_per_generation():
     assert sorted(f["data"]["cited"] for f in frames[1:]) == [2, 3]  # A cites 2, B cites 3
 
 
-def test_planner_conversion_job_emits_per_paper_progress(monkeypatch):
-    """The planner's conversion job threads emit-backed :class:`Progress` handles
-    for BOTH stages through ``run_corpus``: every walk source and every acquire
-    target lands as a ``progress`` event with ``done``/``total`` in ``data`` (the
-    run page's existing poller shape) — no new progress file (D-7)."""
-    from seedgraph.web.planner import _job_conversion, plan_job
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("plannerprog")
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-
-    events: list = []
-
-    def emit(event, message="", *, level="info", **data):
-        events.append({"event": event, "message": message, "level": level, "data": data})
-        return len(events) - 1
-
-    emit.run_id = "run-planner-prog"
-
-    fn = _job_conversion(plan_job(h, "conversion"), {})
-    fn(emit, h)
-
-    frames = [e for e in events if e["event"] == "progress"]
-    assert frames and all(
-        isinstance(f["data"].get("done"), int) and isinstance(f["data"].get("total"), int)
-        for f in frames
-    )
-    # Walk frames (per source per generation) vs acquire frames (per target).
-    walk_frames = [f for f in frames if "generation" in f["data"]]
-    acq_frames = [f for f in frames if "acquired" in f["data"]]
-    assert len(walk_frames) == 3  # fake walk depth=2: gen1 the seed, gen2 its two refs
-    assert [f["data"]["done"] for f in acq_frames] == list(range(1, len(acq_frames) + 1))
-    assert all(f["data"]["total"] == len(acq_frames) for f in acq_frames)
-    # Per-paper: every target work steps exactly once (detail=work_id in message).
-    with Session(h.engine) as s:
-        all_ids = {w.work_id for w in s.exec(select(Work)).all()}
-    stepped = {f["message"].split(" — ")[1].split("  ")[0] for f in acq_frames}
-    assert stepped == all_ids
-    # The two coarse conversion breadcrumbs are unchanged.
-    assert [e["event"] for e in events if e["event"] == "conversion"] == ["conversion", "conversion"]
-
-
 def test_cli_corpus_verbs_heartbeat_but_no_progress_events(monkeypatch):
     """CLI corpus verbs keep the stdout N/M heartbeat but append NO events.jsonl
     events (``emit=None``): a CLI run must never leave a non-terminal ``progress``
@@ -2083,38 +2041,6 @@ def test_resolve_no_hook_emits_nothing():
         )
     )
     assert read_events("progresolve_none", rid_stdout) == []
-
-
-def test_planner_conversion_progress_frames_land_in_events_jsonl(monkeypatch):
-    """Re-verify (never assume) Build D chunk 6's mechanism END-TO-END: the planner
-    conversion job driven by a REAL events.jsonl-backed emit writes its walk +
-    acquire ``progress`` frames into ``runs/{run_id}/events.jsonl`` in the
-    ``append_event`` shape the run page's existing poller reads — proving the frames
-    persist to the substrate, not merely reach the emit callable (part b)."""
-    from seedgraph.progress import make_emitter
-    from seedgraph.run import ensure_run, read_events
-    from seedgraph.web.planner import _job_conversion, plan_job
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("plannerland")
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-
-    rid = ensure_run("plannerland")
-    emit = make_emitter("plannerland", rid, phase="conversion")
-    fn = _job_conversion(plan_job(h, "conversion"), {})
-    fn(emit, h)
-
-    frames = [e for e in read_events("plannerland", rid) if e["event"] == "progress"]
-    assert frames  # the mechanism actually landed frames on disk
-    assert all(
-        isinstance(f["data"].get("done"), int) and isinstance(f["data"].get("total"), int)
-        for f in frames
-    )
-    walk_frames = [f for f in frames if "generation" in f["data"]]
-    acq_frames = [f for f in frames if "acquired" in f["data"]]
-    assert walk_frames and acq_frames  # both D stages persisted their frames
-    assert [f["data"]["done"] for f in acq_frames] == list(range(1, len(acq_frames) + 1))
-    assert all(f["data"]["total"] == len(acq_frames) for f in acq_frames)
 
 
 def test_cli_corpus_resolve_appends_zero_events(monkeypatch):
