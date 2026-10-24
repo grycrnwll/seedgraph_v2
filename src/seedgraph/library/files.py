@@ -69,6 +69,7 @@ class ConvertOutcome:
     markdown_id: str | None
     error: str | None
     paper_ids: tuple[str, ...]  # papers holding this file
+    text_quality: str | None = None  # the gate's verdict on the markdown (design §5.3)
 
 
 def _now() -> str:
@@ -347,7 +348,21 @@ def convert_file(
                              check_pdf_text(title, doi, pages), "markdown")
     return ConvertOutcome(source_file_id=source_file_id, status="converted",
                           markdown_id=md.markdown_id, error=None,
-                          paper_ids=_papers_of(lib, source_file_id))
+                          paper_ids=_papers_of(lib, source_file_id),
+                          text_quality=_assess_text(lib, md.markdown_id))
+
+
+def _assess_text(lib: Library, markdown_id: str) -> str | None:
+    """The text-quality gate after a conversion (design §5.3): assess and cache the
+    verdict; raising a hold-back item is left to batch creation."""
+    from ..notes.spans import read_markdown  # local: work/notes import the library
+    from ..work import packages
+
+    text = read_markdown(lib.conn, markdown_id)
+    if text is None:
+        return None
+    ranges = packages.reference_ranges(lib.conn, markdown_id)
+    return packages.text_quality(lib, markdown_id, text, ranges, force=True).status
 
 
 def convert_files(
