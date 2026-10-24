@@ -44,7 +44,7 @@ def v2_template(tmp_path_factory) -> Path:
 def migrated_template(tmp_path_factory, v2_template) -> Path:
     v3 = tmp_path_factory.mktemp("v3tpl") / "home"
     result = run_migration(v2_template, v3, run_id="mig-cli-template", now=NOW,
-                           graph_names={"did": "Difference-in-Differences"},
+                           graph_names={"diff_in_diff": "Difference-in-Differences"},
                            process_lister=lambda: [], disk_free=lambda p: 10 ** 15)
     assert result.ok, result.errors
     return v3

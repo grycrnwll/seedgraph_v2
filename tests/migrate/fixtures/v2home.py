@@ -627,7 +627,7 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
              "markdown_id": md["overlap"].markdown_id,
              "span_ids": {"second_test": n_ov_st["span_ids"], "test_proj": n_ov_tp["span_ids"]}},
             {"merged": True, "current_note_id": n_ov_tp["note_id"], "version_order": [n_ov_st["note_id"],
-             n_ov_tp["note_id"]], "parity_class": "current_elsewhere", "graph": "did",
+             n_ov_tp["note_id"]], "parity_class": "current_elsewhere", "graph": "diff_in_diff",
              "manual_spans_dedupe_to": [min(a, c) for a, c in zip(n_ov_st["span_ids"], n_ov_tp["span_ids"])]},
             "same DOI in two projects; test_proj's note is newer, so it becomes current in the DiD graph")
 
@@ -656,7 +656,7 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
     b.edge(ST, ov_st, cited_st, "parsed_bibliography", 0.9, refs_st[0], run_st, "2026-07-04T14:39:42+00:00")
     b.edge(TP, ov_tp, cited_tp, "parsed_bibliography", 0.95, refs_tp[0], run_tp, "2026-07-01T12:09:27+00:00")
     b.plant("cited_only", {"work_keys": [cited_st.key, cited_tp.key], "doi": "10.5555/sg.cited"},
-            {"carried": "cited_only", "merged": True, "graph_status": {"did": "frontier"},
+            {"carried": "cited_only", "merged": True, "graph_status": {"diff_in_diff": "frontier"},
              "citation_links_dedupe": {"parsed_bibliography": 0.95, "provider_reference": 1.0}},
             "metadata-only in both projects, target of edges from the overlapping paper")
 
@@ -758,7 +758,7 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
                         at="2026-09-14T14:05:00+00:00")
     b.plant("noid_title_year_match", {"work_key": noid_match.key, "matches": lattice.key},
             {"merged": True, "merge_key": "title_year", "duplicate_decision": "rule",
-             "graph_status": {"land-value": "frontier"}},
+             "graph_status": {"land_value": "frontier"}},
             "no-id frontier work; normalize_title + year equal one identified paper only")
 
     # Ambiguous no-id title match ---------------------------------------------------
@@ -904,7 +904,7 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
                      reason="beyond_generation_1_cite_parse", at="2026-09-14T14:35:00+00:00")
     b.edge(LV, wrong, lv_excl, "provider_reference", 1.0, None, "run-20260914T160300Z-0000e1c1",
            "2026-09-14T15:27:18+00:00")
-    b.plant("excluded_in_graph", {"work_key": lv_excl.key}, {"graph_status": {"land-value": "excluded"},
+    b.plant("excluded_in_graph", {"work_key": lv_excl.key}, {"graph_status": {"land_value": "excluded"},
                                                             "carried": "cited_only"})
     oct_unref = b.work(OCT, "unreferenced", title="Kelp Harvest Cycles", year=2001, authors=("Rua Tane",),
                        doi="10.5555/sg.oct-unref", openalex="W9100000009", inclusion="metadata_only",
@@ -1008,7 +1008,7 @@ def _populate(b: _Builder) -> None:  # noqa: PLR0915 - one linear script of the 
                            "2026-07-12T01:00:00+00:00")
     b.plant("lens_with_outputs", {"lens_id": LENS_ID, "definition_hash": LENS_DEFINITION_HASH,
                                   "lens_output_ids": lens_outputs, "yaml": f"projects/{ST}/lenses/{LENS_ID}.yaml"},
-            {"lens_definitions": 1, "graph_lenses": {"did": [LENS_ID]}, "lens_outputs_carried": 2})
+            {"lens_definitions": 1, "graph_lenses": {"diff_in_diff": [LENS_ID]}, "lens_outputs_carried": 2})
 
     # Unmatched-upload review items, dropped tables -----------------------------------
     up_open = b.review(ST, "unmatched_upload", "source_file", f"sf_{b.pdfs['unheld']}",

@@ -35,7 +35,7 @@ class World:
         self.fx, self.r = fx, result
         v3 = result.v3_home
         self.lib = ro(v3 / "library" / "library.db")
-        self.graph_conn = {s: ro(v3 / "graphs" / s / "graph.db") for s in ("did", "land-value")}
+        self.graph_conn = {s: ro(v3 / "graphs" / s / "graph.db") for s in ("diff_in_diff", "land_value")}
         self.v3 = v3
 
     def one(self, sql, *args):
@@ -126,7 +126,7 @@ def c_overlap_diverging_notes(w: World, it):
         "WHERE c.structured_note_id = ?", it.expect["current_note_id"])}
     assert anchored == set(canon)
     # S7 parity class 'current_elsewhere': S6 lists the paper
-    assert any(x["paper_id"] == pid and x["from_project"] == "test_proj" and x["graph"] == "did"
+    assert any(x["paper_id"] == pid and x["from_project"] == "test_proj" and x["graph"] == "diff_in_diff"
                for x in w.r.report["current_elsewhere"])
 
 
@@ -134,7 +134,7 @@ def c_cited_only(w: World, it):
     a, b = it.ids["work_keys"]
     pid = w.paper(a)
     assert w.paper(b) == pid and w.status(pid) == "cited_only"
-    assert w.gstatus("did", pid)[0] == it.expect["graph_status"]["did"]
+    assert w.gstatus("diff_in_diff", pid)[0] == it.expect["graph_status"]["diff_in_diff"]
     links = {r["provenance"]: r["confidence"] for r in w.all(
         "SELECT * FROM citation_links WHERE target_paper_id = ?", pid)}
     assert links == it.expect["citation_links_dedupe"]
@@ -184,8 +184,8 @@ def c_shared_pdf_one_side_no_id(w: World, it):
     assert w.paper(b) == pid and it.expect["merge_key"] in w.merge_keys(pid)
     # Deviation from the fixture's "graph": None: the merged paper holds test_proj's work, and
     # design §6.2 folds every held test_proj paper into the DiD graph.
-    assert w.gstatus("did", pid) == ("member", "v2:test_proj")
-    assert w.gstatus("land-value", pid) is None
+    assert w.gstatus("diff_in_diff", pid) == ("member", "v2:test_proj")
+    assert w.gstatus("land_value", pid) is None
 
 
 def c_foreign_markdown(w: World, it):
@@ -215,7 +215,7 @@ def c_noid_title_year_match(w: World, it):
     pid = w.paper(it.ids["work_key"])
     assert w.paper(it.ids["matches"]) == pid
     assert it.expect["merge_key"] in w.merge_keys(pid)
-    assert w.gstatus("land-value", pid)[0] == it.expect["graph_status"]["land-value"]
+    assert w.gstatus("land_value", pid)[0] == it.expect["graph_status"]["land_value"]
 
 
 def c_noid_ambiguous(w: World, it):
@@ -388,7 +388,7 @@ def c_conversion_pending(w: World, it):
 
 def c_excluded_in_graph(w: World, it):
     pid = w.paper(it.ids["work_key"])
-    assert w.gstatus("land-value", pid)[0] == "excluded" and w.status(pid) == "cited_only"
+    assert w.gstatus("land_value", pid)[0] == "excluded" and w.status(pid) == "cited_only"
 
 
 def c_metadata_only_unreferenced(w: World, it):
@@ -449,8 +449,8 @@ def c_lens_with_outputs(w: World, it):
     assert len(rows) == it.expect["lens_definitions"]
     assert rows[0]["definition_hash"] == it.ids["definition_hash"]
     assert rows[0]["definition_yaml"] == (w.fx.home / it.ids["yaml"]).read_text(encoding="utf-8")
-    lenses = [r[0] for r in w.graph_conn["did"].execute("SELECT lens_id FROM graph_lenses")]
-    assert lenses == it.expect["graph_lenses"]["did"]
+    lenses = [r[0] for r in w.graph_conn["diff_in_diff"].execute("SELECT lens_id FROM graph_lenses")]
+    assert lenses == it.expect["graph_lenses"]["diff_in_diff"]
     n = w.one("SELECT COUNT(*) FROM lens_outputs WHERE lens_output_id IN (?, ?)", *it.ids["lens_output_ids"])[0]
     assert n == it.expect["lens_outputs_carried"]
 

@@ -17,7 +17,7 @@ def _lib(home):
 
 
 def _member_of_did(home) -> str:
-    with _lib(home) as lib, open_graph(lib, "did") as g:
+    with _lib(home) as lib, open_graph(lib, "diff_in_diff") as g:
         held = {r[0] for r in lib.conn.execute("SELECT paper_id FROM paper_status WHERE status = 'held'")}
         return sorted(p.paper_id for p in membership(g, status="member") if p.paper_id in held)[0]
 
@@ -49,7 +49,7 @@ def test_status_reads_the_root_home(runner, migrated_home):
 def test_read_only_commands_leave_the_library_clean(runner, migrated_home):
     pid = _member_of_did(migrated_home)
     for args in (["status"], ["show", pid], ["search", "the"], ["attention"], ["graphs", "list"],
-                 ["graphs", "show", "did"], ["delete", pid], ["prune-replaced"]):
+                 ["graphs", "show", "diff_in_diff"], ["delete", pid], ["prune-replaced"]):
         assert _invoke(runner, migrated_home, *args).exit_code == 0, args
     with _lib(migrated_home) as lib:
         assert not is_dirty(lib.conn)
@@ -83,7 +83,7 @@ def test_show_a_paper_and_an_unknown_one(runner, migrated_home):
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["paper_id"] == pid and data["status"] == "held"
-    assert any(g["slug"] == "did" for g in data["graphs"])
+    assert any(g["slug"] == "diff_in_diff" for g in data["graphs"])
     assert _invoke(runner, migrated_home, "show", "lp_nope").exit_code == 3
 
 
@@ -121,11 +121,11 @@ def test_attention_lists_and_resolves(runner, migrated_home):
 
 def test_remove_takes_the_paper_out_of_one_graph_only(runner, migrated_home):
     pid = _member_of_did(migrated_home)
-    result = _invoke(runner, migrated_home, "remove", pid, "--graph", "did")
+    result = _invoke(runner, migrated_home, "remove", pid, "--graph", "diff_in_diff")
     assert result.exit_code == 0, result.output
     with _lib(migrated_home) as lib:
         assert paper_exists(lib.conn, pid)
-        with open_graph(lib, "did") as g:
+        with open_graph(lib, "diff_in_diff") as g:
             assert pid not in {p.paper_id for p in membership(g)}
 
 
@@ -133,11 +133,11 @@ def test_delete_without_yes_shows_the_plan_and_deletes_nothing(runner, migrated_
     pid = _member_of_did(migrated_home)
     result = _invoke(runner, migrated_home, "delete", pid)
     assert result.exit_code == 0, result.output
-    assert "did" in result.output
+    assert "diff_in_diff" in result.output
     assert "nothing deleted" in result.output
     with _lib(migrated_home) as lib:
         assert paper_exists(lib.conn, pid)
-        with open_graph(lib, "did") as g:
+        with open_graph(lib, "diff_in_diff") as g:
             assert pid in {p.paper_id for p in membership(g)}
 
 
@@ -175,15 +175,15 @@ def test_prune_replaced_needs_yes(runner, migrated_home):
 
 def test_graphs_list_show_rename(runner, migrated_home):
     listed = json.loads(_invoke(runner, migrated_home, "graphs", "list", "--json").output)
-    assert "did" in {g["slug"] for g in listed}
-    shown = _invoke(runner, migrated_home, "graphs", "show", "did", "--json")
+    assert "diff_in_diff" in {g["slug"] for g in listed}
+    shown = _invoke(runner, migrated_home, "graphs", "show", "diff_in_diff", "--json")
     assert shown.exit_code == 0, shown.output
     data = json.loads(shown.output)
-    assert data["slug"] == "did" and data["counts"]["member"] >= 1
+    assert data["slug"] == "diff_in_diff" and data["counts"]["member"] >= 1
     assert _invoke(runner, migrated_home, "graphs", "show", "nope").exit_code == 3
-    renamed = _invoke(runner, migrated_home, "graphs", "rename", "did", "Event studies")
+    renamed = _invoke(runner, migrated_home, "graphs", "rename", "diff_in_diff", "Event studies")
     assert renamed.exit_code == 0, renamed.output
-    with _lib(migrated_home) as lib, open_graph(lib, "did") as g:
+    with _lib(migrated_home) as lib, open_graph(lib, "diff_in_diff") as g:
         assert graph_info(g).display_name == "Event studies"
 
 

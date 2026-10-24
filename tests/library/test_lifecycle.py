@@ -39,7 +39,7 @@ def write_blob(lib, rel):
 
 
 # lp_a: held on its own PDF (sf 1), with notes, claims, anchors, a lens output, a reference
-#       list, a review decision, an attention item; member+seed of "did", frontier of "land".
+#       list, a review decision, an attention item; member+seed of "diff_in_diff", frontier of "land".
 # lp_b: held (sf 2); its reference list cites lp_a.
 # lp_c: held (sf 3), cited by nobody.
 # lp_x, lp_y: share one PDF (sf 4) and its markdown.
@@ -103,7 +103,7 @@ def lib(tmp_path):
         write_blob(library, f"pdfs/{h}.pdf")
         write_blob(library, f"markdown/{sf_n + 100:064x}.md")
 
-    with graphs.create_graph(library, "did") as g:
+    with graphs.create_graph(library, "diff_in_diff") as g:
         graphs.set_membership(g, "lp_a", "member", is_seed=True, added_at=NOW)
         graphs.set_membership(g, "lp_x", "member", added_at=NOW)
         graphs.set_membership(g, "lp_c", "member", added_at=NOW)
@@ -127,18 +127,18 @@ def fk_clean(conn):
 
 def test_remove_from_graph_drops_only_the_membership_and_reports_a_seed(lib):
     before = count(lib.conn, "SELECT COUNT(*) FROM structured_notes WHERE paper_id='lp_a'")
-    result = lifecycle.remove_from_graph(lib, "did", "lp_a")
+    result = lifecycle.remove_from_graph(lib, "diff_in_diff", "lp_a")
     assert result.removed is True
     assert result.was_seed is True
     assert result.status == "member"
-    assert graph_status(lib, "did", "lp_a") is None
+    assert graph_status(lib, "diff_in_diff", "lp_a") is None
     assert graph_status(lib, "land", "lp_a") == "frontier"
     assert count(lib.conn, "SELECT COUNT(*) FROM structured_notes WHERE paper_id='lp_a'") == before
     assert store.paper_exists(lib.conn, "lp_a")
 
 
 def test_remove_from_graph_of_a_non_member_reports_nothing_removed(lib):
-    result = lifecycle.remove_from_graph(lib, "did", "lp_b")
+    result = lifecycle.remove_from_graph(lib, "diff_in_diff", "lp_b")
     assert result.removed is False and result.was_seed is False and result.status is None
 
 
@@ -147,8 +147,8 @@ def test_remove_from_graph_of_a_non_member_reports_nothing_removed(lib):
 def test_plan_names_every_graph_using_the_paper_and_warns(lib):
     plan = lifecycle.plan_delete(lib, "lp_a")
     assert [(u.slug, u.status, u.is_seed) for u in plan.graphs] == [
-        ("did", "member", True), ("land", "frontier", False)]
-    assert any("did" in w and "land" in w for w in plan.warnings)
+        ("diff_in_diff", "member", True), ("land", "frontier", False)]
+    assert any("diff_in_diff" in w and "land" in w for w in plan.warnings)
     assert plan.counts == {
         "notes": 2, "current_notes": 1, "claims": 3, "anchors": 1, "lens_outputs": 1,
         "references": 2, "outgoing_links": 1, "incoming_links": 1,
@@ -196,7 +196,7 @@ def test_delete_removes_the_held_parts_and_keeps_a_cited_paper_as_cited_only(lib
     assert count(c, "SELECT COUNT(*) FROM identifiers WHERE paper_id = 'lp_a'") == 1
     assert count(c, "SELECT COUNT(*) FROM citation_links WHERE target_paper_id = 'lp_a'") == 1
     # removed from every graph
-    assert graph_status(lib, "did", "lp_a") is None
+    assert graph_status(lib, "diff_in_diff", "lp_a") is None
     assert graph_status(lib, "land", "lp_a") is None
     # its own PDF was not shared: rows and blobs go
     h = f"{1:064x}"
@@ -218,7 +218,7 @@ def test_delete_of_an_uncited_paper_removes_the_paper_row_too(lib):
     assert not store.paper_exists(c, "lp_c")
     assert count(c, "SELECT COUNT(*) FROM identifiers WHERE paper_id = 'lp_c'") == 0
     assert attention.list_items(lib, paper_id="lp_c") == []
-    assert graph_status(lib, "did", "lp_c") is None
+    assert graph_status(lib, "diff_in_diff", "lp_c") is None
     assert fk_clean(c)
 
 
@@ -241,7 +241,7 @@ def test_delete_refuses_a_plan_whose_graph_usage_changed(lib):
     with pytest.raises(lifecycle.StalePlanError):
         lifecycle.delete_paper(lib, plan)
     assert store.is_held(lib.conn, "lp_a")
-    assert graph_status(lib, "did", "lp_a") == "member"
+    assert graph_status(lib, "diff_in_diff", "lp_a") == "member"
 
 
 def test_delete_refuses_a_plan_when_a_note_was_added_since(lib):
@@ -262,7 +262,7 @@ def test_delete_needs_confirmation(lib):
 def test_researcher_edited_notes_go_only_with_the_paper(lib):
     """Placeholder for stage 3 overlays: written against note rows for now."""
     edited = "SELECT COUNT(*) FROM structured_notes WHERE paper_id='lp_a' AND origin='researcher'"
-    lifecycle.remove_from_graph(lib, "did", "lp_a")
+    lifecycle.remove_from_graph(lib, "diff_in_diff", "lp_a")
     lifecycle.remove_from_graph(lib, "land", "lp_a")
     assert count(lib.conn, edited) == 1
     lifecycle.delete_paper(lib, lifecycle.plan_delete(lib, "lp_a"))

@@ -12,8 +12,8 @@ Rules (design §4, §6, §7.3, plus the rulings recorded in the S6 report):
 
 * identity by :func:`seedgraph.library.identity.plan_identity` over every carried v2
   work; every cached PDF joins the library (unheld ones as papers with no metadata);
-* second_test -> graph ``did`` (test_proj's held papers folded in as members),
-  land_value -> ``land-value``; other projects are library-only; ``dbg_*`` carry nothing;
+* second_test -> graph ``diff_in_diff`` (test_proj's held papers folded in as members),
+  land_value -> ``land_value``; other projects are library-only; ``dbg_*`` carry nothing;
 * notes are versions ordered by ``(created_at, project precedence, note_id)``;
 * sections: newest parser version per markdown, then the highest-precedence project;
   spans deduped by id (auto) or by position (manual, canonical = smallest id);
@@ -46,9 +46,9 @@ from .defects import AttentionSpec
 from .snapshot import Snapshot
 
 #: v2 project -> graph slug (design §6.2).
-GRAPH_PROJECTS: dict[str, str] = {"second_test": "did", "land_value": "land-value"}
+GRAPH_PROJECTS: dict[str, str] = {"second_test": "diff_in_diff", "land_value": "land_value"}
 #: v2 project whose held papers fold into a graph as members.
-FOLD_INTO: dict[str, str] = {"test_proj": "did"}
+FOLD_INTO: dict[str, str] = {"test_proj": "diff_in_diff"}
 STATUS_MAP = {"included": "member", "metadata_only": "frontier", "excluded": "excluded"}
 STATUS_PRIORITY = {"member": 0, "excluded": 1, "frontier": 2}
 #: v2 tables the migration drops on purpose (design §2.1 "Dropped, not carried").

@@ -59,8 +59,9 @@ STEPS: tuple[str, ...] = ("preflight", "migrate run", "re-run identical", "v2 gu
 #: answers exported, not-converted papers. Values are the researcher's to fill in. The
 #: full key set of a run is ``expected_template(report)``; design §6.12 documents each key.
 STARTER_TOTALS: tuple[str, ...] = (
-    "graph.did.member", "graph.did.frontier", "graph.did.excluded", "graph.did.folded_in",
-    "graph.land-value.member", "graph.land-value.frontier", "graph.land-value.excluded",
+    "graph.diff_in_diff.member", "graph.diff_in_diff.frontier", "graph.diff_in_diff.excluded",
+    "graph.diff_in_diff.folded_in",
+    "graph.land_value.member", "graph.land_value.frontier", "graph.land_value.excluded",
     "library.papers", "library.source_files", "v2.cache.source_files.rows",
     "library.pdfs", "library.pdfs_held_by_project", "library.pdfs_held_by_none",
     "papers.held_in_multiple_projects", "papers.held_in_multiple_projects_incl_oct",

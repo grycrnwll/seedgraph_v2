@@ -4,8 +4,8 @@ Parity is defined on match **sets**, not ranks. For every query of the fixed set
 (``migration/parity/queries.json``, researcher-owned, ``{graph slug: [query, ...]}``):
 
 * **Capture** (:func:`capture`): run v2's search against the read-only v2 project
-  that became the graph (``second_test`` -> ``did``, ``land_value`` ->
-  ``land-value``), every query inside one read transaction, with no limit, and
+  that became the graph (``second_test`` -> ``diff_in_diff``, ``land_value`` ->
+  ``land_value``), every query inside one read transaction, with no limit, and
   store ``migration/parity/v2_expected.json``. Matching uses v2's phrase-safe
   :func:`seedgraph.fts.search.build_match_query` for all three kinds (so the
   query semantics equal v3's ``search``). Spans: every ``span_fts`` hit. Claims and

@@ -51,8 +51,8 @@ def twice(fx, tmp_path_factory):
     (v3 / "scratch" / "x.bin").write_bytes(b"\x00\x01")
     before_v2 = tree_digest(fx.home)
     outside = {k: v for k, v in tree_digest(v3).items()}
-    r1 = run(fx.home, v3, run_id="mig-test-1", now=T1, graph_names={"did": "Difference-in-Differences"})
-    r2 = run(fx.home, v3, run_id="mig-test-2", now=T2, graph_names={"did": "Difference-in-Differences"})
+    r1 = run(fx.home, v3, run_id="mig-test-1", now=T1, graph_names={"diff_in_diff": "Difference-in-Differences"})
+    r2 = run(fx.home, v3, run_id="mig-test-2", now=T2, graph_names={"diff_in_diff": "Difference-in-Differences"})
     return {"v3": v3, "r1": r1, "r2": r2, "before_v2": before_v2, "outside": outside}
 
 
@@ -92,7 +92,7 @@ def test_second_run_moves_the_first_library_aside(twice):
     assert r1.replaced_dir is None
     assert r2.replaced_dir is not None and r2.replaced_dir.parent == v3 / "migration" / "replaced"
     assert (r2.replaced_dir / "library" / "library.db").is_file()
-    assert (r2.replaced_dir / "graphs" / "did" / "graph.db").is_file()
+    assert (r2.replaced_dir / "graphs" / "diff_in_diff" / "graph.db").is_file()
     conn = sqlite3.connect(f"file:{(r2.replaced_dir / 'library' / 'library.db').as_posix()}?mode=ro", uri=True)
     assert dict(conn.execute("SELECT key, value FROM library_meta"))["migration_run_id"] == "mig-test-1"
     conn.close()
@@ -121,11 +121,20 @@ def test_blobs_are_copies_not_hardlinks(fx, twice):
 
 
 def test_display_name_is_stored_slug_fixed(twice):
-    conn = sqlite3.connect(f"file:{(twice['v3'] / 'graphs' / 'did' / 'graph.db').as_posix()}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{(twice['v3'] / 'graphs' / 'diff_in_diff' / 'graph.db').as_posix()}?mode=ro", uri=True)
     meta = dict(conn.execute("SELECT key, value FROM graph_meta"))
     conn.close()
-    assert meta["slug"] == "did" and meta["display_name"] == "Difference-in-Differences"
+    assert meta["slug"] == "diff_in_diff" and meta["display_name"] == "Difference-in-Differences"
     assert meta["created_at"] == "2026-07-03T22:40:00+00:00"
+
+
+def test_graphs_are_diff_in_diff_and_land_value_with_slug_as_default_name(twice):
+    graphs_root = twice["v3"] / "graphs"
+    assert sorted(p.name for p in graphs_root.iterdir()) == ["diff_in_diff", "land_value"]
+    conn = sqlite3.connect(f"file:{(graphs_root / 'land_value' / 'graph.db').as_posix()}?mode=ro", uri=True)
+    meta = dict(conn.execute("SELECT key, value FROM graph_meta"))
+    conn.close()
+    assert meta["slug"] == "land_value" and meta["display_name"] == "land_value"
 
 
 def test_dump_excludes_exactly_the_listed_run_specific_values(twice):
@@ -135,7 +144,7 @@ def test_dump_excludes_exactly_the_listed_run_specific_values(twice):
     lines = [json.loads(x) for x in gzip.open(twice["r2"].dump_path, "rt", encoding="utf-8")]
     tables = {(x["db"], x["table"]) for x in lines if "db" in x}
     assert ("library", "migration_runs") not in tables
-    assert ("library", "papers") in tables and ("graph:did", "graph_papers") in tables
+    assert ("library", "papers") in tables and ("graph:diff_in_diff", "graph_papers") in tables
     assert ("library", "span_fts") in tables and not any(t.endswith("_data") for _, t in tables)
     for x in lines:
         if x.get("table") == "schema_migrations":
@@ -159,7 +168,7 @@ def test_dump_excludes_exactly_the_listed_run_specific_values(twice):
 def test_staging_only_run_leaves_the_live_library(fx, twice):
     v3 = twice["v3"]
     r = run(fx.home, v3, run_id="mig-test-staging", now=T1, swap=False,
-            graph_names={"did": "Difference-in-Differences"})
+            graph_names={"diff_in_diff": "Difference-in-Differences"})
     assert not r.swapped and r.library_dir == v3 / "migration" / "staging" / "mig-test-staging" / "library"
     assert r.dump_sha256 == twice["r1"].dump_sha256
     live = sqlite3.connect(f"file:{(v3 / 'library' / 'library.db').as_posix()}?mode=ro", uri=True)
@@ -169,13 +178,13 @@ def test_staging_only_run_leaves_the_live_library(fx, twice):
 
 def test_a_stage_hook_adds_files_that_are_dumped_and_swapped(fx, tmp_path):
     def hook(ctx):
-        d = ctx.staging_dir / "v2_answers" / "did"
+        d = ctx.staging_dir / "v2_answers" / "diff_in_diff"
         d.mkdir(parents=True)
         (d / "index.md").write_text("# answers\n", encoding="utf-8")
 
     v3 = tmp_path / "v3"
     r = run(fx.home, v3, run_id="mig-hook", now=T1, stage_hook=hook)
-    assert (v3 / "v2_answers" / "did" / "index.md").is_file()
+    assert (v3 / "v2_answers" / "diff_in_diff" / "index.md").is_file()
     lines = [json.loads(x) for x in gzip.open(r.dump_path, "rt", encoding="utf-8")]
     assert any(x.get("manifest") == "v2_answers" for x in lines)
 

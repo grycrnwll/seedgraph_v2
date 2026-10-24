@@ -87,7 +87,7 @@ def anchor(conn, claim_id, span_id, rank=0):
 # --- the invented library ----------------------------------------------------------------
 #
 # md1 is shared by lp_a and lp_s (the shared-PDF case); md2 = lp_b; md3 = lp_c (in no graph);
-# md4 = lp_f (held, on the frontier). Graph "did": members lp_a, lp_s, lp_b; frontier lp_f.
+# md4 = lp_f (held, on the frontier). Graph "diff_in_diff": members lp_a, lp_s, lp_b; frontier lp_f.
 
 @pytest.fixture
 def lib(tmp_path):
@@ -140,7 +140,7 @@ def lib(tmp_path):
 
     attention.raise_item(library, "pdf_title_miss", {"paper_id": "lp_s"}, paper_id="lp_s",
                          hides_notes=True, created_at=NOW)
-    with graphs.create_graph(library, "did") as g:
+    with graphs.create_graph(library, "diff_in_diff") as g:
         for pid in ("lp_a", "lp_s", "lp_b"):
             graphs.set_membership(g, pid, "member", added_at=NOW)
         graphs.set_membership(g, "lp_f", "frontier", added_at=NOW)
@@ -178,14 +178,14 @@ def test_empty_query_returns_nothing(lib):
 
 
 def test_graph_scope_keeps_member_markdowns_and_frontier_is_opt_in(lib):
-    assert span_ids(search.search(lib, "parallel trends", kind="spans", graph="did")) == {
+    assert span_ids(search.search(lib, "parallel trends", kind="spans", graph="diff_in_diff")) == {
         "sp_a1", "sp_b1"}
-    assert span_ids(search.search(lib, "parallel trends", kind="spans", graph="did",
+    assert span_ids(search.search(lib, "parallel trends", kind="spans", graph="diff_in_diff",
                                   include_frontier=True)) == {"sp_a1", "sp_b1", "sp_f1"}
 
 
 def test_a_span_hit_reports_every_member_paper_on_its_markdown_once(lib):
-    hits = search.search(lib, "parallel trends", kind="spans", graph="did")
+    hits = search.search(lib, "parallel trends", kind="spans", graph="diff_in_diff")
     a1 = [h for h in hits if h.span_id == "sp_a1"]
     assert len(a1) == 1
     hit = a1[0]
@@ -207,11 +207,11 @@ def test_span_filters_by_paper_and_section_kind(lib):
 
 
 def test_paper_filter_and_graph_scope_combine(lib):
-    with graphs.open_graph(lib, "did") as g:
+    with graphs.open_graph(lib, "diff_in_diff") as g:
         graphs.remove_membership(g, "lp_s")
     # lp_s shares lp_a's markdown but is no longer a member: the filters AND together
-    assert search.search(lib, "parallel trends", kind="spans", graph="did", paper_id="lp_s") == []
-    hit = search.search(lib, "parallel trends", kind="spans", graph="did", paper_id="lp_a")[0]
+    assert search.search(lib, "parallel trends", kind="spans", graph="diff_in_diff", paper_id="lp_s") == []
+    hit = search.search(lib, "parallel trends", kind="spans", graph="diff_in_diff", paper_id="lp_a")[0]
     assert hit.paper_ids == ("lp_a",)
 
 
@@ -259,7 +259,7 @@ def test_agent_note_search_returns_only_current_unhidden_notes(lib):
 
 
 def test_note_search_scoped_to_a_graph(lib):
-    assert note_ids(search.search(lib, "widget estimator", kind="notes", graph="did")) == {
+    assert note_ids(search.search(lib, "widget estimator", kind="notes", graph="diff_in_diff")) == {
         "note_a2", "note_b1"}
 
 
@@ -276,7 +276,7 @@ def test_researcher_sees_every_note_labelled(lib):
 def test_resolving_the_attention_item_unhides_the_note(lib):
     item = attention.list_items(lib, paper_id="lp_s")[0]
     attention.resolve_item(lib, item.item_id, "confirmed", resolved_at=LATER)
-    assert "note_s1" in note_ids(search.search(lib, "widget estimator", kind="notes", graph="did"))
+    assert "note_s1" in note_ids(search.search(lib, "widget estimator", kind="notes", graph="diff_in_diff"))
 
 
 # --- claims ----------------------------------------------------------------------------------
@@ -303,7 +303,7 @@ def test_claim_hit_carries_paper_note_and_its_anchor_page(lib):
 
 def test_researcher_claims_include_hidden_and_superseded_labelled(lib):
     hits = {h.claim_id: h for h in search.search(lib, "widget estimator", kind="claims",
-                                                 graph="did", audience="researcher", limit=None)}
+                                                 graph="diff_in_diff", audience="researcher", limit=None)}
     assert set(hits) == {"cl_a1", "cl_a2", "cl_b1", "cl_b2", "cl_s1", "cl_lens_old",
                          "cl_lens_new", "cl_loose"}
     assert hits["cl_lens_old"].is_current is False
@@ -324,13 +324,13 @@ def test_claims_and_notes_order_is_stable_on_ties(lib):
 def test_match_set_is_the_unlimited_unordered_key_set(lib):
     md_a, md_b = (lib.conn.execute("SELECT markdown_hash FROM evidence_spans WHERE span_id = ?",
                                    (s,)).fetchone()[0] for s in ("sp_a1", "sp_b1"))
-    assert search.match_set(lib, "parallel trends", kind="spans", graph="did") == frozenset({
+    assert search.match_set(lib, "parallel trends", kind="spans", graph="diff_in_diff") == frozenset({
         (md_a, 0, len("The parallel trends assumption holds for widgets.")),
         (md_b, 0, len("We test parallel trends with invented gadgets.")),
     })
-    assert search.match_set(lib, "widget estimator", kind="notes", graph="did") == frozenset({
+    assert search.match_set(lib, "widget estimator", kind="notes", graph="diff_in_diff") == frozenset({
         "note_a2", "note_b1"})
-    assert search.match_set(lib, "widget estimator", kind="claims", graph="did") == frozenset({
+    assert search.match_set(lib, "widget estimator", kind="claims", graph="diff_in_diff") == frozenset({
         "cl_a2", "cl_b1", "cl_lens_new", "cl_loose"})
 
 

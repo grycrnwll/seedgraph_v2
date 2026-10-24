@@ -105,7 +105,7 @@ def run_migration(
 ) -> MigrationResult:
     """Build a v3 library and graphs from the v2 home and swap them into the v3 home.
 
-    ``graph_names`` maps graph slugs (``did``, ``land-value``) to display names.
+    ``graph_names`` maps graph slugs (``diff_in_diff``, ``land_value``) to display names.
     ``swap=False`` builds and dumps into ``migration/staging/<run_id>/`` only (the
     acceptance re-run). ``now`` overrides the snapshot time, ``disk_free`` and
     ``process_lister`` the preflight probes (tests). Raises :class:`MigrationRefused`

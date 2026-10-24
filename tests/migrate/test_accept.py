@@ -16,13 +16,13 @@ from seedgraph.migrate.v2guard import ProcessInfo
 
 NO_PROCS = lambda: []  # noqa: E731
 BIG_DISK = lambda p: 10 ** 15  # noqa: E731
-QUERIES = {"did": ["eleven percent", "responds to"], "land-value": ["eleven percent"]}
+QUERIES = {"diff_in_diff": ["eleven percent", "responds to"], "land_value": ["eleven percent"]}
 # Expected values for the synthetic fixture, read off its planted manifest (three saved
 # answers, one run-scoped answer, one researcher contradiction) and the attention list
 # the design asks for (two sides of one shared PDF, one wrong PDF, one malformed title,
 # two cached PDFs held by no project, one test-converter text, one contradiction).
 EXPECTED_TOTALS = {"answers.exported": 3, "answers.run_scoped_not_carried": 1, "concepts.contradictions": 1,
-                   "unaccounted": 0, "errors": 0, "graph.did.member": {"expected": 18, "tolerance": 6}}
+                   "unaccounted": 0, "errors": 0, "graph.diff_in_diff.member": {"expected": 18, "tolerance": 6}}
 EXPECTED_ATTENTION = {"shared_pdf": 1, "pdf_title_miss": 2, "malformed_title": 1, "metadata_needed": 2,
                       "test_converter_markdown": 1, "concept_contradiction": 1,
                       "identity_check": {"expected": 4, "tolerance": 2}}
@@ -136,9 +136,9 @@ def test_a_v2_writer_fails_preflight_and_skips_the_rest(v2, tmp_path):
 
 
 def test_starter_expected_file_is_written_from_given_values_and_never_overwritten(tmp_path):
-    path = acc.write_expected(tmp_path, totals={"graph.did.member": 7}, attention={"shared_pdf": 1}, tolerance=2)
+    path = acc.write_expected(tmp_path, totals={"graph.diff_in_diff.member": 7}, attention={"shared_pdf": 1}, tolerance=2)
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["totals"]["graph.did.member"] == {"expected": 7, "tolerance": 2}
+    assert data["totals"]["graph.diff_in_diff.member"] == {"expected": 7, "tolerance": 2}
     assert data["attention"]["shared_pdf"] == {"expected": 1, "tolerance": 2}
     with pytest.raises(acc.AcceptanceError, match="exists"):
         acc.write_expected(tmp_path, totals={}, attention={})
@@ -157,7 +157,7 @@ def test_starter_keys_exist_in_a_real_report(accepted):
 
 def test_starter_keys_cover_the_spec_acceptance_items():
     for key in ("library.pdfs", "library.pdfs_held_by_project", "library.pdfs_held_by_none",
-                "graph.did.member", "graph.did.folded_in", "graph.land-value.member",
+                "graph.diff_in_diff.member", "graph.diff_in_diff.folded_in", "graph.land_value.member",
                 "papers.held_in_multiple_projects", "papers.held_in_multiple_projects_incl_oct",
                 "notes.multi_project_pairs", "works.no_strong_id", "works.no_strong_id.merged_by_rule",
                 "works.no_strong_id.check_these", "concepts.v2.second_test.merge.agent",

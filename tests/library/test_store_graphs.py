@@ -28,12 +28,12 @@ def lib(tmp_path):
 
 
 def test_create_graph_lays_out_folder_and_meta(lib):
-    g = graphs.create_graph(lib, "did", display_name="Invented DiD reading")
+    g = graphs.create_graph(lib, "diff_in_diff", display_name="Invented DiD reading")
     try:
-        assert g.path == lib.graphs_root / "did" / "graph.db"
+        assert g.path == lib.graphs_root / "diff_in_diff" / "graph.db"
         assert g.path.is_file()
         info = graphs.graph_info(g)
-        assert info.slug == "did"
+        assert info.slug == "diff_in_diff"
         assert info.display_name == "Invented DiD reading"
         assert info.origin == "library"
         tables = {r[0] for r in g.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -46,11 +46,11 @@ def test_create_graph_lays_out_folder_and_meta(lib):
 
 
 def test_display_name_defaults_to_slug_and_create_refuses_existing(lib):
-    graphs.create_graph(lib, "land-value").close()
-    with graphs.open_graph(lib, "land-value") as g:
-        assert graphs.graph_info(g).display_name == "land-value"
+    graphs.create_graph(lib, "land_value").close()
+    with graphs.open_graph(lib, "land_value") as g:
+        assert graphs.graph_info(g).display_name == "land_value"
     with pytest.raises(graphs.GraphError):
-        graphs.create_graph(lib, "land-value")
+        graphs.create_graph(lib, "land_value")
 
 
 def test_bad_slug_and_missing_graph_are_refused(lib):
@@ -72,16 +72,16 @@ def test_list_graphs_on_a_fresh_library_is_empty(lib):
 
 
 def test_rename_changes_display_name_not_slug(lib):
-    graphs.create_graph(lib, "did", display_name="Old").close()
-    graphs.rename_graph(lib, "did", "New invented name")
-    with graphs.open_graph(lib, "did") as g:
+    graphs.create_graph(lib, "diff_in_diff", display_name="Old").close()
+    graphs.rename_graph(lib, "diff_in_diff", "New invented name")
+    with graphs.open_graph(lib, "diff_in_diff") as g:
         info = graphs.graph_info(g)
-        assert (info.slug, info.display_name) == ("did", "New invented name")
-    assert [i.slug for i in graphs.list_graphs(lib)] == ["did"]
+        assert (info.slug, info.display_name) == ("diff_in_diff", "New invented name")
+    assert [i.slug for i in graphs.list_graphs(lib)] == ["diff_in_diff"]
 
 
 def test_membership_roundtrip(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         graphs.set_membership(g, "lp_a", "member", is_seed=True, reason="seed_document")
         graphs.set_membership(g, "lp_b", "member")
         graphs.set_membership(g, "lp_cited", "frontier")
@@ -97,14 +97,14 @@ def test_membership_roundtrip(lib):
 
 
 def test_cited_only_paper_cannot_be_a_member(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         with pytest.raises(graphs.NotHeldError):
             graphs.set_membership(g, "lp_cited", "member")
         assert graphs.membership(g) == []
 
 
 def test_unknown_paper_and_bad_status_are_refused(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         with pytest.raises(graphs.GraphError):
             graphs.set_membership(g, "lp_nowhere", "frontier")
         with pytest.raises(graphs.GraphError):
@@ -112,7 +112,7 @@ def test_unknown_paper_and_bad_status_are_refused(lib):
 
 
 def test_graph_writes_set_library_dirty_except_in_migration_mode(tmp_path, lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         with store.transaction(lib.conn) as c:
             c.execute("UPDATE library_meta SET value = '0' WHERE key = 'dirty'")
         graphs.set_membership(g, "lp_a", "member")
@@ -123,19 +123,19 @@ def test_graph_writes_set_library_dirty_except_in_migration_mode(tmp_path, lib):
         with staging.write() as conn:
             add_paper(conn, "lp_x")
             attach_file(conn, "lp_x", add_source_file(conn, 9))
-        with graphs.create_graph(staging, "did", display_name="D", origin="migration") as g:
-            assert g.path == tmp_path / "staging" / "run1" / "graphs" / "did" / "graph.db"
+        with graphs.create_graph(staging, "diff_in_diff", display_name="D", origin="migration") as g:
+            assert g.path == tmp_path / "staging" / "run1" / "graphs" / "diff_in_diff" / "graph.db"
             graphs.set_membership(g, "lp_x", "member", origin="v2:proj")
             graphs.choose_lens(g, "widget_lens_v1", origin="migration")
             assert graphs.membership(g)[0].origin == "v2:proj"
-        graphs.rename_graph(staging, "did", "Renamed")
+        graphs.rename_graph(staging, "diff_in_diff", "Renamed")
         assert not store.is_dirty(staging.conn)
     finally:
         staging.close()
 
 
 def test_lens_choice(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         graphs.choose_lens(g, "widget_lens_v1")
         graphs.choose_lens(g, "gadget_lens_v2")
         graphs.choose_lens(g, "widget_lens_v1")  # idempotent
@@ -154,7 +154,7 @@ def test_in_graph_citations_through_attach(lib):
         _link(conn, "lp_a", "lp_b", "provider_reference")
         _link(conn, "lp_b", "lp_cited")
         _link(conn, "lp_a", "lp_c")  # lp_c excluded: never in view
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         graphs.set_membership(g, "lp_a", "member")
         graphs.set_membership(g, "lp_b", "member")
         graphs.set_membership(g, "lp_cited", "frontier")
@@ -179,7 +179,7 @@ def test_in_graph_citations_through_attach(lib):
 
 
 def test_remove_membership_returns_removed_row_and_sets_dirty(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         graphs.set_membership(g, "lp_a", "member", is_seed=True)
         with store.transaction(lib.conn) as c:
             c.execute("UPDATE library_meta SET value = '0' WHERE key = 'dirty'")
@@ -192,7 +192,7 @@ def test_remove_membership_returns_removed_row_and_sets_dirty(lib):
 
 
 def test_graph_write_inside_an_open_library_write(lib):
-    with graphs.create_graph(lib, "did") as g:
+    with graphs.create_graph(lib, "diff_in_diff") as g:
         with store.transaction(lib.conn) as c:
             c.execute("UPDATE library_meta SET value = '0' WHERE key = 'dirty'")
         with lib.write() as conn:

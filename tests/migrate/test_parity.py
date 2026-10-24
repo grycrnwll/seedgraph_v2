@@ -19,8 +19,8 @@ from seedgraph.migrate import report as rep
 
 NO_PROCS = lambda: []  # noqa: E731
 BIG_DISK = lambda p: 10 ** 15  # noqa: E731
-QUERIES = {"did": ["eleven percent", "responds to", "made-up sample"],
-           "land-value": ["eleven percent", "responds to"]}
+QUERIES = {"diff_in_diff": ["eleven percent", "responds to", "made-up sample"],
+           "land_value": ["eleven percent", "responds to"]}
 
 
 def tree(root: Path) -> dict[str, str]:
@@ -61,14 +61,14 @@ def classes(result, graph=None):
 
 def test_capture_writes_v2_expected_with_attribution(checked, home):
     data = json.loads((home / parity.EXPECTED_FILE).read_text(encoding="utf-8"))
-    did = data["graphs"]["did"]
+    did = data["graphs"]["diff_in_diff"]
     assert did["project"] == "second_test"
     q = did["queries"]["eleven percent"]
     assert q["spans"] and q["claims"] and q["notes"]
     span = q["spans"][0]
     assert len(span["key"]) == 3 and span["work_ids"] and span["markdown_id"]
     assert q["claims"][0]["work_id"] and q["notes"][0]["work_id"]
-    assert data["graphs"]["land-value"]["project"] == "land_value"
+    assert data["graphs"]["land_value"]["project"] == "land_value"
 
 
 def test_baseline_parity_holds_with_every_difference_explained(checked):
@@ -103,10 +103,10 @@ def test_planted_items_land_in_their_class(fx, checked):
 
 
 def test_folded_in_and_other_project_spans_are_extra_hits(checked):
-    by = classes(checked, "did")
+    by = classes(checked, "diff_in_diff")
     assert all(d.direction == "extra" for d in by["folded_in"])
     assert all(d.direction == "extra" and d.kind == "spans" for d in by["spans_from_other_projects"])
-    assert any(d.direction == "missing" and d.kind == "spans" for d in classes(checked, "land-value")["relinked"])
+    assert any(d.direction == "missing" and d.kind == "spans" for d in classes(checked, "land_value")["relinked"])
 
 
 def test_parity_md_and_json_are_written_into_the_run(checked, home):
@@ -116,7 +116,7 @@ def test_parity_md_and_json_are_written_into_the_run(checked, home):
     assert "eleven percent" in text and "unexplained" in text.lower()
     data = json.loads((run_dir / "parity.json").read_text(encoding="utf-8"))
     assert data["ok"] is True
-    row = next(r for r in data["queries"] if r["graph"] == "did" and r["query"] == "eleven percent")
+    row = next(r for r in data["queries"] if r["graph"] == "diff_in_diff" and r["query"] == "eleven percent")
     assert {"matched", "allowed", "unexplained", "top20_overlap"} <= set(row["spans"])
 
 
@@ -130,7 +130,7 @@ def test_reading_the_live_library_leaves_it_clean(checked, home):
 
 def test_an_injected_unexplained_difference_fails(checked, home, tmp_path):
     data = json.loads((home / parity.EXPECTED_FILE).read_text(encoding="utf-8"))
-    q = data["graphs"]["did"]["queries"]["eleven percent"]
+    q = data["graphs"]["diff_in_diff"]["queries"]["eleven percent"]
     dropped = q["spans"].pop(0)                       # v3 now has a span hit v2 "did not"
     q["claims"].append({"id": "claim_invented_missing", "work_id": "work_nowhere"})
     res = parity.check(home, expected=data, write=False)
@@ -151,9 +151,9 @@ def test_default_queries_are_deterministic_frequent_terms(fx, tmp_path):
     q1 = parity.default_queries(fx.home, per_graph=12)
     q2 = parity.default_queries(fx.home, per_graph=12)
     assert q1 == q2
-    assert set(q1) == {"did", "land-value"}
-    assert 0 < len(q1["did"]) <= 12
-    assert "eleven" in q1["did"] or "eleven percent" in q1["did"]
+    assert set(q1) == {"diff_in_diff", "land_value"}
+    assert 0 < len(q1["diff_in_diff"]) <= 12
+    assert "eleven" in q1["diff_in_diff"] or "eleven percent" in q1["diff_in_diff"]
     assert all(q == q.strip() and q for qs in q1.values() for q in qs)
 
 
@@ -161,12 +161,12 @@ def test_seeding_queries_never_overwrites_the_researchers_file(fx, tmp_path):
     v3 = tmp_path / "v3"
     path = parity.seed_queries(fx.home, v3, per_graph=5)
     assert path == v3 / parity.QUERIES_FILE
-    path.write_text(json.dumps({"did": ["my own query"]}), encoding="utf-8")
+    path.write_text(json.dumps({"diff_in_diff": ["my own query"]}), encoding="utf-8")
     with pytest.raises(parity.ParityError, match="exists"):
         parity.seed_queries(fx.home, v3, per_graph=5)
-    assert parity.load_queries(v3) == {"did": ["my own query"]}
+    assert parity.load_queries(v3) == {"diff_in_diff": ["my own query"]}
     parity.seed_queries(fx.home, v3, per_graph=5, force=True)
-    assert parity.load_queries(v3) != {"did": ["my own query"]}
+    assert parity.load_queries(v3) != {"diff_in_diff": ["my own query"]}
 
 
 def test_frozen_v2_retrieval_sql_matches_v2_code():
@@ -208,7 +208,7 @@ def test_a_superseded_lens_run_on_a_merged_paper_is_classified_merged(fx, tmp_pa
     v3 = tmp_path / "v3"
     rep.run_and_report(home, v3, run_id="mig-par-lens", now="2026-10-23T05:30:00+00:00",
                        process_lister=NO_PROCS, disk_free=BIG_DISK)
-    parity.write_queries(v3, {"did": ["made-up sample"]})
+    parity.write_queries(v3, {"diff_in_diff": ["made-up sample"]})
     parity.capture(home, v3)
     res = parity.check(v3)
     assert res.ok, [(d.kind, d.key, d.detail) for d in res.unexplained]

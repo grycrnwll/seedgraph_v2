@@ -28,13 +28,13 @@ def test_run_builds_the_library_in_root(runner, v2_home, tmp_path):
 def test_run_json_and_graph_names(runner, v2_home, tmp_path):
     v3 = tmp_path / "v3"
     result = runner.invoke(app, ["migrate", "run", "--v2-home", str(v2_home), "--root", str(v3), "--json",
-                                 "--graph-name", "did=Diff, in Diff", "--graph-name", "land-value=Land Value"])
+                                 "--graph-name", "diff_in_diff=Diff, in Diff", "--graph-name", "land_value=Land Value"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.output)
     assert data["ok"] is True and data["swapped"] is True
     assert data["run_id"].startswith("mig-")
-    assert "did" in data["graph_counts"]
-    with open_library_at(v3 / "library") as lib, open_graph(lib, "did") as g:
+    assert "diff_in_diff" in data["graph_counts"]
+    with open_library_at(v3 / "library") as lib, open_graph(lib, "diff_in_diff") as g:
         assert graph_info(g).display_name == "Diff, in Diff"
 
 
@@ -182,7 +182,7 @@ def test_parity_without_a_capture_exits_1(runner, reported_home):
 
 # --- accept ----------------------------------------------------------------------------------
 
-ACCEPT_QUERIES = {"did": ["eleven percent", "responds to"], "land-value": ["eleven percent"]}
+ACCEPT_QUERIES = {"diff_in_diff": ["eleven percent", "responds to"], "land_value": ["eleven percent"]}
 
 
 def test_accept_passes_and_prints_the_table_once(runner, v2_home, tmp_path):

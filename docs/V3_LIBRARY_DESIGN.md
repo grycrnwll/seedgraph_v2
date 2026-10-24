@@ -333,14 +333,15 @@ alone, because it is a pure function from snapshot to plan: an internal seam, no
 
 | v2 project | v3 outcome |
 |---|---|
-| `second_test` | becomes the **DiD graph** (slug `did`; display name offered at migration). Members = its included works after merging, seeds kept, frontier = its metadata_only works (§6.3) |
+| `second_test` | becomes the **DiD graph** (slug `diff_in_diff`; display name defaults to the slug). Members = its included works after merging, seeds kept, frontier = its metadata_only works (§6.3) |
 | `test_proj` | **not a graph**. Every held paper of test_proj that is not already a member of the DiD graph after identity merging **joins the DiD graph as a member** (`origin = 'v2:test_proj'`). The report lists them. Its notes, decisions and reference lists are carried into the library |
-| `land_value` | becomes its own graph (slug `land-value`; display name offered). Its excluded works become `excluded` rows |
+| `land_value` | becomes its own graph (slug `land_value`; display name defaults to the slug). Its excluded works become `excluded` rows |
 | `oct2026test` | not a graph. Its held papers become library papers in no graph. Its notes are carried as versions |
 | `dbg_probe`, `dbg_probe2` | not graphs, nothing carried (synthetic fixtures, no PDFs) |
 | every cached PDF | joins the library. A PDF held by no project becomes a held paper with **no metadata** (title unknown). It is listed under "metadata needed", and its PDF check is `unknown` |
 
-Renames are offered as `--name did="…" --name land-value="…"`. Display names are stored data; slugs are fixed,
+The slugs (`diff_in_diff`, `land_value`) are what the researcher types (`--graph diff_in_diff`) and are also the
+default display names; other names can be given as `--graph-name diff_in_diff="…" --graph-name land_value="…"`. Display names are stored data; slugs are fixed,
 so re-runs stay identical.
 
 ### 6.3 Cited-only papers carried
@@ -464,7 +465,7 @@ never fails just because a count was empty. `accept.expected_template(report)` l
 | `library.pdfs` | cached PDFs in the library |
 | `library.pdfs_held_by_project` / `library.pdfs_held_by_none` | of those, PDFs attached to some carried v2 work in any project / attached to none (these become papers with no metadata) |
 | `graph.<slug>.member` / `.frontier` / `.excluded` / `.seeds` | graph membership by status, and seed count |
-| `graph.<slug>.folded_in` | papers folded into the graph from another project (test_proj into `did`) |
+| `graph.<slug>.folded_in` | papers folded into the graph from another project (test_proj into `diff_in_diff`) |
 | `papers.held_in_multiple_projects` | library papers whose merged v2 works were held in more than one graph or fold-in project (second_test, land_value, test_proj) |
 | `papers.held_in_multiple_projects_incl_oct` | the same over every carried project (adds library-only projects such as oct2026test) |
 | `notes.multi_project_pairs` | papers whose note versions come from more than one v2 project |
@@ -601,7 +602,7 @@ order of equal matches **will** differ from v2's per-project index even when the
 
 - **Spans.** For each query q, let `V2(q)` be the full match set (no limit) of v2's `fts/search.search_spans`
   run on the second_test snapshot. Let `V3(q)` be the full match set of v3 `search(kind='spans',
-  graph='did')`. Both are keyed by `(markdown_hash, start_char, end_char)`, not by work or span id. Parity
+  graph='diff_in_diff')`. Both are keyed by `(markdown_hash, start_char, end_char)`, not by work or span id. Parity
   holds when `V3(q) = map(V2(q)) ∪ Allowed⁺(q) − Allowed⁻(q)`.
 - **Claims and notes.** The baseline is v2's `answer/retrieve` path: `CURRENT_CLAIMS_CTE` plus the
   `inclusion_status <> 'excluded'` filter over `claim_fts` and `note_fts`. Claims are keyed by `claim_id` and
@@ -733,4 +734,4 @@ Each has a recommendation (*R*).
 5. **Malformed titles without cached metadata.** *R:* keep `migrate` offline; run `library refetch-metadata
    --malformed` once after acceptance as an ordinary later write.
 6. **v2 answers outside second_test.** *R:* export every saved answer in a carried project, under its slug.
-7. **Graph slugs and names.** *R:* fixed slugs `did` and `land-value`; display names given at migration.
+7. **Graph slugs and names.** *R:* fixed slugs `diff_in_diff` and `land_value` (researcher's choice); display names default to the slugs.

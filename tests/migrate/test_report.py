@@ -26,7 +26,7 @@ def fx(tmp_path_factory):
 def outcome(fx, tmp_path_factory):
     v3 = tmp_path_factory.mktemp("v3") / "home"
     return rep.run_and_report(fx.home, v3, run_id="mig-rep-1", now=NOW, process_lister=NO_PROCS,
-                              disk_free=BIG_DISK, graph_names={"did": "Difference-in-Differences"})
+                              disk_free=BIG_DISK, graph_names={"diff_in_diff": "Difference-in-Differences"})
 
 
 @pytest.fixture(scope="module")
@@ -120,7 +120,7 @@ def test_totals_are_flat_numbers(data, outcome):
     t = data["totals"]
     assert all(isinstance(v, int) for v in t.values())
     assert t["library.papers"] == outcome.result.counts["papers"]
-    assert t["graph.did.member"] == outcome.result.graph_counts["did"]["member"]
+    assert t["graph.diff_in_diff.member"] == outcome.result.graph_counts["diff_in_diff"]["member"]
     assert t["attention.total"] == len(outcome.result.plan.attention)
     assert t["answers.exported"] == 3
 
@@ -128,7 +128,7 @@ def test_totals_are_flat_numbers(data, outcome):
 def test_report_is_deterministic_across_runs(fx, data, tmp_path):
     other = rep.run_and_report(fx.home, tmp_path / "v3b", run_id="mig-rep-2", now="2026-10-25T00:00:00+00:00",
                                process_lister=NO_PROCS, disk_free=BIG_DISK,
-                               graph_names={"did": "Difference-in-Differences"})
+                               graph_names={"diff_in_diff": "Difference-in-Differences"})
     d2 = json.loads(other.files.report_json.read_text(encoding="utf-8"))
     assert d2["totals"] == data["totals"]
     assert d2["dump_sha256"] == data["dump_sha256"]
@@ -255,7 +255,7 @@ def check_pending(item, data, o, fx):
 
 
 def check_excluded(item, data, o, fx):
-    assert data["graphs"]["land-value"]["excluded"] >= 1
+    assert data["graphs"]["land_value"]["excluded"] >= 1
 
 
 def check_unreferenced(item, data, o, fx):
@@ -306,7 +306,7 @@ def check_dbg(item, data, o, fx):
 
 def check_cited_only(item, data, o, fx):
     check_merged(item, data, o, fx)
-    assert data["graphs"]["did"]["frontier"] >= 1
+    assert data["graphs"]["diff_in_diff"]["frontier"] >= 1
 
 
 CHECKS = {
@@ -364,9 +364,9 @@ def test_every_planted_item_is_in_the_report(fx, data, outcome):
 
 
 def test_folded_in_papers_are_listed_by_title(data):
-    folded = data["graphs"]["did"]["folded_in"]
+    folded = data["graphs"]["diff_in_diff"]["folded_in"]
     assert folded and all(f["title"] is not None or f["paper_id"] for f in folded)
-    assert data["totals"]["graph.did.folded_in"] == len(folded)
+    assert data["totals"]["graph.diff_in_diff.folded_in"] == len(folded)
 
 
 # --- totals for the spec's acceptance items (hand-counted from the fixture script) -----------
@@ -392,11 +392,11 @@ def test_graph_membership_totals(data):
     # noid_ambig, noid_none, moji, malformed_cached) = 10, plus 7 test_proj held papers folded in
     # (shared_a, moji_title, malformed_uncached, port_a, port_b, auction_pub, unconv); frontier: cited,
     # market_1, malformed_frontier.
-    assert (t["graph.did.member"], t["graph.did.frontier"], t["graph.did.excluded"]) == (17, 3, 0)
-    assert t["graph.did.folded_in"] == 7
-    # land-value: mix_b, noconv, wrong, external, scan; frontier: noid_match (lattice), market_2,
+    assert (t["graph.diff_in_diff.member"], t["graph.diff_in_diff.frontier"], t["graph.diff_in_diff.excluded"]) == (17, 3, 0)
+    assert t["graph.diff_in_diff.folded_in"] == 7
+    # land_value: mix_b, noconv, wrong, external, scan; frontier: noid_match (lattice), market_2,
     # near_miss; excluded: the Bronze Age toll roads work.
-    lv = (t["graph.land-value.member"], t["graph.land-value.frontier"], t["graph.land-value.excluded"])
+    lv = (t["graph.land_value.member"], t["graph.land_value.frontier"], t["graph.land_value.excluded"])
     assert lv == (5, 3, 1)
 
 
