@@ -69,7 +69,8 @@ def check_papers(lib: Library, paper_ids: Sequence[str] | None = None, *, force:
 
 
 def _expected(category: str) -> str:
-    return "garbled" if category == "garbled" else "pass"
+    # Categories can be compound ("garbled+live_run"), so check each part.
+    return "garbled" if "garbled" in category.split("+") else "pass"
 
 
 def check_golden(lib: Library, manifest: Iterable[Mapping], *, force: bool = False) -> list[GoldenCheck]:

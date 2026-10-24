@@ -54,7 +54,7 @@ def test_golden_verdict_matches_category(lib):
     bad = make_paper(lib, 2, text=garbled_md(), sections=[])
     manifest = [
         {"id": "GS01", "category": "math", "v2_markdown_id": clean.markdown_id},
-        {"id": "GS06", "category": "garbled", "v2_markdown_id": bad.markdown_id},
+        {"id": "GS06", "category": "garbled+live_run", "v2_markdown_id": bad.markdown_id},
         {"id": "GS07", "category": "garbled", "v2_markdown_id": clean.markdown_id},  # a disagreement
         {"id": "GS09", "category": "scan", "v2_markdown_id": "md_" + "0" * 64},  # not in the library
     ]
