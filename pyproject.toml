@@ -66,6 +66,13 @@ dev = [
     "pytest",
     "httpx",
 ]
+# Stage 3 acceptance (docs/V3_UI_DESIGN.md §10.1): the Playwright walk-through and the
+# browser highlight pass in tests/acceptance/ (marked `browser`, opt-in). Dev only, never
+# an app dependency. The Chromium build is a separate one-time download:
+# `uv run --group browser playwright install chromium`.
+browser = [
+    "playwright",
+]
 
 [tool.uv]
 # v3 runs on uv-managed CPython (version in .python-version), never on a system
@@ -93,11 +100,13 @@ seedgraph = [
 testpaths = ["tests"]
 # The opt-in real-Marker smoke test is marked `marker` and deselected by default;
 # it also self-skips on ImportError (Marker is not in the app environment).
-addopts = "-m 'not marker and not network and not llm_network and not corpus and not mcp_client'"
+addopts = "-m 'not marker and not network and not llm_network and not corpus and not mcp_client and not browser and not live_serve'"
 markers = [
     "marker: opt-in slow test that requires marker-pdf (not in the app environment) (deselected by default)",
     "network: opt-in real-network smoke test (phase_5b; deselected by default). Run with `pytest -m network`.",
     "llm_network: opt-in real-LLM smoke test (a live local Ollama; deselected by default). Run with `pytest -m llm_network`.",
     "corpus: opt-in real-corpus bibliography-overlap regression gate (Build F chunk 4; v1 criterion 11; deselected by default — the machine-local paper_library never leaves the dev box, so it never runs in CI). Run with `pytest -m corpus`.",
     "mcp_client: opt-in real-transport MCP smoke — SPAWNS the v3 MCP server (`seedgraph mcp serve`) as a subprocess and speaks stdio JSON-RPC to it (MCP plan 01 risk 6: Windows CRLF/encoding on stdio pipes). Deselected by default because the suite's posture is offline/keyless/NO SUBPROCESS; every other MCP test uses the SDK in-memory transport. Run with `pytest -m mcp_client` (mcp is a core dependency).",
+    "browser: opt-in stage 3 acceptance test that drives a real Chromium through Playwright (tests/acceptance/; the `browser` dependency group plus `playwright install chromium`). Deselected by default; skips when Playwright or its browser is missing. Run with `uv run --group browser pytest -m browser`.",
+    "live_serve: opt-in stage 3 acceptance test that SPAWNS `seedgraph serve` on a temp home and talks to it over real sockets (bind address, LAN refusal, Host and CSRF). Deselected by default (the suite runs no subprocesses). Run with `pytest -m live_serve`.",
 ]

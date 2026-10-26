@@ -1,0 +1,18 @@
+{
+  "_comment": "Copy to <home>/ui/acceptance/inputs.json and fill in. Real paper ids, hashes and paths belong only in the home's copy, never in the repo (docs/V3_UI_DESIGN.md section 10).",
+  "walkthrough": {
+    "graph": "diff_in_diff",
+    "pdf_path": "",
+    "pdf_sha256": "",
+    "worker": "agent",
+    "worker_timeout_s": 3600
+  },
+  "edits_survive": {
+    "paper_id": "",
+    "run": "",
+    "batch_id": ""
+  },
+  "highlight": {
+    "set": "proto5"
+  }
+}
