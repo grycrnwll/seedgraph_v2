@@ -9,8 +9,10 @@ leaves the caller's transaction to roll back, so nothing is half-written.
 In one go it:
 1. checks staleness: the paper's primary file must still point at ``markdown_id``
    (else :class:`NoteStale`, "the paper was re-converted; create a new batch");
-2. compares ``expected_current`` with the paper's current note (``note_current``)
-   when given (else :class:`NoteConflict`);
+2. compares ``expected_current`` with the paper's latest extraction (``note_latest``)
+   when given (else :class:`NoteConflict`). A researcher-edited paper's
+   ``note_current`` is pinned to its overlay base (stage 3 §4.1), so the conflict
+   check is about extractions alone;
 3. assigns ``version_no = MAX(version_no) + 1`` over every version of
    ``(paper_id, schema_id)``, labelled ones included (the UNIQUE key covers them);
 4. writes the extraction run, the note, one claim row per draft, anchors every found
@@ -18,7 +20,8 @@ In one go it:
    anchored quote is downgraded to ``ambiguous``, as v2), ``claim_spans``, and the
    ``claim_fts`` (with ``plain_words``) and ``note_fts`` rows.
 
-It never reads or writes ``note_overlays`` (stage 3).
+It never reads or writes ``note_overlays``: a new version of an edited paper becomes
+``note_latest`` while ``note_current`` stays pinned (stage 3 §4.1).
 """
 
 from __future__ import annotations
@@ -88,9 +91,20 @@ def _now() -> str:
 
 
 def current_note_id(conn: sqlite3.Connection, paper_id: str, schema_id: str = SCHEMA_ID) -> str | None:
-    """The paper's current note id (``note_current``), or ``None``."""
+    """The paper's current note id (``note_current``: the current interpretation's note,
+    pinned to the overlay base for an edited paper), or ``None``."""
     row = conn.execute(
         "SELECT note_id FROM note_current WHERE paper_id = ? AND schema_id IS ?",
+        (paper_id, schema_id),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def latest_note_id(conn: sqlite3.Connection, paper_id: str, schema_id: str = SCHEMA_ID) -> str | None:
+    """The paper's latest extraction (``note_latest``), or ``None``. Equal to
+    :func:`current_note_id` unless the paper has researcher edits."""
+    row = conn.execute(
+        "SELECT note_id FROM note_latest WHERE paper_id = ? AND schema_id IS ?",
         (paper_id, schema_id),
     ).fetchone()
     return row[0] if row else None
@@ -138,10 +152,10 @@ def save_note(
             "the paper was re-converted; create a new batch"
         )
     if expected_current is not UNCHECKED:
-        actual = current_note_id(conn, paper_id, schema_id)
+        actual = latest_note_id(conn, paper_id, schema_id)
         if actual != expected_current:
             raise NoteConflict(
-                f"the current note of {paper_id} changed since the batch was created "
+                f"the latest note of {paper_id} changed since the batch was created "
                 f"(expected {expected_current}, found {actual})"
             )
     text = read_markdown(conn, markdown_id)

@@ -10,7 +10,10 @@ one ``save_note``), so it becomes current only when the whole paper is complete.
 **Freshness** (one definition, used by eligibility and the selection language): a
 current note is *fresh* when its ``markdown_hash`` equals the paper's current
 markdown hash, whatever its schema version (a re-note of a fresh note needs
-``replace``; design §10.1 step 2 re-notes v2 notes with ``replace``).
+``replace``; design §10.1 step 2 re-notes v2 notes with ``replace``). "Current" here
+is the latest extraction (``note_latest``): freshness and the save conflict check are
+about extractions, so a researcher-edited paper (whose ``note_current`` is pinned to
+its overlay base, stage 3 §4.1) is judged on its extractions alone.
 """
 
 from __future__ import annotations
@@ -46,8 +49,8 @@ _FOUND = StatusValue.found.value
 
 
 def current_note(conn: sqlite3.Connection, paper_id: str) -> tuple[str, str] | None:
-    """``(note_id, markdown_hash)`` of the paper's current note, or ``None``."""
-    row = conn.execute("SELECT note_id, markdown_hash FROM note_current WHERE paper_id = ? AND schema_id IS ?",
+    """``(note_id, markdown_hash)`` of the paper's latest extraction (``note_latest``), or ``None``."""
+    row = conn.execute("SELECT note_id, markdown_hash FROM note_latest WHERE paper_id = ? AND schema_id IS ?",
                        (paper_id, notes.SCHEMA_ID)).fetchone()
     return (row[0], row[1]) if row else None
 

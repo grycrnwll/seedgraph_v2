@@ -9,8 +9,8 @@
   held parts in one library transaction. Blobs are unlinked only after the commit.
 
 What a delete removes: the paper's ``paper_files`` links, extraction runs, notes
-(every version, including researcher-edited ones; stage 3 overlays will join this
-list), claims, quote anchors, lens outputs, its reference list (with the citation
+(every version), its researcher edits (``note_overlays`` with their versions, derived
+interpretation rows, added-claim FTS rows and ``concept_refresh``), claims, quote anchors, lens outputs, its reference list (with the citation
 links and review decisions that hang off it) and the matching FTS rows. A source
 file, with its markdown, sections and spans, goes only when no other paper uses it
 (another ``paper_files`` row on it or on its markdown, or another paper's claim
@@ -208,7 +208,10 @@ def plan_delete(lib: Library, paper_id: str) -> DeletePlan:
     usage = _graph_usage(lib, paper_id)
     files = _source_file_uses(conn, paper_id, claim_ids)
     pdf_shared = any(f.shared for f in files)
-    has_researcher_edits = False  # stage 3: note_overlays
+    overlay_heads = [list(r) for r in conn.execute(
+        "SELECT overlay_id, head_version_no FROM note_overlays WHERE paper_id = ? ORDER BY overlay_id",
+        (paper_id,))]
+    has_researcher_edits = bool(overlay_heads)
 
     counts = {
         "notes": len(note_ids), "current_notes": current_notes, "claims": len(claim_ids),
@@ -234,6 +237,7 @@ def plan_delete(lib: Library, paper_id: str) -> DeletePlan:
         "lens_outputs": lens_output_ids, "references": reference_ids,
         "counts": counts, "keeps_cited_only": keeps_cited_only,
         "has_researcher_edits": has_researcher_edits,
+        **({"overlays": overlay_heads} if overlay_heads else {}),
     }, sort_keys=True).encode()).hexdigest()
 
     return DeletePlan(
@@ -281,6 +285,10 @@ def delete_paper(lib: Library, plan: DeletePlan, *, confirm: bool = True) -> Del
                 "(SELECT value FROM json_each(?)) ORDER BY 1",
                 (_json(unshared), _json(unshared)),
             ))
+        # researcher edits (stage 3 overlays) first: they reference the notes
+        from ..notes.overlay import delete_overlays
+
+        delete_overlays(conn, pid)
         # notes, claims, anchors, lens outputs (FK order) and their FTS rows
         _delete_in(conn, "claim_spans", "id", plan.anchor_ids)
         _delete_in(conn, "lens_outputs", "lens_output_id", plan.lens_output_ids)
