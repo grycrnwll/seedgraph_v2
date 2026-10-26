@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<section class="sg-section" aria-labelledby="sg-set-paths">
+  <h2 id="sg-set-paths">Paths</h2>
+  <dl class="sg-facts">
+    <dt>v3 home</dt><dd><code>{{ view.home }}</code></dd>
+    <dt>Library</dt><dd><code>{{ view.library }}</code></dd>
+    <dt>Graphs folder</dt><dd><code>{{ view.graphs }}</code></dd>
+    <dt>Library size</dt><dd>{{ view.papers_held }} held papers, {{ view.papers_cited_only }} cited-only;
+      library.db {{ (view.library_db_bytes / 1048576) | round(1) }} MB</dd>
+  </dl>
+</section>
+
+<section class="sg-section" aria-labelledby="sg-set-converter">
+  <h2 id="sg-set-converter">Converter</h2>
+  {% set c = view.converter %}
+  <dl class="sg-facts">
+    <dt>Locked Marker version</dt><dd>{{ c.locked_version or "unknown (converter/uv.lock not readable)" }}</dd>
+    {% if c.started %}
+    <dt>Slots</dt><dd>{{ c.slots }} converter slots{% if c.gpus %} ({{ c.gpus | join(", ") }}){% endif %}</dd>
+    {% if c.running is not none %}<dt>Running converters</dt><dd>{{ c.running }}</dd>{% endif %}
+    {% else %}
+    <dt>Slots</dt><dd>not started: converters start with the first conversion
+      ({% if c.slots_env %}SEEDGRAPH_MARKER_SLOTS={{ c.slots_env }}{% else %}one per GPU{% endif %})</dd>
+    {% endif %}
+    <dt>Converter lock</dt><dd>{% if c.lock_holder %}held by process {{ c.lock_holder }}{% else %}free{% endif %}</dd>
+  </dl>
+</section>
+
+<section class="sg-section" aria-labelledby="sg-set-ollama">
+  <h2 id="sg-set-ollama">Ollama</h2>
+  {% set o = view.ollama %}
+  <dl class="sg-facts">
+    <dt>Server</dt><dd><code>{{ o.base_url }}</code></dd>
+    <dt>Metadata model</dt><dd>{{ o.model or "not set (SEEDGRAPH_OLLAMA_MODEL)" }}</dd>
+    <dt>Status</dt>
+    <dd>{% if not o.checked %}not checked yet{% elif o.ok %}reachable{% else %}not reachable{% if o.error %}: {{ o.error }}{% endif %}{% endif %}</dd>
+    {% if o.checked and o.ok %}
+    <dt>Models present</dt><dd>{{ o.models | join(", ") if o.models else "none" }}
+      {% if o.model_present is false %}(the metadata model is not among them){% endif %}</dd>
+    {% endif %}
+  </dl>
+  <form method="post" action="/settings/ollama/check">
+    {{ csrf_input }}
+    <button type="submit">Check again</button>
+  </form>
+</section>
+
+<section class="sg-section" aria-labelledby="sg-set-env">
+  <h2 id="sg-set-env">Scholarly APIs</h2>
+  <p>Environment variables (names only; values are never shown).</p>
+  <table class="sg-table">
+    <thead><tr><th>Variable</th><th>Status</th><th>Purpose</th></tr></thead>
+    <tbody>
+      {% for v in view.env %}
+      <tr><td><code>{{ v.name }}</code></td><td>{{ "set" if v.present else "not set" }}</td><td>{{ v.purpose }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

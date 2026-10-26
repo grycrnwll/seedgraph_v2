@@ -1,0 +1,15 @@
+<div id="sg-jobs" class="sg-job-strip"{% if jobs.active %} hx-get="/library/jobs" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %} aria-live="polite">
+  {% if note %}<p class="{{ 'sg-flash sg-flash-error' if error else 'sg-flash sg-flash-success' }}" role="status">{{ note }}</p>{% endif %}
+  {% if jobs.rows %}
+  <ul class="sg-jobs">
+    {% for j in jobs.rows %}
+    <li class="sg-job sg-job-{{ j.state }}">
+      <strong>{{ j.label }}</strong> · {{ j.step }}
+      {% if j.lines %}<ul class="sg-job-lines">{% for line in j.lines %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="sg-hint">No recent jobs.</p>
+  {% endif %}
+</div>

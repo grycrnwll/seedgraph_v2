@@ -1,0 +1,13 @@
+<div id="sg-activity"{% if activity.working %} hx-get="/home/activity" hx-trigger="every 10s" hx-swap="outerHTML"{% endif %}>
+  {% if activity.entries %}
+  <ul class="sg-feed">
+    {% for e in activity.entries %}
+    <li><span class="sg-hint">{{ e.at }}</span>
+      {% if e.href %}<a href="{{ e.href }}">{% endif %}{% if e.batch_id %}batch {{ e.batch_id }}: {% endif %}{{ e.text }}{% if e.href %}</a>{% endif %}
+      {% if e.label %}<span class="sg-badge">{{ e.label }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="sg-hint">Nothing has happened yet.</p>
+  {% endif %}
+</div>

@@ -21,9 +21,12 @@ def test_the_shell_home_renders_with_the_sidebar_and_marks_home_active(make_app,
     assert "no jobs running" in html
 
 
-def test_a_routes_module_claiming_root_replaces_the_shell(make_app, client_for):
+def test_a_routes_module_claiming_root_replaces_the_shell(make_app, client_for, monkeypatch):
     def home(request):
         return PlainTextResponse("custom home")
+
+    # The Home page module (U7) claims "/" itself; test the rule without it.
+    monkeypatch.setattr("seedgraph.web.app.discovered_routes", lambda: [])
 
     assert client_for(make_app(routes=[Route("/", home)])).get("/").text == "custom home"
 

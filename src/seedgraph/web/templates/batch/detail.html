@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Batch <code>{{ view.batch_id }}</code></h1>
+<p>{{ view.task }} · {{ view.selection }}{% if view.graph %} · graph <a href="/graphs/{{ view.graph }}">{{ view.graph }}</a>{% endif %}
+  · created {{ view.created_at }}{% if view.stop_mode %} · stop mode: {{ view.stop_mode }}{% endif %}</p>
+
+<section class="sg-section" aria-labelledby="sg-batch-run">
+  <h2 id="sg-batch-run">Run this batch</h2>
+  <p class="sg-hint">Paste one of these into an agent. Each agent claims papers one at a time until the batch is done.</p>
+  <dl class="sg-commands">
+    <dt>Claude Code</dt>
+    <dd><pre id="sg-cmd-claude">{{ view.commands.claude_code }}</pre>
+      <button type="button" data-copy="sg-cmd-claude">Copy</button></dd>
+    <dt>Codex</dt>
+    <dd><pre id="sg-cmd-codex">{{ view.commands.codex }}</pre>
+      <button type="button" data-copy="sg-cmd-codex">Copy</button></dd>
+  </dl>
+  <div class="sg-agents-slot" id="sg-agents-slot"></div>
+</section>
+
+{% if not view.finished %}
+<section class="sg-section sg-batch-controls">
+  {% if view.state in ("stopped", "usage_limit", "claim_expired") %}
+  <form method="post" action="/batches/{{ view.batch_id }}/continue" class="sg-inline-form">
+    {{ csrf_input }}
+    <button type="submit">Continue</button>
+  </form>
+  {% endif %}
+  {% if view.state != "stopped" %}
+  <form method="post" action="/batches/{{ view.batch_id }}/stop" class="sg-inline-form">
+    {{ csrf_input }}
+    <input type="hidden" name="mode" value="finish">
+    <button type="submit">Stop: finish current papers</button>
+  </form>
+  {% endif %}
+  {% if view.state != "stopped" or view.stop_mode == "finish" %}
+  <form method="post" action="/batches/{{ view.batch_id }}/stop" class="sg-inline-form">
+    {{ csrf_input }}
+    <input type="hidden" name="mode" value="now">
+    <button type="submit">Stop now</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="sg-section" aria-label="Papers">
+  {% include "batch/_items.html" %}
+</section>
+<p class="sg-hint">Work folder: <code>{{ view.work_dir }}</code> · <a href="/batches">all batches</a></p>
+{% endblock %}

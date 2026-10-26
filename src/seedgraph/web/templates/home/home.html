@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Home</h1>
+<section class="sg-section" aria-labelledby="sg-next">
+  <h2 id="sg-next">What's next</h2>
+  {% for g in view.graphs %}
+  <div class="sg-checklist">
+    <h3><a href="/graphs/{{ g.slug }}">{{ g.display_name }}</a></h3>
+    {% if g.lines %}
+    <ul>
+      {% for line in g.lines %}
+      <li><a href="{{ line.href }}">{{ line.text }}</a>
+        {% if line.links | length > 1 %}({% for text, href in line.links %}<a href="{{ href }}">{{ text }}</a>{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="sg-hint">Nothing waiting on this graph.</p>
+    {% endif %}
+  </div>
+  {% else %}
+  <p>No context graphs yet. Start in the <a href="/library">Library</a>: add papers, then write notes.</p>
+  {% endfor %}
+</section>
+<section class="sg-section" aria-labelledby="sg-feed-title">
+  <h2 id="sg-feed-title">Activity</h2>
+  {% with activity = view.activity %}{% include "home/_activity.html" %}{% endwith %}
+  <p><a href="/batches">All batches</a></p>
+</section>
+{% endblock %}

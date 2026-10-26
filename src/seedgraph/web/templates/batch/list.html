@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Batches</h1>
+<table class="sg-table">
+  <thead><tr><th>Batch</th><th>Task</th><th>Selection</th><th>State</th><th>Done</th><th>Held back</th><th>Failed</th><th>Created</th></tr></thead>
+  <tbody>
+    {% for b in rows %}
+    <tr>
+      <td><a href="/batches/{{ b.batch_id }}"><code>{{ b.batch_id }}</code></a></td>
+      <td>{{ b.task }}</td>
+      <td>{{ b.selection }}{% if b.graph %} <span class="sg-badge">{{ b.graph }}</span>{% endif %}</td>
+      <td>{{ b.label }}</td>
+      <td>{{ b.done }}/{{ b.total }}</td><td>{{ b.held_back }}</td><td>{{ b.failed }}</td>
+      <td>{{ b.created_at }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No batches yet. Select papers in the <a href="/library">Library</a> and choose Write notes.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

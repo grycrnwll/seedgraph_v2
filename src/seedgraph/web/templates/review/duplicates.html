@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+<h1>Duplicates</h1>
+{% set tab = "duplicates" %}{% include "review/_tabs.html" %}
+<section class="sg-section">
+  <h2>Identity checks</h2>
+  <p class="sg-hint">Papers that may be the same work. Papers are never merged silently.</p>
+  <table class="sg-table">
+    <thead><tr><th>Kind</th><th>Paper</th><th>Evidence</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for row in view.checks %}{% include "review/_item_row.html" %}
+      {% else %}<tr><td colspan="4">No open identity checks.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+<section class="sg-section">
+  <h2>Decisions on record</h2>
+  <table class="sg-table">
+    <thead><tr><th>Paper A</th><th>Paper B</th><th>Verdict</th><th>By</th><th>Reason</th><th>Decided</th></tr></thead>
+    <tbody>
+      {% for d in view.decisions %}
+      <tr>
+        <td>{{ paper_title(d.paper_a.paper_id, d.paper_a.title or d.paper_a.paper_id, d.paper_a.held) }}</td>
+        <td>{{ paper_title(d.paper_b.paper_id, d.paper_b.title or d.paper_b.paper_id, d.paper_b.held) }}</td>
+        <td>{{ d.verdict }}</td><td>{{ d.decided_by }}</td><td>{{ d.reason or "" }}</td>
+        <td>{{ d.decided_at }}{% if d.origin != "library" %} <span class="sg-badge">{{ d.origin }}</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="6">None.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

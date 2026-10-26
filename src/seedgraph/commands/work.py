@@ -219,6 +219,7 @@ def ollama(
 ) -> None:
     """Work a batch with a local Ollama model until it stops; prints the run report.
     The server is $SEEDGRAPH_OLLAMA_URL, else $OLLAMA_HOST, else http://localhost:11434."""
+    from ..library import metadata_verify
     from ..llm.ollama import default_model
     from ..work import ollama_worker
 
@@ -227,7 +228,13 @@ def ollama(
         if not model:
             raise ValueError("give --model or set SEEDGRAPH_OLLAMA_MODEL")
         with _common.work_library(root) as lib:
-            _out(ollama_worker.run_ollama_worker(lib, batch, model=model, max_packages=max_packages))
+            # The provider chain verifies each title Ollama finds against its DOI (design §7).
+            chain = metadata_verify.default_chain(lib)
+            try:
+                _out(ollama_worker.run_ollama_worker(lib, batch, model=model, max_packages=max_packages,
+                                                     chain=chain))
+            finally:
+                chain.cache_engine.close()
 
 
 @work_app.command("command")

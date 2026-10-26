@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Context graphs</h1>
+{% if rows %}
+<table class="sg-table">
+  <thead><tr><th>Graph</th><th>Members</th><th>Seeds</th><th>Frontier</th><th>Need notes</th></tr></thead>
+  <tbody>
+    {% for g in rows %}
+    <tr>
+      <td><a href="/graphs/{{ g.slug }}">{{ g.display_name }}</a> <code>{{ g.slug }}</code></td>
+      <td>{{ g.members }}</td><td>{{ g.seeds }}</td><td>{{ g.frontier }}</td>
+      <td>{% if g.needs_notes %}<a href="/library?view=needs-notes&amp;graph={{ g.slug }}">{{ g.needs_notes }}</a>{% else %}0{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="sg-placeholder">No context graphs yet. Graph growth arrives in stage 4.</p>
+{% endif %}
+{% endblock %}

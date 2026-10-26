@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+<h1>Write notes</h1>
+{% if not view %}
+<p>Select papers in the <a href="/library">Library</a> first, then choose Write notes.</p>
+{% else %}
+<section class="sg-section">
+  <h2>Estimate</h2>
+  <p>{{ view.queued | length }} paper{{ "s" if view.queued | length != 1 else "" }} will be noted:
+    about {{ "{:,}".format(view.text_tokens) }} text tokens; agents will use roughly
+    {{ "{:,}".format(view.agent_tokens_low) }} to {{ "{:,}".format(view.agent_tokens_high) }} agent tokens.</p>
+  {% if view.queued %}
+  <table class="sg-table">
+    <thead><tr><th>Paper</th><th>Text tokens</th><th>Agent tokens</th></tr></thead>
+    <tbody>
+      {% for p in view.queued %}
+      <tr><td>{{ paper_title(p.paper_id, p.title, p.held) }}</td><td>{{ "{:,}".format(p.text_tokens) }}</td>
+        <td>{{ "{:,}".format(p.agent_tokens_low) }} to {{ "{:,}".format(p.agent_tokens_high) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% if view.skipped or view.unknown %}
+<section class="sg-section">
+  <h2>Skipped</h2>
+  <table class="sg-table">
+    <thead><tr><th>Paper</th><th>State</th><th>Reason</th></tr></thead>
+    <tbody>
+      {% for p in view.skipped %}
+      <tr><td>{{ paper_title(p.paper_id, p.title, p.held) }} <code>{{ p.paper_id }}</code></td><td>{{ p.state.replace("_", " ") }}</td><td>{{ p.reason or "" }}</td></tr>
+      {% endfor %}
+      {% for pid in view.unknown %}<tr><td><code>{{ pid }}</code></td><td>unknown</td><td>not in the library</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% if view.paper_ids %}
+<form method="post" action="/library/write-notes">
+  {{ csrf_input }}
+  {% for pid in view.paper_ids %}<input type="hidden" name="paper" value="{{ pid }}">{% endfor %}
+  {% if view.replace %}<input type="hidden" name="replace" value="1">{% endif %}
+  <button type="submit">Create the batch</button>
+</form>
+<p class="sg-hint">The batch page then shows the Claude Code and Codex commands that run it.</p>
+{% else %}
+<p>Nothing to note in this selection.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

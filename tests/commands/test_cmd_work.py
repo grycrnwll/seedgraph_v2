@@ -110,6 +110,7 @@ def test_bad_release_reason_is_a_usage_error(runner, home):
 def test_ollama_runs_the_worker_loop(runner, home, monkeypatch):
     from seedgraph.work import ollama_worker
 
+    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")  # the provider chain stays offline
     calls = {}
 
     def fake_run(lib, batch_id, *, model, max_packages=None, **kw):

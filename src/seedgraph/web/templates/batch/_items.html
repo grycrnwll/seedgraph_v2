@@ -1,0 +1,36 @@
+{% from "_pdf_button.html" import paper_title %}
+<div id="sg-batch-items"{% if not view.finished %} hx-get="/batches/{{ view.batch_id }}/items" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+  <p class="sg-batch-state"><strong>{{ view.label }}</strong>{% if view.pause_detail %} ({{ view.pause_detail }}){% endif %}</p>
+  <p class="sg-hint">{{ view.next_action }}</p>
+  <p>{% for k, n in view.counts | dictsort %}{{ k.replace("_", " ") }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% if view.accepted_unanchored %}<p class="sg-warn">{{ view.accepted_unanchored }} quotes were saved as ambiguous after revision.</p>{% endif %}
+  <table class="sg-table">
+    <thead><tr><th>#</th><th>Paper</th><th>State</th><th>Parts</th><th>Quotes</th><th>Reason</th></tr></thead>
+    <tbody>
+      {% for i in view.items %}
+      <tr>
+        <td>{{ i.ordinal }}</td>
+        <td>{{ paper_title(i.paper_id, i.title, i.held) }}
+          {% if i.claims %}
+          <details><summary>claim history ({{ i.claims | length }})</summary>
+            <table class="sg-table sg-compact">
+              <thead><tr><th>Worker</th><th>Client</th><th>Claimed at</th>{% if i.parts %}<th>Part</th>{% endif %}<th>Ended</th></tr></thead>
+              <tbody>
+                {% for c in i.claims %}
+                <tr><td>{{ c.worker }}</td><td>{{ c.client or "" }}</td><td>{{ c.claimed_at }}</td>{% if i.parts %}<td>{{ c.part or 1 }}</td>{% endif %}<td>{{ c.ended }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+          {% endif %}
+        </td>
+        <td>{{ i.state_text }}</td>
+        <td>{{ i.parts or "" }}</td>
+        <td>{% if i.quotes_total is not none %}{{ i.quotes_anchored }}/{{ i.quotes_total }} quotes anchored{% endif %}</td>
+        <td>{{ i.reason or "" }}{% if i.attention_item_id %} <a href="/review/attention#sg-item-{{ i.attention_item_id }}">attention item</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if view.item_total > view.items | length %}<p class="sg-hint">Showing {{ view.items | length }} of {{ view.item_total }} papers.</p>{% endif %}
+</div>

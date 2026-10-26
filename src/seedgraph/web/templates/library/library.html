@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block scripts %}<script src="/static/js/pages.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Library</h1>
+
+<nav class="sg-tabs" aria-label="Library views">
+  {% for key, label in view.views %}
+  <a href="/library?{{ view.query(view=key, page='') }}"{% if view.view == key %} aria-current="page"{% endif %}>{{ label }} <span class="sg-badge">{{ view.counts[key] }}</span></a>
+  {% endfor %}
+</nav>
+
+<form method="get" action="/library" class="sg-inline-form" role="search">
+  <input type="hidden" name="view" value="{{ view.view }}">
+  <label>Title or note text <input type="search" name="q" value="{{ view.q }}"></label>
+  <label>Graph <select name="graph">
+    <option value="">any</option>
+    {% for g in view.graphs %}<option value="{{ g.slug }}"{% if view.graph == g.slug %} selected{% endif %}>{{ g.display_name }}</option>{% endfor %}
+  </select></label>
+  {% if view.view == "needs-pdf" %}<label><input type="checkbox" name="frontier" value="1"{% if view.frontier %} checked{% endif %}> on a graph's frontier only</label>{% endif %}
+  <button type="submit">Show</button>
+</form>
+
+{% if view.hits %}
+<section class="sg-section" aria-labelledby="sg-hits">
+  <h2 id="sg-hits">Matches in notes</h2>
+  <ul class="sg-hits">
+    {% for h in view.hits %}
+    <li>{% if h.paper_id %}{{ paper_title(h.paper_id, h.title) }}{% endif %}
+      {% if h.trust_label %}<span class="sg-badge">{{ h.trust_label }}</span>{% endif %}
+      {{ h.text }}{% if h.page %} <span class="sg-hint">p. {{ h.page }}</span>{% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+{% if view.view == "needs-pdf" %}
+<section class="sg-section" aria-labelledby="sg-needs-pdf">
+  <h2 id="sg-needs-pdf">Needs a PDF</h2>
+  <p class="sg-hint">Cited-only papers. Download each through your institution (seedgraph never fetches paywalled
+    PDFs), then drop the file in below: it attaches to the paper by its DOI or title.</p>
+  <table class="sg-table">
+    <thead><tr><th>Title</th><th>Year</th><th>Authors</th><th>DOI</th><th>Frontier of</th></tr></thead>
+    <tbody>
+      {% for r in view.needs_pdf %}
+      <tr data-paper="{{ r.paper_id }}">
+        <td>{{ paper_title(r.paper_id, r.title, False) }}</td>
+        <td>{{ r.year or "" }}</td>
+        <td>{{ r.authors | join(", ") }}</td>
+        <td>{% if r.doi_url %}<a href="{{ r.doi_url }}" target="_blank" rel="noopener noreferrer">{{ r.doi }}</a>{% else %}no DOI{% endif %}</td>
+        <td>{{ r.graphs | join(", ") }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5">No cited-only papers here.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% else %}
+<form id="sg-select" method="get" action="/library/write-notes"></form>
+<table class="sg-table">
+  <thead><tr>
+    <th>{% if view.view != "cited-only" %}<input type="checkbox" data-select-all="paper" aria-label="Select all on this page">{% endif %}</th>
+    <th>Title</th><th>Year</th><th>Authors</th><th>Graphs</th><th>Notes</th><th>Quotes</th><th>Badges</th>
+  </tr></thead>
+  <tbody>
+    {% for r in view.rows %}
+    <tr data-paper="{{ r.paper_id }}">
+      <td>{% if r.held %}<input type="checkbox" name="paper" value="{{ r.paper_id }}" form="sg-select" aria-label="Select">{% endif %}</td>
+      <td>{{ paper_title(r.paper_id, r.title, r.held) }}
+        {% for hb in r.held_back %}
+        <div class="sg-held-back">held back: {{ hb.reason }}
+          {% if hb.can_accept_text %}
+          <form method="post" action="/review/attention/{{ hb.item_id }}/resolve" class="sg-inline-form">
+            {{ csrf_input }}
+            <input type="hidden" name="resolution" value="accept_text">
+            <input type="hidden" name="next" value="{{ back }}">
+            <button type="submit">Note anyway</button>
+          </form>
+          {% else %}<a href="/review/attention?kind={{ hb.kind }}">review</a>{% endif %}
+        </div>
+        {% endfor %}
+      </td>
+      <td>{{ r.year or "" }}</td>
+      <td>{{ r.authors | join(", ") }}</td>
+      <td>{% for g in r.graphs %}<a href="/graphs/{{ g }}">{{ g }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{{ r.note_state if r.held else "cited-only" }}</td>
+      <td>{% if r.quotes_total %}{{ r.quotes_anchored }}/{{ r.quotes_total }}{% endif %}</td>
+      <td>{% for b in r.badges %}<span class="sg-badge">{{ b }}</span> {% endfor %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8">No papers in this view.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if view.pages > 1 %}
+<nav class="sg-pager" aria-label="Pages">
+  {% if view.page > 1 %}<a href="/library?{{ view.query(page=view.page - 1) }}">previous</a>{% endif %}
+  page {{ view.page }} of {{ view.pages }} ({{ view.total }} papers)
+  {% if view.page < view.pages %}<a href="/library?{{ view.query(page=view.page + 1) }}">next</a>{% endif %}
+</nav>
+{% endif %}
+{% if view.view != "cited-only" and view.rows %}
+<p class="sg-actions">
+  <button type="submit" form="sg-select">Write notes for the selected papers</button>
+  <a href="/library/write-notes?{{ view.query() }}">Write notes for all {{ view.total }} in this view</a>
+</p>
+{% endif %}
+{% endif %}
+
+<section class="sg-section" id="sg-add-papers" aria-labelledby="sg-add-title">
+  <h2 id="sg-add-title">Add papers</h2>
+  <p class="sg-hint">Any PDF you have can be added. Seedgraph fetches open-access copies only, never paywalled ones.</p>
+  <form method="post" action="/library/add" enctype="multipart/form-data" hx-post="/library/add" hx-encoding="multipart/form-data" hx-target="#sg-jobs" hx-swap="outerHTML" class="sg-add-form">
+    {{ csrf_input }}
+    <div class="sg-dropzone" data-dropzone="sg-files">
+      <label>Drop PDFs here or choose files <input type="file" id="sg-files" name="files" multiple accept=".pdf,application/pdf"></label>
+      <label>or choose a folder <input type="file" name="files" webkitdirectory multiple></label>
+    </div>
+    <button type="submit">Add PDFs</button>
+  </form>
+  <form method="post" action="/library/add-folder" class="sg-add-form">
+    {{ csrf_input }}
+    <label>or type a folder path (read in place, for large folders) <input type="text" name="folder" placeholder="D:\papers\to-add"></label>
+    <button type="submit">Add folder</button>
+  </form>
+  <form method="post" action="/library/add-dois" class="sg-add-form">
+    {{ csrf_input }}
+    <label>or paste DOIs, one per line <textarea name="dois" rows="3"></textarea></label>
+    <button type="submit">Add DOIs</button>
+  </form>
+  <form method="post" action="/library/ollama-metadata" class="sg-add-form">
+    {{ csrf_input }}
+    <span>{{ metadata_needed }} paper{{ "s" if metadata_needed != 1 else "" }} need metadata.</span>
+    <button type="submit">Run Ollama metadata</button>
+  </form>
+  {% include "library/_jobs.html" %}
+</section>
+{% endblock %}

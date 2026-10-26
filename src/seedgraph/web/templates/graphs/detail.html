@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+<h1>{{ view.display_name }}</h1>
+<p><code>{{ view.slug }}</code> · {{ view.members }} members · {{ view.seeds }} seeds · {{ view.frontier }} on the frontier
+  · <a href="/library?view=needs-notes&amp;graph={{ view.slug }}">papers needing notes</a>
+  · <a href="/library?view=needs-pdf&amp;graph={{ view.slug }}">frontier papers needing a PDF</a></p>
+<div class="sg-columns">
+  <div class="sg-column-main">
+    <table class="sg-table">
+      <thead><tr><th>Paper</th><th>Year</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+      <tbody>
+        {% for m in view.rows %}
+        <tr>
+          <td>{{ paper_title(m.paper_id, m.title, m.held) }}{% if not m.held %} <span class="sg-badge">cited-only</span>{% endif %}</td>
+          <td>{{ m.year or "" }}</td>
+          <td>{{ m.status }}{% if m.is_seed %} <span class="sg-badge">seed</span>{% endif %}</td>
+          <td>{{ m.note_state if m.held else "" }}</td>
+          <td>
+            <form method="post" action="/graphs/{{ view.slug }}/remove">
+              {{ csrf_input }}
+              <input type="hidden" name="paper_id" value="{{ m.paper_id }}">
+              <button type="submit">Remove from graph</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5">No papers in this graph yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Add a paper</h2>
+    <form method="post" action="/graphs/{{ view.slug }}/add" class="sg-inline-form">
+      {{ csrf_input }}
+      <label>Paper id <input type="text" name="paper_id" required placeholder="lp_..."></label>
+      <label>As <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></label>
+      <label><input type="checkbox" name="is_seed" value="1"> seed</label>
+      <button type="submit">Add to graph</button>
+    </form>
+    <p class="sg-hint">A cited-only paper can join the frontier; it becomes a member once its PDF is added.</p>
+  </div>
+  <aside class="sg-column-side">
+    <h2>Lenses</h2>
+    {% if view.lenses %}<ul>{% for l in view.lenses %}<li><code>{{ l }}</code></li>{% endfor %}</ul>
+    {% else %}<p>No lens chosen.</p>{% endif %}
+    <p class="sg-placeholder">The graph view, literatures and growth arrive in stage 4.</p>
+  </aside>
+</div>
+{% endblock %}

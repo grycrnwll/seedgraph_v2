@@ -1,0 +1,30 @@
+{% from "_pdf_button.html" import paper_title %}
+<tr id="sg-item-{{ row.item_id }}" class="sg-item-row{% if row.status == 'resolved' %} sg-resolved{% endif %}">
+  <td><code>{{ row.kind }}</code>{% if row.origin != "library" %} <span class="sg-badge">{{ row.origin }}</span>{% endif %}
+    <div class="sg-hint"><code>{{ row.item_id }}</code></div></td>
+  <td>{% if row.paper %}{{ paper_title(row.paper.paper_id, row.paper.title, row.paper.held) }}{% endif %}
+    {% if row.candidates %}<div>candidates:
+      {% for c in row.candidates %}{{ paper_title(c.paper_id, c.title, c.held) }}{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+  </td>
+  <td>{{ row.detail or "" }}
+    {% if row.hides_notes and row.status == 'open' %}<div class="sg-badge sg-warn">notes hidden from agents until resolved</div>{% endif %}
+    {% if row.queue.key == "other" %}<details><summary>subject</summary><pre>{{ row.subject_json }}</pre></details>{% endif %}
+  </td>
+  <td>
+    {% if row.status == 'resolved' %}
+      resolved: {{ (row.resolution or "").replace("_", " ") }}
+    {% else %}
+      {% for a in row.actions %}
+      <form method="post" action="/review/attention/{{ row.item_id }}/resolve" hx-post="/review/attention/{{ row.item_id }}/resolve" hx-target="closest tr" hx-swap="outerHTML" class="sg-inline-form">
+        {{ csrf_input }}
+        <input type="hidden" name="resolution" value="{{ a.resolution }}">
+        {% if back %}<input type="hidden" name="next" value="{{ back }}">{% endif %}
+        <button type="submit">{{ a.label }}</button>
+      </form>
+      {% endfor %}
+      {% if row.paper and row.queue.key in ("text", "pdf", "metadata") %}<a href="/papers/{{ row.paper.paper_id }}">Open the paper</a>{% endif %}
+      {% if row.paper and row.queue.key == "renote" %}<a href="/library/write-notes?paper={{ row.paper.paper_id }}&amp;replace=1">Write notes</a>{% endif %}
+      {% if row.queue.key == "metadata" %}<a href="/library#sg-add-papers">Run Ollama metadata</a>{% endif %}
+    {% endif %}
+  </td>
+</tr>

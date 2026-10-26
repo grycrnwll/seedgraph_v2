@@ -1,0 +1,56 @@
+/* Styles for the Home, Library, Batch, Review, Context graphs and Settings pages (U7).
+   Colours come from app.css's tokens. */
+
+.sg-table { border-collapse: collapse; width: 100%; }
+.sg-table th, .sg-table td { border-bottom: 1px solid var(--sg-line); padding: 0.3rem 0.4rem; text-align: left; vertical-align: top; }
+.sg-table.sg-compact { font-size: 0.85em; }
+
+/* the reusable title macros (_pdf_button.html); same rule as paper.css */
+.sg-pdf-button {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--sg-line);
+  border-radius: 3px;
+  font-size: 0.7em;
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.sg-section { margin: 1.5rem 0; }
+.sg-hint { color: var(--sg-muted); font-size: 0.9em; }
+.sg-warn { color: var(--sg-warn); }
+.sg-resolved { color: var(--sg-muted); }
+.sg-held-back { color: var(--sg-warn); font-size: 0.9em; margin-top: 0.2rem; }
+
+.sg-tabs { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0.5rem 0 1rem; border-bottom: 1px solid var(--sg-line); }
+.sg-tabs a { padding: 0.3rem 0; text-decoration: none; }
+.sg-tabs a[aria-current="page"] { border-bottom: 2px solid var(--sg-accent); font-weight: 600; }
+
+.sg-inline-form { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.2rem 0.5rem 0.2rem 0; }
+.sg-add-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end; margin: 0.75rem 0; }
+.sg-add-form textarea { width: 32rem; max-width: 100%; }
+.sg-dropzone { border: 2px dashed var(--sg-line); border-radius: 6px; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.sg-dropzone-over { border-color: var(--sg-accent); }
+
+.sg-job-strip { margin-top: 1rem; }
+.sg-jobs, .sg-feed, .sg-hits { list-style: none; padding: 0; }
+.sg-jobs > li, .sg-feed > li, .sg-hits > li { padding: 0.3rem 0; border-bottom: 1px solid var(--sg-line); }
+.sg-job-failed { color: var(--sg-error); }
+.sg-job-done { color: var(--sg-ok); }
+.sg-job-lines { margin: 0.2rem 0 0 1rem; color: var(--sg-fg); font-size: 0.9em; }
+
+.sg-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; }
+.sg-facts dt { color: var(--sg-muted); }
+.sg-facts dd { margin: 0; }
+
+.sg-commands pre { white-space: pre-wrap; word-break: break-word; border: 1px solid var(--sg-line); padding: 0.5rem; border-radius: 4px; }
+.sg-batch-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+.sg-columns { display: grid; grid-template-columns: minmax(0, 3fr) minmax(12rem, 1fr); gap: 1.5rem; }
+.sg-checklist h3 { margin-bottom: 0.3rem; }
+.sg-pager { margin: 0.75rem 0; display: flex; gap: 1rem; }
+
+@media (max-width: 900px) {
+  .sg-columns { grid-template-columns: 1fr; }
+}

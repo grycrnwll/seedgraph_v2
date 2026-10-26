@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+<h1>Citation review</h1>
+{% set tab = "citations" %}{% include "review/_tabs.html" %}
+<p class="sg-hint">Citation decisions carried over by the migration, read only. New citation candidates arrive in
+  stage 4, when reference lists are resolved again.</p>
+<table class="sg-table">
+  <thead><tr><th>Citing paper</th><th>Reference</th><th>Decision</th><th>Reason</th><th>Decided</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{% if r.citing %}{{ paper_title(r.citing.paper_id, r.citing.title, r.citing.held) }}{% endif %}</td>
+      <td>{{ r.reference_text or r.reference_id }}
+        {% if r.rejected_record %}<details><summary>rejected match</summary><pre>{{ r.rejected_record }}</pre></details>{% endif %}</td>
+      <td>{{ r.decision }}</td><td>{{ r.reason or "" }}</td>
+      <td>{{ r.decided_at }}{% if r.origin != "library" %} <span class="sg-badge">{{ r.origin }}</span>{% endif %}</td>
+    </tr>
+    {% else %}<tr><td colspan="5">No citation decisions.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endblock %}

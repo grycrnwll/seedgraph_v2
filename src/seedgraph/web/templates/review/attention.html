@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Review</h1>
+{% set tab = "attention" %}{% include "review/_tabs.html" %}
+<form method="get" action="/review/attention" class="sg-inline-form">
+  <label>Kind <select name="kind">
+    <option value="">all ({{ view.kinds | sum(attribute="count") }})</option>
+    {% for k in view.kinds %}<option value="{{ k.kind }}"{% if view.kind == k.kind %} selected{% endif %}>{{ k.kind }} ({{ k.count }})</option>{% endfor %}
+  </select></label>
+  <label>Graph <select name="graph">
+    <option value="">any</option>
+    {% for slug, name in view.graphs %}<option value="{{ slug }}"{% if view.graph == slug %} selected{% endif %}>{{ name }}</option>{% endfor %}
+  </select></label>
+  <button type="submit">Filter</button>
+</form>
+{% for g in view.groups %}
+<section class="sg-section">
+  <h2>{{ g.queue.title }} <span class="sg-badge">{{ g.items | length }}</span></h2>
+  {% if g.queue.hint %}<p class="sg-hint">{{ g.queue.hint }}</p>{% endif %}
+  <table class="sg-table">
+    <thead><tr><th>Kind</th><th>Paper</th><th>Evidence</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for row in g.items %}{% include "review/_item_row.html" %}{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% else %}
+<p class="sg-placeholder">Nothing to review.</p>
+{% endfor %}
+{% endblock %}
