@@ -405,6 +405,68 @@ def reconvert(
         raise typer.Exit(_common.EXIT_FAILED)
 
 
+# --- pagecheck ----------------------------------------------------------------------------------
+
+class PagecheckSet(str, Enum):
+    proto5 = "proto5"
+    proto31 = "proto31"
+    current = "current"
+
+
+class PagecheckMode(str, Enum):
+    prototype = "prototype"
+    current = "current"
+
+
+@library_app.command("pagecheck")
+def pagecheck(
+    set_name: PagecheckSet = typer.Option(..., "--set", help="Which papers: proto5, proto31 or current."),
+    mode: PagecheckMode = typer.Option(PagecheckMode.current, "--mode",
+                                       help="prototype: the prototype's own claims; current: what you see."),
+    verify: bool = typer.Option(True, "--verify/--no-verify",
+                                help="Check each quote against the PDF's text layer (pypdfium2)."),
+    report: bool = typer.Option(True, "--report/--no-report",
+                                help="Write <home>/ui/pagecheck/<timestamp>/report.{md,json}."),
+    root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
+) -> None:
+    """Measure quote → PDF page highlighting (design §3.4): page assigned, passage verified,
+    page-only and page-wrong. Reads the library read-only. Exit 1 on a page-wrong quote or,
+    in prototype mode, when the prototype's figures in <home>/ui/highlight_expected.json are
+    not met."""
+    from ..library import pagecheck as pagecheck_mod
+    from ..library.store import library_dir
+
+    home = _common.home(root)
+    with _common.cli_errors():
+        with pagecheck_mod.open_readonly(library_dir(root)) as lib:
+            result = pagecheck_mod.run(lib, home, set_name=set_name.value, mode=mode.value, verify=verify)
+        out = pagecheck_mod.write_report(result, home) if report else None
+    if json_out:
+        data = result.as_dict()
+        data.pop("quotes")
+        data["report_dir"] = str(out) if out else None
+        _common.echo_json(data)
+    else:
+        t = result.totals
+        _common.echo_table(["measure", "count"], [
+            ["papers", t["papers"]], ["quotes", t["quotes"]], ["page assigned", t["page_assigned"]],
+            ["marker / reanchored / none", f"{t['marker']} / {t['reanchored']} / {t['none']}"],
+            ["passage verified", t["verified"]], ["page-only", t["page_only"]],
+            ["page wrong", t["page_wrong"]], ["not checked", t["not_checked"]],
+            ["papers without page markers", t["papers_without_markers"]]])
+        for p in result.no_marker_papers:
+            typer.echo(f"no page markers: {p['paper_id']} (converter {p['converter_version']}); "
+                       "re-convert to get pages")
+        if result.unresolved:
+            typer.echo(f"{len(result.unresolved)} set entries did not resolve: {', '.join(result.unresolved[:5])}")
+        typer.echo(f"verdict: {result.verdict}" + (f" ({'; '.join(result.reasons)})" if result.reasons else ""))
+        if out:
+            typer.echo(f"report: {out}")
+    if result.verdict != "pass":
+        raise typer.Exit(_common.EXIT_FAILED)
+
+
 # --- graphs -------------------------------------------------------------------------------------
 
 @graphs_app.command("list")

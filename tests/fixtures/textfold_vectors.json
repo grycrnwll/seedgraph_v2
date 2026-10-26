@@ -1,0 +1,298 @@
+{
+ "comment": "Shared vectors for library/textfold.py and web/static/js/fold.js. Invented text only.",
+ "fold": [
+  {
+   "name": "ligatures",
+   "raw": "The ﬁrst ﬂour is ﬀine",
+   "folded": "thefirstflourisffine"
+  },
+  {
+   "name": "full_width",
+   "raw": "ＡＢＣ １２",
+   "folded": "abc12"
+  },
+  {
+   "name": "soft_hyphen",
+   "raw": "bak­ery loaves",
+   "folded": "bakeryloaves"
+  },
+  {
+   "name": "zero_width",
+   "raw": "loaf​pan﻿ tin‍",
+   "folded": "loafpantin"
+  },
+  {
+   "name": "line_end_hyphenation",
+   "raw": "an invented dough-\n  mixer and a pre-\r\nheated oven",
+   "folded": "aninventeddoughmixerandapreheatedoven"
+  },
+  {
+   "name": "markdown",
+   "raw": "**Bold** _soft_ # Heading `code` | cell a | cell b |",
+   "folded": "boldsoftheadingcodecellacellb"
+  },
+  {
+   "name": "tags",
+   "raw": "x<sup>2</sup> and <span id=\"page-3-0\"></span>y<sub>i</sub>",
+   "folded": "x2andyi"
+  },
+  {
+   "name": "link",
+   "raw": "as shown in [12](#page-4-1) and [the appendix](https://example.org/a)",
+   "folded": "asshownin12andtheappendix"
+  },
+  {
+   "name": "image",
+   "raw": "![](_page_0_Picture_1.jpeg) Figure 1",
+   "folded": "figure1"
+  },
+  {
+   "name": "inline_math",
+   "raw": "the rate $\\alpha + \\beta_t$ rises",
+   "folded": "theraterises"
+  },
+  {
+   "name": "display_math",
+   "raw": "before $$\\sum_i x_i^2$$ after",
+   "folded": "beforeafter"
+  },
+  {
+   "name": "mojibake_family_a",
+   "raw": "identiÖed di§erent e¢ ciency reáects",
+   "folded": "identifieddifferentefficiencyreflects"
+  },
+  {
+   "name": "mojibake_family_b",
+   "raw": "…rst di¤erence e¢cient",
+   "folded": "firstdifferenceefficient"
+  },
+  {
+   "name": "page_delimiter",
+   "raw": "end of page\n\n{3}------------------------------------------------\n\nnext page",
+   "folded": "endofpagenextpage"
+  },
+  {
+   "name": "page_delimiter_crlf",
+   "raw": "last line\r\n{12}------------------------------------------------\r\nfirst line",
+   "folded": "lastlinefirstline"
+  },
+  {
+   "name": "combining_mark",
+   "raw": "café and café",
+   "folded": "caféandcafé"
+  },
+  {
+   "name": "punctuation_and_quotes",
+   "raw": "“Quoted,” he said—‘yes’.",
+   "folded": "quotedhesaidyes"
+  },
+  {
+   "name": "final_sigma",
+   "raw": "ΟΔΟΣ οδος",
+   "folded": "οδοσοδοσ"
+  },
+  {
+   "name": "superscript_digit",
+   "raw": "x² + y",
+   "folded": "x2y"
+  },
+  {
+   "name": "empty",
+   "raw": "",
+   "folded": ""
+  },
+  {
+   "name": "only_punctuation",
+   "raw": " -- ; ** ",
+   "folded": ""
+  }
+ ],
+ "map": [
+  {
+   "name": "ligature_map",
+   "raw": "ﬁ x",
+   "folded": "fix",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     0,
+     1
+    ],
+    [
+     2,
+     3
+    ]
+   ]
+  },
+  {
+   "name": "mojibake_map",
+   "raw": "diÖer",
+   "folded": "difier",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     3
+    ],
+    [
+     2,
+     3
+    ],
+    [
+     3,
+     4
+    ],
+    [
+     4,
+     5
+    ]
+   ]
+  },
+  {
+   "name": "mojibake_ffi_space_map",
+   "raw": "e¢ cy",
+   "folded": "efficy",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     3
+    ],
+    [
+     1,
+     3
+    ],
+    [
+     1,
+     3
+    ],
+    [
+     3,
+     4
+    ],
+    [
+     4,
+     5
+    ]
+   ]
+  },
+  {
+   "name": "combining_map",
+   "raw": "café!",
+   "folded": "café",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     2
+    ],
+    [
+     2,
+     3
+    ],
+    [
+     3,
+     5
+    ]
+   ]
+  },
+  {
+   "name": "hyphenation_map",
+   "raw": "A-\nB",
+   "folded": "ab",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     3,
+     4
+    ]
+   ]
+  },
+  {
+   "name": "tag_map",
+   "raw": "a<b>c",
+   "folded": "ac",
+   "spans": [
+    [
+     0,
+     1
+    ],
+    [
+     4,
+     5
+    ]
+   ]
+  }
+ ],
+ "find": [
+  {
+   "name": "all_full_hits",
+   "haystack": "abcabc",
+   "needle": "bc",
+   "hits": [
+    [
+     1,
+     3
+    ],
+    [
+     4,
+     6
+    ]
+   ]
+  },
+  {
+   "name": "absent_short",
+   "haystack": "abcdef",
+   "needle": "xyz",
+   "hits": []
+  },
+  {
+   "name": "windows_in_order",
+   "haystack": "zzzztheinventedbakerwarmsthedoughbeforeduskandthenleavesituntilthecrustturnsgoldenuntilthecatsleepsnearthestoveallmorningqqqq",
+   "needle": "theinventedbakerwarmsthedoughbeforedawnandthenleavesituntilthecrustturnsgoldenwhilethecatsleepsnearthestoveallmorning",
+   "hits": [
+    [
+     4,
+     121
+    ]
+   ]
+  },
+  {
+   "name": "windows_too_spread",
+   "haystack": "theinventedbakerwarmsthedoughbyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyeforeduskandthenleavesituntilthecrustturnsgoldenwhilethecatsleepsnearthestoveallmorning",
+   "needle": "theinventedbakerwarmsthedoughbeforedawnandthenleavesituntilthecrustturnsgoldenwhilethecatsleepsnearthestoveallmorning",
+   "hits": []
+  },
+  {
+   "name": "windows_out_of_order",
+   "haystack": "atsleepsnearthestoveallmorninghenleavesituntilthecrustturnsgtheinventedbakerwarmsthedoughb",
+   "needle": "theinventedbakerwarmsthedoughbeforedawnandthenleavesituntilthecrustturnsgoldenwhilethecatsleepsnearthestoveallmorning",
+   "hits": []
+  },
+  {
+   "name": "empty_needle",
+   "haystack": "abc",
+   "needle": "",
+   "hits": []
+  }
+ ]
+}
