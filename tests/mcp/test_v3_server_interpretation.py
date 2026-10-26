@@ -45,7 +45,7 @@ def test_paper_show_returns_the_interpretation_with_trust_labels(server, seeded,
     edited = claims[method]
     assert edited["claim_text"] == "A wallaby-weighted estimator."
     assert edited["edited_by_researcher"] is True and edited["trust"] == "researcher"
-    assert edited["trust_note"] == "edited by researcher"
+    assert edited["trust_note"] == "edited from the agent's claim"
     assert edited["original"] == {"claim_type": "method", "label": "two-step estimator",
                                   "claim_text": "A two-step estimator."}
     assert edited["anchors"]  # the quote is still the paper's words
@@ -71,7 +71,7 @@ def test_search_returns_interpretation_hits_with_trust(server, seeded, home):
     [hit] = ok(call(server, "search", {"query": "wallaby-weighted estimator", "kind": "claims"}))["hits"]
     assert hit["claim_id"] == method and hit["text"] == "A wallaby-weighted estimator."
     assert hit["trust"] == "researcher" and hit["edited_by_researcher"] is True
-    assert hit["trust_note"] == "edited by researcher"
+    assert hit["trust_note"] == "edited from the agent's claim"
     assert hit["original"]["claim_text"] == "A two-step estimator."
     # the label was not edited; the agent wording of the text no longer matches
     assert ok(call(server, "search", {"query": "A two-step estimator", "kind": "claims"}))["hits"] == []

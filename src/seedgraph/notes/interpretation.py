@@ -37,7 +37,7 @@ TRUST_LABELS: dict[str, str] = {
     "agent_inferred": "agent inferred",
     "researcher": "researcher",
 }
-EDITED_NOTE = "edited by researcher"
+EDITED_NOTE = "edited from the agent's claim"
 ASSERTION_NOTE = "researcher assertion — not the paper's words"
 #: Field order for display: the note's scalars, then its arrays, then added claims.
 FIELD_ORDER: dict[str, int] = {name: i for i, name in enumerate(
@@ -79,7 +79,7 @@ class InterpretedClaim:
 
     @property
     def trust_note(self) -> str | None:
-        """The extra line the UI and agents show: "edited by researcher" or the assertion warning."""
+        """The extra line the UI and agents show: "edited from the agent's claim" or the assertion warning."""
         if self.kind == "assertion":
             return ASSERTION_NOTE
         if self.edited_by_researcher:

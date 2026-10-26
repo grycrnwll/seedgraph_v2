@@ -26,7 +26,7 @@ from typing import Literal
 
 from .. import anchor
 from ..notes.format import ClaimDraft
-from ..notes.save import NoteProvenance, current_note_id, save_note
+from ..notes.save import NoteProvenance, latest_note_id, save_note
 from ..notes.spans import read_markdown
 from . import attention
 from .mojibake import fold
@@ -169,7 +169,8 @@ def _swap_quotes(raw: str | None, swaps: dict[str, str]) -> str | None:
 
 
 def rematch(lib: Library, paper_id: str, old_markdown_id: str, new_markdown_id: str) -> RematchResult:
-    """Re-match the anchored quotes of the paper's current note on ``new_markdown_id``.
+    """Re-match the anchored quotes of the paper's latest note (``note_latest``; the same as
+    the current note unless the paper has researcher edits) on ``new_markdown_id``.
 
     Every quote re-matches: the note is carried to the new markdown as a new version
     (``extraction_mode = 'rematch'``, parent run = the old run, same claim text, anchors
@@ -178,11 +179,14 @@ def rematch(lib: Library, paper_id: str, old_markdown_id: str, new_markdown_id: 
 
     The paper's primary file must already point at ``new_markdown_id`` for a carry
     (``save_note``'s staleness check). A note with no anchored quotes is carried. The
-    current note must be on ``old_markdown_id`` (else ``not_on_old_markdown``, nothing
+    latest note must be on ``old_markdown_id`` (else ``not_on_old_markdown``, nothing
     done). Must not be called inside an open library transaction.
     """
     conn = lib.conn
-    note_id = current_note_id(conn, paper_id)
+    # The extraction is re-matched, so the newest one (note_latest) is carried and is what
+    # save_note conflict-checks; a researcher-edited paper's note_current stays pinned to
+    # its overlay base and is offered the carried version as a replay (stage 3 §4.1, §4.5).
+    note_id = latest_note_id(conn, paper_id)
     base = dict(paper_id=paper_id, old_markdown_id=old_markdown_id, new_markdown_id=new_markdown_id,
                 old_note_id=note_id, note_id=None, attention_item_id=None)
     if note_id is None:

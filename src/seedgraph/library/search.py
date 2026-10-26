@@ -104,7 +104,7 @@ class Hit:
 
     @property
     def trust_note(self) -> str | None:
-        """"edited by researcher", or the researcher-assertion warning (claims only)."""
+        """"edited from the agent's claim", or the researcher-assertion warning (claims only)."""
         if self.claim_kind == "assertion":
             return ASSERTION_NOTE
         if self.kind == "claims" and self.edited_by_researcher:

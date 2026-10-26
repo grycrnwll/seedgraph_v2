@@ -50,7 +50,7 @@ def test_an_edited_claim_is_found_by_its_new_wording_and_shows_it(lib, noted):
     hit = hits[0]
     assert hit.text == "A zigzag gadget tally."
     assert hit.trust == "researcher" and hit.trust_label == "researcher"
-    assert hit.edited_by_researcher and hit.trust_note == "edited by researcher"
+    assert hit.edited_by_researcher and hit.trust_note == "edited from the agent's claim"
     assert hit.original is not None and hit.original.claim_text == "A two-step widget estimator."
     assert hit.page_start is None or isinstance(hit.page_start, int)
     assert hit.span_id is not None  # the quote still anchors the claim

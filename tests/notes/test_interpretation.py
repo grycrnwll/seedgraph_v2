@@ -62,7 +62,7 @@ def test_trust_labels_for_edited_added_and_agent_claims(lib, noted):
     claims = by_field(interp)
     edited = claims["method_or_model[0]"]
     assert edited.trust == "researcher" and edited.edited_by_researcher
-    assert edited.trust_note == "edited by researcher"
+    assert edited.trust_note == "edited from the agent's claim"
     assert edited.claim_text == "Re-worded by the researcher."
     assert edited.original.claim_text == "A two-step widget estimator."  # one click away
     assert edited.span_id is not None  # the quote still shows as the paper's words
