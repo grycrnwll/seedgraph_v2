@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+{% set plan = p.plan %}
+<h1>Merge papers</h1>
+{% set tab = "duplicates" %}{% include "review/_tabs.html" %}
+{% if stale %}
+<p class="sg-warn">These papers changed since you looked at this merge, so nothing was merged.
+  <a href="{{ p.url }}">Review the merge again</a>.</p>
+{% endif %}
+<section class="sg-section">
+  <h2>Which paper survives</h2>
+  <p>Keep {{ paper_title(p.keep.paper_id, p.keep.title or p.keep.paper_id, p.keep.held) }} <code>{{ p.keep.paper_id }}</code>.
+    {{ paper_title(p.other.paper_id, p.other.title or p.other.paper_id, p.other.held) }} <code>{{ p.other.paper_id }}</code>
+    is merged into it and its id goes.</p>
+  <p><a href="{{ p.swap_url }}">Keep {{ p.other.paper_id }} instead</a></p>
+  {% if p.files %}
+  <p>Primary PDF:
+    {% for f in p.files %}
+      {% if f.chosen %}<strong><code>{{ f.source_file_id[:15] }}</code> (from {{ f.owner }})</strong>
+      {% else %}<a href="{{ f.url }}">use <code>{{ f.source_file_id[:15] }}</code> (from {{ f.owner }})</a>{% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
+</section>
+{% if plan.blockers %}
+<section class="sg-section">
+  <h2>This merge is blocked</h2>
+  <ul>{% for b in plan.blockers %}<li class="sg-warn">{{ b }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+<section class="sg-section">
+  <h2>What moves to {{ p.keep.paper_id }}</h2>
+  <ul>
+    {% for t, v in plan.identifiers %}<li>{{ t }} <code>{{ v }}</code></li>{% endfor %}
+    <li>notes: {{ plan.counts.notes }} (every version kept, renumbered by date){% if plan.counts.relabelled_notes %};
+      {{ plan.counts.relabelled_notes }} made on the detached PDF are labelled "other markdown"{% endif %}</li>
+    <li>extraction runs: {{ plan.counts.runs }}, claims: {{ plan.counts.claims }}, lens outputs: {{ plan.counts.lens_outputs }}</li>
+    {% if plan.counts.overlays %}<li>researcher edits move and stay pinned to their note</li>{% endif %}
+    <li>references: {{ plan.counts.references }} appended{% if plan.counts.duplicate_references %},
+      {{ plan.counts.duplicate_references }} duplicates folded into existing entries{% endif %}</li>
+    <li>citation links re-pointed: {{ plan.counts.citation_links }}{% if plan.counts.self_links_dropped %}
+      ({{ plan.counts.self_links_dropped }} between the two papers dropped){% endif %}</li>
+    <li>attention items moved: {{ plan.counts.attention_moved }}, resolved: {{ plan.counts.attention_resolved }}</li>
+    {% for g in plan.graphs %}<li>graph <code>{{ g.slug }}</code>: {{ g.status }}{% if g.is_seed %}, seed{% endif %}</li>{% endfor %}
+  </ul>
+  {% if plan.warnings %}<ul>{% for w in plan.warnings %}<li class="sg-warn">{{ w }}</li>{% endfor %}</ul>{% endif %}
+</section>
+{% if not plan.blockers %}
+<form method="post" action="/review/merge">
+  {{ csrf_input }}
+  <input type="hidden" name="item" value="{{ p.item.item_id }}">
+  <input type="hidden" name="with" value="{{ p.with_id }}">
+  <input type="hidden" name="keep" value="{{ plan.keep_id }}">
+  <input type="hidden" name="other" value="{{ plan.other_id }}">
+  <input type="hidden" name="primary" value="{{ p.primary_arg }}">
+  <input type="hidden" name="fingerprint" value="{{ plan.fingerprint }}">
+  <button type="submit">Confirm merge</button>
+</form>
+{% endif %}
+<p><a href="/review/duplicates">Back to duplicates</a></p>
+{% endblock %}

@@ -6,10 +6,16 @@ Every action is a POST that calls :func:`seedgraph.library.attention.resolve_ite
 fixed ``resolution`` from the item's queue (:func:`allowed_resolutions`); any kind no
 queue names falls back to the generic row (**Mark resolved**).
 
+Identity items: **Same paper** is a link to the merge preview (:func:`merge_preview`, one
+per candidate), whose Confirm calls :func:`seedgraph.library.merge.merge_papers` and then
+resolves the item ``same``; a bare ``same`` resolution is not accepted. **Different papers**
+records ``duplicate_decisions`` ``different`` for the item's paper and each candidate
+(:func:`record_different`), then resolves the item.
+
 Rules chosen where the design is silent:
-- "Same paper" records the researcher's verdict as the item's resolution (``same``); no
-  stage 3 deep function merges papers or writes ``duplicate_decisions`` yet, so the page
-  says the merge is not automatic.
+- The preview's default survivor is :func:`seedgraph.library.merge.suggest_survivor` (held,
+  then strong ids, then notes); the researcher can swap it and pick the primary PDF.
+- An ``identity_collision`` item names no candidate, so it offers no merge.
 - Titles and metadata items get **Mark resolved** plus links (paper page for editing,
   the Library's "Run Ollama metadata").
 - The graph filter keeps items whose paper is in the graph (any status but ``excluded``).
@@ -20,6 +26,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from ...library import merge
+from ...library.merge import MergePlan
 from ...library.store import Library
 
 
@@ -47,8 +55,9 @@ QUEUES: tuple[Queue, ...] = (
           (Action("confirmed", "It is this paper"),),
           "To detach the PDF or attach the right one, open the paper."),
     Queue("identity", "Identity", ("identity_check", "identity_collision"),
-          (Action("same", "Same paper"), Action("different", "Different papers")),
-          "Your verdict is recorded on the item; merging two papers is not automatic yet."),
+          (Action("different", "Different papers"),),
+          "Same paper opens a merge preview: which paper survives, what moves, and anything that blocks it. "
+          "Different papers is recorded, so the pair is not raised again."),
     Queue("metadata", "Titles and metadata",
           ("malformed_title", "metadata_needed", "metadata_generic_title", "metadata_doi_mismatch"),
           (MARK_RESOLVED,),
@@ -95,6 +104,13 @@ class ItemRow:
     def actions(self) -> tuple[Action, ...]:
         return self.queue.actions
 
+    @property
+    def merge_candidates(self) -> tuple[PaperRef, ...]:
+        """The papers "Same paper" can merge this item's paper with (identity checks only)."""
+        if self.kind != "identity_check" or self.paper is None:
+            return ()
+        return tuple(c for c in self.candidates if c.paper_id != self.paper.paper_id)
+
 
 @dataclass(frozen=True)
 class Group:
@@ -132,17 +148,26 @@ def _papers(lib: Library, ids: set[str]) -> dict[str, PaperRef]:
         f"WHERE p.paper_id IN ({marks})", sorted(ids))}
 
 
-def _candidates(subject_json: str) -> tuple[str, ...]:
-    try:
-        subject = json.loads(subject_json)
-    except ValueError:
-        return ()
-    if not isinstance(subject, dict):
-        return ()
-    found = [str(c) for c in subject.get("candidates") or () if isinstance(c, str)]
-    for key in ("paper_a", "paper_b", "other_paper_id"):
-        if isinstance(subject.get(key), str):
-            found.append(subject[key])
+def _candidates(subject_json: str, detail: str | None = None) -> tuple[str, ...]:
+    """Papers an item names besides its own: the subject's ``candidates`` and paper keys
+    (ingest), and the evidence's ``candidates`` (the migration's identity checks keep them in
+    ``detail`` as ``{"paper_id": ...}`` objects)."""
+    found: list[str] = []
+    for text, keys in ((subject_json, ("paper_a", "paper_b", "other_paper_id")), (detail, ())):
+        try:
+            obj = json.loads(text) if text else None
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        for c in obj.get("candidates") or ():
+            if isinstance(c, str):
+                found.append(c)
+            elif isinstance(c, dict) and isinstance(c.get("paper_id"), str):
+                found.append(c["paper_id"])
+        for key in keys:
+            if isinstance(obj.get(key), str):
+                found.append(obj[key])
     return tuple(dict.fromkeys(found))
 
 
@@ -151,7 +176,7 @@ def _rows(lib: Library, raw: list) -> list[ItemRow]:
     hides_notes, status, resolution, created_at, origin)``."""
     ids = {r[2] for r in raw if r[2]}
     for r in raw:
-        ids |= set(_candidates(r[3]))
+        ids |= set(_candidates(r[3], r[4]))
     papers = _papers(lib, ids)
     out = []
     for item_id, kind, pid, subject_json, detail, hides, status, resolution, created_at, origin in raw:
@@ -159,7 +184,8 @@ def _rows(lib: Library, raw: list) -> list[ItemRow]:
             item_id=item_id, kind=kind, status=status, resolution=resolution,
             paper=papers.get(pid) or (PaperRef(pid, None, False) if pid else None), detail=detail,
             subject_json=subject_json, hides_notes=bool(hides), created_at=created_at, origin=origin,
-            candidates=tuple(papers.get(c) or PaperRef(c, None, False) for c in _candidates(subject_json)),
+            candidates=tuple(papers.get(c) or PaperRef(c, None, False)
+                             for c in _candidates(subject_json, detail)),
             queue=queue_for(kind)))
     return out
 
@@ -257,3 +283,90 @@ def citations_page(lib: Library) -> tuple[CitationDecision, ...]:
     papers = _papers(lib, {r[1] for r in rows if r[1]})
     return tuple(CitationDecision(rid, papers.get(cp) if cp else None, text, decision, rec, reason, at, origin)
                  for rid, cp, text, decision, rec, reason, at, origin in rows)
+
+
+# --- merge preview and "different papers" ---------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FileChoice:
+    source_file_id: str
+    owner: str
+    chosen: bool
+    url: str
+
+
+@dataclass(frozen=True)
+class MergePreview:
+    item: ItemRow
+    with_id: str
+    plan: MergePlan
+    keep: PaperRef
+    other: PaperRef
+    primary_arg: str  # the primary PDF the researcher picked ('' = the plan's default)
+    swap_url: str
+    files: tuple[FileChoice, ...]
+
+    @property
+    def url(self) -> str:
+        return _preview_url(self.item.item_id, self.with_id, self.keep.paper_id, self.primary_arg)
+
+
+def _preview_url(item_id: str, with_id: str, keep: str | None = None, primary: str | None = None) -> str:
+    from urllib.parse import urlencode
+
+    q = {"item": item_id, "with": with_id}
+    if keep:
+        q["keep"] = keep
+    if primary:
+        q["primary"] = primary
+    return "/review/merge?" + urlencode(q)
+
+
+def merge_pair(lib: Library, item_id: str, with_id: str) -> tuple[ItemRow, str, str] | None:
+    """``(row, a, b)``: the item and the two live papers it would merge, or ``None`` when the
+    item is unknown or does not name ``with_id`` as a candidate. Ids merged away earlier are
+    followed to their survivor."""
+    row = item_row(lib, item_id)
+    if row is None or with_id not in {c.paper_id for c in row.merge_candidates}:
+        return None
+    assert row.paper is not None
+    a, b = merge.resolve_merged(lib.conn, row.paper.paper_id), merge.resolve_merged(lib.conn, with_id)
+    return row, a, b
+
+
+def merge_preview(lib: Library, item_id: str, with_id: str, *, keep: str | None = None,
+                  primary: str | None = None) -> MergePreview | None:
+    """The merge plan for an identity item and one of its candidates (pure). ``None``: no such
+    pair. Raises :class:`seedgraph.library.merge.MergeError` for a pair that cannot be planned
+    (already one paper, unknown primary PDF)."""
+    found = merge_pair(lib, item_id, with_id)
+    if found is None:
+        return None
+    row, a, b = found
+    if keep in (a, b):
+        keep_id, other_id = keep, (b if keep == a else a)
+    else:
+        keep_id, other_id = merge.suggest_survivor(lib.conn, a, b)
+    plan = merge.plan_merge(lib, keep_id, other_id, primary_file=primary or None)
+    refs = _papers(lib, {keep_id, other_id})
+    files = []
+    for pid in (keep_id, other_id):
+        for (sf,) in lib.conn.execute("SELECT source_file_id FROM paper_files WHERE paper_id = ? "
+                                      "ORDER BY source_file_id", (pid,)):
+            if any(f.source_file_id == sf for f in files):
+                continue
+            files.append(FileChoice(sf, pid, sf == plan.primary_file, _preview_url(item_id, with_id, keep_id, sf)))
+    return MergePreview(item=row, with_id=with_id, plan=plan, keep=refs[keep_id], other=refs[other_id],
+                        primary_arg=primary or "", swap_url=_preview_url(item_id, with_id, other_id),
+                        files=tuple(files) if len(files) > 1 else ())
+
+
+def record_different(lib: Library, row: ItemRow) -> None:
+    """Record "different papers" for an identity item's paper and each of its candidates."""
+    if row.paper is None:
+        return
+    for c in row.merge_candidates:
+        a, b = merge.resolve_merged(lib.conn, row.paper.paper_id), merge.resolve_merged(lib.conn, c.paper_id)
+        if a != b:
+            merge.record_different(lib, a, b, reason=f"review item {row.item_id}")

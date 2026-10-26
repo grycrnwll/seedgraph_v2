@@ -252,8 +252,9 @@ def _new_paper(lib: Library, path: Path, sha: str, ids: list[tuple[str, str]], c
         item_ids.append(attention.raise_item(
             lib, METADATA_NEEDED, {"paper_id": pid}, paper_id=pid,
             detail="added from a PDF that matched no library paper; its title is not known yet").item_id)
-        if candidates:
-            item_ids.append(_identity_item(lib, pid, candidates, "the added PDF may be the same paper as"))
+        identity = _identity_item(lib, pid, candidates, "the added PDF may be the same paper as") if candidates else None
+        if identity:
+            item_ids.append(identity)
         res = files.attach_pdf(lib, pid, path, access_class=AccessClass.user_supplied_private,
                                acquisition_method=method)
     if res.attention_item_id:
@@ -265,8 +266,14 @@ def _new_paper(lib: Library, path: Path, sha: str, ids: list[tuple[str, str]], c
                             f"; check whether it duplicates {', '.join(candidates)}" if candidates else ""))
 
 
-def _identity_item(lib: Library, paper_id: str, candidates: Sequence[str], why: str) -> str:
-    cands = sorted(dict.fromkeys(candidates))
+def _identity_item(lib: Library, paper_id: str, candidates: Sequence[str], why: str) -> str | None:
+    """Raise an ``identity_check`` for the candidates the researcher has not already judged
+    different from ``paper_id`` (``duplicate_decisions``); ``None`` when none is left."""
+    from .merge import decided_different
+
+    cands = sorted(c for c in dict.fromkeys(candidates) if not decided_different(lib.conn, paper_id, c))
+    if not cands:
+        return None
     return attention.raise_item(
         lib, IDENTITY_CHECK, {"paper_id": paper_id, "candidates": cands}, paper_id=paper_id,
         detail=f"{why} {', '.join(cands)}; merge them or mark them as different papers").item_id
@@ -369,8 +376,9 @@ def _add_doi(lib: Library, raw: str, chain: Any, fetch: Callable[[dict], Any]) -
             item_ids.append(attention.raise_item(lib, METADATA_NEEDED, {"paper_id": pid}, paper_id=pid,
                                                  detail=f"{provider} gave no usable title for {doi}").item_id)
         similar = _similar_papers(lib, pid, values["title"], values["year"])
-        if similar:
-            item_ids.append(_identity_item(lib, pid, similar, "the pasted DOI's paper may be the same paper as"))
+        identity = _identity_item(lib, pid, similar, "the pasted DOI's paper may be the same paper as") if similar else None
+        if identity:
+            item_ids.append(identity)
     oa, oa_source = _fetch_oa(lib, pid, record, fetch)
     return DoiResult(doi, "created", paper_id=pid, title=values["title"],
                      title_source=provider if values["title"] else None, oa=oa, oa_source=oa_source,

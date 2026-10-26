@@ -14,6 +14,9 @@
     {% if row.status == 'resolved' %}
       resolved: {{ (row.resolution or "").replace("_", " ") }}
     {% else %}
+      {% for c in row.merge_candidates %}
+      <a href="/review/merge?item={{ row.item_id }}&amp;with={{ c.paper_id }}">Same paper{% if row.merge_candidates | length > 1 %} as {{ c.title or c.paper_id }}{% endif %}</a>
+      {% endfor %}
       {% for a in row.actions %}
       <form method="post" action="/review/attention/{{ row.item_id }}/resolve" hx-post="/review/attention/{{ row.item_id }}/resolve" hx-target="closest tr" hx-swap="outerHTML" class="sg-inline-form">
         {{ csrf_input }}

@@ -60,7 +60,7 @@ def test_the_attention_page_shows_actions_and_the_hidden_notes_mark(fx, make_app
     html = client_for(make_app()).get("/review/attention").text
     assert "Note anyway" in html and 'value="accept_text"' in html
     assert "It is this paper" in html and 'value="confirmed"' in html
-    assert 'value="same"' in html and 'value="different"' in html
+    assert "/review/merge?item=" in html and 'value="different"' in html
     assert 'value="dismissed"' in html and 'value="resolved_by_researcher"' in html
     assert "notes hidden from agents until resolved" in html
     assert no_inline_script_or_style(html) and post_forms_lead_with_csrf(html)
@@ -85,7 +85,7 @@ def test_accept_text_resolves_the_item_through_resolve_item(fx, make_app, client
 
 
 @pytest.mark.parametrize("attr,resolution", [("title_miss_item", "confirmed"), ("identity_item", "different"),
-                                             ("identity_item", "same"), ("renote_item", "dismissed"),
+                                             ("renote_item", "dismissed"),
                                              ("other_item", "resolved_by_researcher")])
 def test_each_queue_resolves_with_its_fixed_resolution(fx, make_app, client_for, spy, attr, resolution):
     item_id = getattr(fx, attr)

@@ -1,4 +1,4 @@
-"""`seedgraph library status|search|show|check|attention|remove|delete|refetch-metadata|prune-replaced|textcheck|reconvert`
+"""`seedgraph library status|search|show|check|attention|remove|delete|merge|refetch-metadata|prune-replaced|textcheck|reconvert`
 and `seedgraph library graphs list|show|rename` (design §10).
 
 Thin adapters over :mod:`seedgraph.library` (``search``, ``files``, ``lifecycle``,
@@ -284,6 +284,45 @@ def delete(
     else:
         typer.echo(f"deleted {paper_id}: removed from {len(result.graphs_removed)} graph(s), "
                    f"{len(result.source_files_deleted)} PDF file(s) deleted")
+
+
+@library_app.command("merge")
+def merge_cmd(
+    keep_id: str = typer.Argument(..., help="The paper that survives (its id stays)."),
+    other_id: str = typer.Argument(..., help="The duplicate merged into it (its id goes)."),
+    primary: Optional[str] = typer.Option(None, "--primary", help="Source file id of the PDF to keep as primary."),
+    yes: bool = typer.Option(False, "--yes", help="Carry out the merge shown in the plan."),
+    root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
+) -> None:
+    """Merge two library papers that are the same paper. Shows the plan; --yes merges."""
+    from ..library import merge
+
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        plan = merge.plan_merge(lib, keep_id, other_id, primary_file=primary)
+        if yes and plan.blockers:
+            _common.fail("the merge is blocked: " + "; ".join(plan.blockers))
+        result = merge.merge_papers(lib, plan, confirm=True) if yes else None
+    if json_out:
+        _common.echo_json({"plan": merge.plan_as_dict(plan), "merged": result})
+        return
+    typer.echo(f"merge {other_id} into {keep_id}:")
+    for t, v in plan.identifiers:
+        typer.echo(f"  moves {t} {v}")
+    typer.echo(f"  primary PDF: {plan.primary_file or 'none'}"
+               + (f"; detached (kept, not deleted): {plan.detached_file}" if plan.detached_file else ""))
+    for name, n in sorted(plan.counts.items()):
+        typer.echo(f"  {name}: {n}")
+    for c in plan.graphs:
+        typer.echo(f"  graph {c.slug}: {c.status}{', seed' if c.is_seed else ''}")
+    for b in plan.blockers:
+        typer.echo(f"  blocked: {b}")
+    for w in plan.warnings:
+        typer.echo(f"  warning: {w}")
+    if result is None:
+        typer.echo("nothing merged; re-run with --yes to merge" if plan.ok else "nothing merged")
+    else:
+        typer.echo(f"merged {other_id} into {keep_id}")
 
 
 # --- refetch-metadata, prune-replaced -------------------------------------------------------------
