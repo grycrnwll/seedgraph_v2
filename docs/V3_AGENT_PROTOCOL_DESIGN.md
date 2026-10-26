@@ -570,7 +570,8 @@ the batch page:
 - **Claude Code**: `/seedgraph-v3-work <batch_id>`. The skill takes the batch id as its argument and has
   `disable-model-invocation: true`, so it runs only when typed.
 - **Codex**: a prompt: `Use the seedgraph-v3-work skill and the seedgraph_v3 MCP tools to work Seedgraph
-  batch <batch_id> until it is finished or paused. Submit results with note_path; follow the feedback.`
+  batch <batch_id> until it is finished or paused. Write each result to its result_path and submit that
+  file (MCP note_path, CLI --note-file); follow the feedback.`
   Codex skill invocation syntax varies by version; a plain prompt naming the skill works in all of them.
 
 After stage 7 both drop the `-v3`/`_v3` suffixes. The strings are generated from one template in

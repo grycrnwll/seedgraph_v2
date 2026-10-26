@@ -124,9 +124,7 @@ def claim_package(lib: Library, batch_id: str, worker: WorkerRef, *, paper_id: s
         store.set_package_state(conn, packet_id, "claimed")
         package = store.get_package(conn, packet_id)
         assert package is not None
-        conn.execute("UPDATE batch_items SET state = 'in_progress', updated_at = ? "
-                     "WHERE batch_id = ? AND ordinal = ? AND state = 'queued'",
-                     (fmt_ts(now or store.now_utc()), batch_id, package.ordinal))
+        store.mark_item_in_progress(conn, batch_id, package.ordinal, now=now)
         store.append_event(conn, batch_id, "claimed", packet_id=packet_id, worker_id=worker.worker_id,
                            detail={"claim_id": claim_id, "claim_no": claim_no, "worker_kind": worker.worker_kind,
                                    "client": worker.client}, now=now)
@@ -176,6 +174,7 @@ def renew_claim(lib: Library, packet_id: str, claim_id: str, *, now: datetime | 
                          "WHERE claim_id = ?", (_expiry(now, batch.claim_ttl_s), claim_id))
             if code == "revive":
                 store.set_package_state(conn, packet_id, "claimed")
+                store.mark_item_in_progress(conn, package.batch_id, package.ordinal, now=now)
                 store.append_event(conn, package.batch_id, "claim_revived", packet_id=packet_id,
                                    worker_id=claim.worker_id, detail={"claim_id": claim_id}, now=now)
             renewed = store.get_claim(conn, claim_id)
@@ -200,6 +199,8 @@ def _end_live(lib: Library, packet_id: str, claim_id: str, *, reason: str, packa
             conn.execute("UPDATE package_claims SET released_at = ?, release_reason = ? WHERE claim_id = ?",
                          (fmt_ts(now or store.now_utc()), reason, claim_id))
             store.set_package_state(conn, packet_id, package_state)
+            if package_state == "open":
+                store.requeue_idle_items(conn, package.batch_id, now=now)
             store.append_event(conn, package.batch_id, event, packet_id=packet_id, worker_id=claim.worker_id,
                                detail={"claim_id": claim_id, **detail}, now=now)
         else:

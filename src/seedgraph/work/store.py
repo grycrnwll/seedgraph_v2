@@ -503,7 +503,32 @@ def expire_lapsed(conn: sqlite3.Connection, *, now: datetime | None = None,
                      (claim.packet_id,))
         append_event(conn, owner_batch, "claim_expired", packet_id=claim.packet_id, worker_id=claim.worker_id,
                      detail={"claim_id": claim.claim_id, "expires_at": claim.expires_at}, now=now)
+    for owner_batch in sorted({b for b, _ in lapsed}):
+        requeue_idle_items(conn, owner_batch, now=now)
     return [c for _, c in lapsed]
+
+
+def requeue_idle_items(conn: sqlite3.Connection, batch_id: str, *, now: datetime | None = None) -> int:
+    """Put every ``in_progress`` item of the batch with no live claim and no saved
+    package back to ``queued`` (its packages are back in the pool). An item with a saved
+    part stays ``in_progress``: it has partial work. Sweeps the whole batch, so a stale
+    row left by an older version heals on the next write. Returns the count."""
+    return conn.execute(
+        "UPDATE batch_items SET state = 'queued', updated_at = ? "
+        "WHERE batch_id = ? AND state = 'in_progress' "
+        "AND NOT EXISTS (SELECT 1 FROM work_packages p WHERE p.batch_id = batch_items.batch_id "
+        "                AND p.ordinal = batch_items.ordinal AND p.state IN ('claimed', 'saved')) "
+        "AND NOT EXISTS (SELECT 1 FROM package_claims c JOIN work_packages p ON p.packet_id = c.packet_id "
+        "                WHERE p.batch_id = batch_items.batch_id AND p.ordinal = batch_items.ordinal "
+        "                AND c.released_at IS NULL)",
+        (_ts(now), batch_id)).rowcount
+
+
+def mark_item_in_progress(conn: sqlite3.Connection, batch_id: str, ordinal: int, *,
+                          now: datetime | None = None) -> None:
+    """A claim (or a revived one) is working on this item: ``queued`` -> ``in_progress``."""
+    conn.execute("UPDATE batch_items SET state = 'in_progress', updated_at = ? "
+                 "WHERE batch_id = ? AND ordinal = ? AND state = 'queued'", (_ts(now), batch_id, ordinal))
 
 
 def release_live_claims(conn: sqlite3.Connection, batch_id: str, reason: str, *, now: datetime | None = None,
@@ -524,4 +549,6 @@ def release_live_claims(conn: sqlite3.Connection, batch_id: str, reason: str, *,
                      (claim.packet_id,))
         append_event(conn, batch_id, "claim_released", packet_id=claim.packet_id, worker_id=claim.worker_id,
                      detail={"claim_id": claim.claim_id, "reason": reason}, now=now)
+    if live:
+        requeue_idle_items(conn, batch_id, now=now)
     return live

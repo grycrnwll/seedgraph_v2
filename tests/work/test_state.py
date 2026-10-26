@@ -65,7 +65,7 @@ def test_claiming_again_clears_the_derived_claim_expired_state(lib):
 def test_stopped_state(lib):
     batch_id = make_batch(lib, parts=(1,))
     s = state.stop(lib, batch_id, mode="finish", now=at(1))
-    assert s.state == "stopped" and s.label == "Stopped" and s.paused
+    assert s.state == "stopped" and s.label == "Stopped (finishing current papers: all finished)" and s.paused
     assert s.stop_mode == "finish"
 
 
@@ -130,7 +130,7 @@ def test_stopped_beats_a_live_claim_and_an_expired_one(lib):
     claims.claim_package(lib, batch_id, BOB, now=at(TTL - 10))
     s = state.stop(lib, batch_id, mode="finish", now=at(TTL + 1))  # Alice's expired, Bob's live
     assert s.state == "stopped"
-    assert s.label == "Stopped (1 claim finishing)"
+    assert s.label == "Stopped (finishing current papers: 1 claim left)"
 
 
 def test_claim_expired_beats_waiting_and_continue_acknowledges_it(lib):
@@ -159,7 +159,8 @@ def test_continue_clears_a_stop_and_claiming_works_again(lib):
     state.stop(lib, batch_id, mode="finish", now=at(0))
     refused = claims.claim_package(lib, batch_id, ALICE, now=at(1))
     assert refused.status == "paused"
-    assert refused.pause() == {"status": "paused", "state": "stopped", "label": "Stopped",
+    assert refused.pause() == {"status": "paused", "state": "stopped",
+                               "label": "Stopped (finishing current papers: all finished)",
                                "resets_at": None, "next_action": refused.state.next_action}
     s = state.continue_batch(lib, batch_id, now=at(2))
     assert s.state == "waiting"
@@ -206,7 +207,7 @@ def test_stop_finish_lets_live_claims_finish_but_no_new_claims(lib):
     claims.complete_claim(lib, a.package.packet_id, a.claim.claim_id, now=at(4))
     assert store.get_package(lib.conn, a.package.packet_id).state == "saved"
     s = _state(lib, batch_id, 5)
-    assert s.state == "stopped" and s.label == "Stopped"
+    assert s.state == "stopped" and s.label == "Stopped (finishing current papers: all finished)"
 
 
 def test_a_stopped_batch_whose_last_claim_finishes_is_finished(lib):
@@ -282,3 +283,91 @@ def test_pause_and_continue_events_are_logged(lib):
     kinds = [(e.seq, e.kind) for e in store.list_events(lib.conn, batch_id)]
     assert kinds == [(1, "batch_created"), (2, "usage_limit"), (3, "stopped"), (4, "continued")]
     assert store.list_events(lib.conn, batch_id)[-1].detail == {"cleared": "stopped", "acknowledged": 0}
+
+
+# --- next_action wording and the stop mode -------------------------------------------------
+
+def test_working_with_an_open_package_says_claim_the_next_one(lib):
+    batch_id = make_batch(lib, parts=(1, 1))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    assert _state(lib, batch_id, 1).next_action == "Claim the next package."
+
+
+def test_working_with_every_package_claimed_does_not_say_claim(lib):
+    batch_id = make_batch(lib, parts=(1,))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    s = _state(lib, batch_id, 1)
+    assert s.state == "working"
+    assert "Claim the next package" not in s.next_action
+    assert "All open packages are claimed" in s.next_action
+
+
+def test_stop_finish_tells_claim_holders_to_finish_and_others_to_stop(lib):
+    batch_id = make_batch(lib, parts=(1, 1))
+    a = claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    s = state.stop(lib, batch_id, mode="finish", now=at(1))
+    assert s.label == "Stopped (finishing current papers: 1 claim left)"
+    assert "If you hold a claim, finish and submit your current package" in s.next_action
+    assert "Without a claim, stop working and report your counts" in s.next_action
+    claims.complete_claim(lib, a.package.packet_id, a.claim.claim_id, now=at(2))
+    after = _state(lib, batch_id, 3)
+    assert after.label == "Stopped (finishing current papers: all finished)"
+    assert after.stop_mode == "finish"
+    assert "finish and submit" not in after.next_action
+
+
+def test_stop_now_is_labelled_stopped_now(lib):
+    batch_id = make_batch(lib, parts=(1,))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    s = state.stop(lib, batch_id, mode="now", now=at(1))
+    assert s.label == "Stopped now" and s.stop_mode == "now"
+    assert "finish and submit" not in s.next_action
+
+
+# --- item state follows its packages back to the pool --------------------------------------
+
+def test_an_expired_claim_puts_its_item_back_in_the_queue(lib):
+    batch_id = make_batch(lib, parts=(1, 1))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    claims.claim_package(lib, batch_id, BOB, now=at(0))
+    assert _state(lib, batch_id, 1).items == {"in_progress": 2}
+    s = _state(lib, batch_id, TTL)
+    assert s.packages == {"open": 2}
+    assert s.items == {"queued": 2}
+
+
+def test_a_given_back_package_puts_its_item_back_in_the_queue(lib):
+    batch_id = make_batch(lib, parts=(1,))
+    a = claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    claims.release_claim(lib, a.package.packet_id, a.claim.claim_id, now=at(1))
+    assert _state(lib, batch_id, 2).items == {"queued": 1}
+
+
+def test_stop_now_puts_the_released_items_back_in_the_queue(lib):
+    batch_id = make_batch(lib, parts=(1, 1))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    s = state.stop(lib, batch_id, mode="now", now=at(1))
+    assert s.items == {"queued": 2}
+
+
+def test_a_usage_limit_puts_the_released_items_back_in_the_queue(lib):
+    batch_id = make_batch(lib, parts=(1,))
+    claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    assert state.report_limit(lib, batch_id, ALICE, now=at(1)).items == {"queued": 1}
+
+
+def test_a_paper_with_a_saved_part_stays_in_progress_when_its_other_part_returns(lib):
+    batch_id = make_batch(lib, parts=(2,))
+    p1 = claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    claims.complete_claim(lib, p1.package.packet_id, p1.claim.claim_id, now=at(1))
+    p2 = claims.claim_package(lib, batch_id, ALICE, now=at(2))
+    claims.release_claim(lib, p2.package.packet_id, p2.claim.claim_id, now=at(3))
+    assert _state(lib, batch_id, 4).items == {"in_progress": 1}
+
+
+def test_a_revived_late_submit_puts_its_item_back_in_progress(lib):
+    batch_id = make_batch(lib, parts=(1,))
+    a = claims.claim_package(lib, batch_id, ALICE, now=at(0))
+    assert _state(lib, batch_id, TTL + 1).items == {"queued": 1}
+    claims.renew_claim(lib, a.package.packet_id, a.claim.claim_id, now=at(TTL + 2))
+    assert _state(lib, batch_id, TTL + 3).items == {"in_progress": 1}

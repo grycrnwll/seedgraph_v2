@@ -55,6 +55,9 @@ NEXT_INVALID = "Fix the errors and submit the same packet_id again."
 NEXT_REVISION = ("Copy each failed quote's markdown_slice exactly (or set that claim's status to ambiguous) and "
                  "submit the same packet_id again; accept_unanchored=true saves unanchored quotes as ambiguous.")
 NEXT_CLAIM = "Claim the next package."
+NEXT_CLAIMED = ("Read instructions.md once per batch, then the package text (in ranges if it is long); write "
+                "the result to result_path and submit that file (MCP work_submit note_path=result_path, "
+                "CLI work submit --note-file result_path).")
 NEXT_NO_PACKAGE = ("No package is open right now: other workers hold the rest. Claim again later, "
                    "or stop and report your counts.")
 
@@ -101,6 +104,10 @@ class ItemView:
     parts_done: int
     result_ref: str | None
     attention_item_id: str | None
+    #: Claim history, oldest first: ``{worker, client, claimed_at, ended}`` (+ ``part`` for a
+    #: split paper). ``ended``: ``live`` while held, else ``submitted`` / ``expired`` /
+    #: ``released`` / ``stopped`` / ``limit``.
+    claims: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -126,7 +133,8 @@ class BatchView:
         return {
             "batch_id": self.batch_id, "task_type": self.task_type, "task_version": self.task_version,
             "selection_query": self.selection_query, "graph": self.graph, "options": self.options,
-            "state": st.state, "label": st.label, "next_action": st.next_action, "resets_at": st.resets_at,
+            "state": st.state, "label": st.label, "next_action": st.next_action, "stop_mode": st.stop_mode,
+            "resets_at": st.resets_at,
             "pause_detail": st.pause_detail, "live_claims": st.live_claims, "workers": list(st.workers),
             "packages": st.packages, "item_counts": st.items, "item_total": self.item_total,
             "items": [i.as_dict() for i in self.items], "commands": self.commands.as_dict(),
@@ -282,12 +290,17 @@ def _package_message(lib: Library, batch: store.Batch, package: store.WorkPackag
     assert item is not None
     paper = lib.conn.execute("SELECT title, year FROM papers WHERE paper_id = ?", (item.subject_id,)).fetchone()
     folder = work_root(lib) / batch.batch_id
+    text_file = _home(lib) / package.text_path if package.text_path else None
+    try:
+        lines = len(text_file.read_bytes().decode("utf-8").splitlines()) if text_file else None
+    except (OSError, UnicodeDecodeError):
+        lines = None
     return {
         "packet_id": package.packet_id, "claim_id": claim.claim_id, "batch_id": batch.batch_id,
         "task_type": batch.task_type, "paper_id": item.subject_id,
         "title": paper[0] if paper else None, "year": paper[1] if paper else None,
         "part": package.part, "part_count": package.part_count,
-        "text_path": str(_home(lib) / package.text_path) if package.text_path else None,
+        "text_path": str(text_file) if text_file else None, "lines": lines,
         "instructions_path": str(folder / "instructions.md"), "labels_path": str(folder / "labels.json"),
         "result_path": str(folder / f"{package.packet_id}.result.json"),
         "est_tokens": package.est_tokens, "claim_expires_at": claim.expires_at,
@@ -311,9 +324,7 @@ def claim_next(lib: Library, batch_id: str, worker: WorkerRef, *, paper_id: str 
         return ClaimReply(res.status, res.state, None, nxt)
     assert res.package is not None and res.claim is not None
     msg = _package_message(lib, batch, res.package, res.claim)
-    return ClaimReply("claimed", res.state, msg,
-                      "Read instructions.md once per batch, then the package text; write the result to "
-                      "result_path and submit it with note_path.")
+    return ClaimReply("claimed", res.state, msg, NEXT_CLAIMED)
 
 
 # --- submit -------------------------------------------------------------------------------
@@ -417,9 +428,16 @@ def submit(lib: Library, packet_id: str, claim_id: str, *, note: dict | str | No
                            detail={"outcome": "accepted", "accepted_unanchored": result.accepted_unanchored},
                            now=now)
         result.parts_done, total = _parts_done(conn, batch.batch_id, package.ordinal)
+        result.next_action = _after_accept(state.derive_state(conn, batch.batch_id))
         if result.parts_done == total:
             _complete_item(lib, conn, batch, store.get_item(conn, batch.batch_id, package.ordinal), tt, result, now)
     return result
+
+
+def _after_accept(st: BatchState) -> str:
+    """What to do after a saved package: the batch state's next_action (claim again,
+    wait while others hold every package, or stop and report when paused or finished)."""
+    return st.next_action
 
 
 def _feedback(result: SubmitResult) -> dict[str, Any]:
@@ -483,7 +501,7 @@ def _complete_item(lib: Library, conn, batch: store.Batch, item: store.BatchItem
     result.paper_status = outcome
     result.note_id = ref
     if outcome != "done":
-        result.next_action = f"{reason}. {NEXT_CLAIM}"
+        result.next_action = f"{reason}. {result.next_action}"
 
 
 # --- release, pauses, views ---------------------------------------------------------------
@@ -544,6 +562,22 @@ def _accepted_unanchored(conn, batch_id: str) -> int:
     return total
 
 
+def _claim_history(conn, batch_id: str) -> dict[int, list[dict[str, Any]]]:
+    """``{ordinal: [claim row, ...]}`` in claim order (see :attr:`ItemView.claims`)."""
+    rows = conn.execute(
+        "SELECT p.ordinal, p.part, p.part_count, c.worker_id, c.client, c.claimed_at, c.released_at, "
+        "c.release_reason FROM package_claims c JOIN work_packages p ON p.packet_id = c.packet_id "
+        "WHERE p.batch_id = ? ORDER BY p.ordinal, c.claimed_at, p.part, c.claim_no", (batch_id,))
+    out: dict[int, list[dict[str, Any]]] = {}
+    for ordinal, part, part_count, worker, client, claimed_at, released_at, reason in rows:
+        row: dict[str, Any] = {"worker": worker, "client": client, "claimed_at": claimed_at,
+                               "ended": "live" if released_at is None else reason}
+        if part_count > 1:
+            row["part"] = part
+        out.setdefault(ordinal, []).append(row)
+    return out
+
+
 def batch_view(lib: Library, batch_id: str, *, offset: int = 0, limit: int | None = None,
                now: datetime | None = None) -> BatchView:
     """Read-only status (after lazy expiry); ``offset``/``limit`` page the items."""
@@ -555,8 +589,10 @@ def batch_view(lib: Library, batch_id: str, *, offset: int = 0, limit: int | Non
         "SELECT ordinal, COUNT(*) FROM work_packages WHERE batch_id = ? AND state = 'saved' GROUP BY ordinal",
         (batch_id,))}
     page = all_items[offset:] if limit is None else all_items[offset:offset + limit]
+    history = _claim_history(conn, batch_id) if page else {}
     items = [ItemView(i.ordinal, i.subject_kind, i.subject_id, i.state, i.reason, i.part_count,
-                      saved.get(i.ordinal, 0), i.result_ref, i.attention_item_id) for i in page]
+                      saved.get(i.ordinal, 0), i.result_ref, i.attention_item_id,
+                      history.get(i.ordinal, [])) for i in page]
     return BatchView(batch_id=batch_id, task_type=batch.task_type, task_version=batch.task_version,
                      selection_query=batch.selection_query, graph=batch.graph_slug, options=batch.options,
                      state=st, items=items, item_total=len(all_items), commands=work_commands(batch_id),

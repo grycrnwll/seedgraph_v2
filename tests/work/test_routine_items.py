@@ -5,9 +5,11 @@ selection language; release; the work commands."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
+from seedgraph import agent_setup
 from seedgraph.library import attention, graphs, textquality
 from seedgraph.notes import current_note_id
 from seedgraph.work import routine
@@ -15,7 +17,7 @@ from seedgraph.work.claims import ClaimRefused, WorkerRef
 from seedgraph.work.commands import work_commands
 from seedgraph.work.store import WorkError
 
-from .routine_support import filler, good_note, make_paper, open_lib, reconvert
+from .routine_support import filler, good_note, make_paper, open_lib, reconvert, sections_markdown
 
 W1 = WorkerRef("interactive", "w1", client="claude")
 
@@ -174,8 +176,19 @@ def test_batch_reply_carries_the_work_commands(lib):
     assert cmds["claude_code"] == f"/seedgraph-v3-work {view.batch_id}"
     assert cmds["codex"] == (
         "Use the seedgraph-v3-work skill and the seedgraph_v3 MCP tools to work Seedgraph batch "
-        f"{view.batch_id} until it is finished or paused. Submit results with note_path; follow the feedback.")
+        f"{view.batch_id} until it is finished or paused. Write each result to its result_path and submit "
+        "that file (MCP note_path, CLI --note-file); follow the feedback.")
     assert work_commands(view.batch_id) == view.commands
+
+
+def test_every_worker_facing_text_names_both_ways_to_submit_the_result_file(lib):
+    paper = make_paper(lib, 1)
+    view = routine.create_batch(lib, "notes", paper_ids=[paper.paper_id])
+    reply = routine.claim_next(lib, view.batch_id, W1)
+    skill = (Path(agent_setup.__file__).parent / "seedgraph_v3_work_skill.md").read_text(encoding="utf-8")
+    instructions_md = Path(reply.message["instructions_path"]).read_text(encoding="utf-8")
+    for text in (reply.next_action, view.commands.codex, skill, instructions_md):
+        assert "note_path" in text and "--note-file" in text, text[:200]
 
 
 def test_options_are_checked(lib):
@@ -212,6 +225,68 @@ def test_pauses_and_expiry_through_the_routine(lib):
     assert limited.state.state == "usage_limit"
     paused = routine.claim_next(lib, view.batch_id, W1, now=later).as_dict()
     assert paused["status"] == "paused" and paused["resets_at"].startswith("2026-03-01T15")
+
+
+def test_status_shows_who_claimed_each_paper_and_how_each_claim_ended(lib):
+    t0 = datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc)
+    a, b, c = make_paper(lib, 1), make_paper(lib, 2), make_paper(lib, 3)
+    view = routine.create_batch(lib, "notes", paper_ids=[a.paper_id, b.paper_id, c.paper_id],
+                                options={"claim_ttl_s": 60}, now=t0)
+    w2 = WorkerRef("background", "w2", client="codex")
+    first = routine.claim_next(lib, view.batch_id, W1, now=t0).message  # paper a, will expire
+    later = t0 + timedelta(seconds=120)
+    again = routine.claim_next(lib, view.batch_id, w2, now=later).message  # paper a again
+    routine.submit(lib, again["packet_id"], again["claim_id"], note=good_note(), now=later)
+    given = routine.claim_next(lib, view.batch_id, W1, now=later).message  # paper b
+    routine.release(lib, given["packet_id"], given["claim_id"], "give_back", now=later)
+    routine.claim_next(lib, view.batch_id, W1, now=later)  # paper b again, then stopped now
+    routine.stop(lib, view.batch_id, mode="now", now=later)
+
+    items = routine.batch_view(lib, view.batch_id, now=later).as_dict()["items"]
+    assert first["paper_id"] == a.paper_id and given["paper_id"] == b.paper_id
+    assert items[0]["claims"] == [
+        {"worker": "w1", "client": "claude", "claimed_at": "2026-03-01T09:00:00.000000+00:00", "ended": "expired"},
+        {"worker": "w2", "client": "codex", "claimed_at": "2026-03-01T09:02:00.000000+00:00", "ended": "submitted"},
+    ]
+    assert [x["ended"] for x in items[1]["claims"]] == ["released", "stopped"]
+    assert items[2]["claims"] == []
+
+
+def test_stop_finish_is_visible_and_the_last_submit_is_not_told_to_claim(lib):
+    a, b = make_paper(lib, 1), make_paper(lib, 2)
+    view = routine.create_batch(lib, "notes", paper_ids=[a.paper_id, b.paper_id])
+    msg = routine.claim_next(lib, view.batch_id, W1).message
+    stopped = routine.stop(lib, view.batch_id, mode="finish").as_dict()
+    assert stopped["stop_mode"] == "finish"
+    assert stopped["label"] == "Stopped (finishing current papers: 1 claim left)"
+    res = routine.submit(lib, msg["packet_id"], msg["claim_id"], note=good_note())
+    assert res.status == "accepted"
+    assert "Claim the next package" not in res.next_action
+    assert "Stop working" in res.next_action
+    after = routine.batch_view(lib, view.batch_id).as_dict()
+    assert after["stop_mode"] == "finish" and after["label"] == "Stopped (finishing current papers: all finished)"
+
+
+def test_a_submit_while_others_hold_every_package_is_not_told_to_claim(lib):
+    a, b = make_paper(lib, 1), make_paper(lib, 2)
+    view = routine.create_batch(lib, "notes", paper_ids=[a.paper_id, b.paper_id])
+    msg = routine.claim_next(lib, view.batch_id, W1).message
+    routine.claim_next(lib, view.batch_id, WorkerRef("interactive", "w2"))
+    res = routine.submit(lib, msg["packet_id"], msg["claim_id"], note=good_note())
+    assert res.status == "accepted"
+    assert "Claim the next package" not in res.next_action
+    assert "All open packages are claimed" in res.next_action
+
+
+def test_claim_history_names_the_part_of_a_split_paper(lib):
+    long_text, long_sections = sections_markdown(body_sentences=400, tag=9)
+    paper = make_paper(lib, 9, text=long_text, sections=long_sections)
+    view = routine.create_batch(lib, "notes", paper_ids=[paper.paper_id],
+                                options={"split_threshold_tokens": 2000, "part_target_tokens": 1500})
+    msg = routine.claim_next(lib, view.batch_id, W1).message
+    assert msg["part_count"] > 1
+    (row,) = routine.batch_view(lib, view.batch_id).as_dict()["items"][0]["claims"]
+    assert row["part"] == 1 and row["ended"] == "live"
 
 
 def test_filler_is_long_enough_to_pass_the_gate():

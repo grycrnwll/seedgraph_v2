@@ -25,11 +25,13 @@ words; follow it. If the MCP tools are not available, the same steps exist as
 2. Read `instructions.md` (once per batch; it is the same for every package) and
    `labels.json`. They hold the task's fields, rules, vocabularies and an example.
 3. Read the package text file. It is the paper with its reference list cut out, or one
-   part of a long paper. Work only from this text.
+   part of a long paper. Work only from this text. It can be large: read it in ranges
+   (about 300 lines at a time; the package gives `lines`).
 4. Write the result as JSON alone (no prose, no code fence) to `result_path`.
-5. `work_submit(packet_id, claim_id, note_path=result_path)`. If you cannot write files,
-   pass the JSON as `note` instead. Pass `usage` (token counts) and `model` if your client
-   shows them.
+5. Submit the result file: `work_submit(packet_id, claim_id, note_path=result_path)`
+   (CLI: `seedgraph-v3 work submit PACKET --claim CLAIM --note-file result_path`). If you
+   cannot write files, pass the JSON as `note` instead. Pass `usage` (token counts) and
+   `model` if your client shows them.
 6. Read the reply:
    - `accepted` - claim the next package (step 1).
    - `invalid` - fix every listed error and submit the same `packet_id` again.

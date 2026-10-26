@@ -52,6 +52,13 @@ _NEXT_ACTION = {
     "claim_expired": "Claim the next package; a package whose worker stopped responding is back in the pool.",
     "waiting": "Claim the next package.",
 }
+#: ``working`` with no open package: every remaining package is held by a live claim.
+NEXT_ALL_CLAIMED = ("All open packages are claimed; wait or check back later. "
+                    "If you hold a claim, finish and submit your current package.")
+#: ``stopped`` in ``finish`` mode while claims are still live.
+NEXT_STOPPED_FINISHING = ("The batch was stopped on purpose (finishing current papers). If you hold a claim, "
+                          "finish and submit your current package, then stop. Without a claim, stop working "
+                          "and report your counts. The researcher can resume it with continue.")
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,10 @@ class BatchState:
 
     @property
     def next_action(self) -> str:
+        if self.state == "working" and not self.packages.get("open", 0):
+            return NEXT_ALL_CLAIMED
+        if self.state == "stopped" and self.stop_mode == "finish" and self.live_claims:
+            return NEXT_STOPPED_FINISHING
         return _NEXT_ACTION[self.state]
 
 
@@ -115,8 +126,11 @@ def derive_state(conn: sqlite3.Connection, batch_id: str) -> BatchState:
                  f"{items.get('failed', 0)} failed")
     elif batch.pause_kind == "stopped":
         state = "stopped"
-        label = "Stopped" + (f" ({live} claim{'s' if live != 1 else ''} finishing)"
-                             if batch.stop_mode == "finish" and live else "")
+        if batch.stop_mode == "finish":
+            left = f"{live} claim{'s' if live != 1 else ''} left" if live else "all finished"
+            label = f"Stopped (finishing current papers: {left})"
+        else:
+            label = "Stopped now"
     elif batch.pause_kind == "usage_limit":
         state = "usage_limit"
         label = f"Paused: usage limit, resets {batch.resets_at}" if batch.resets_at \

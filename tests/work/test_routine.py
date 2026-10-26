@@ -50,6 +50,7 @@ def test_whole_paper_is_one_package_without_its_reference_list(lib):
         assert Path(msg[key]).is_file()
     assert msg["result_path"].endswith(f"{msg['packet_id']}.result.json")
     assert msg["est_tokens"] == len(text) // 4
+    assert msg["lines"] == len(text.splitlines()) > 5
 
 
 def test_accepted_submission_makes_the_current_note(lib):
@@ -66,6 +67,20 @@ def test_accepted_submission_makes_the_current_note(lib):
     assert final.state.state == "finished"
     assert final.items[0].state == "done"
     assert final.items[0].result_ref == result.note_id
+
+
+def test_claims_kept_counts_the_claim_objects_the_worker_sent(lib):
+    """good_note sends one non-null scalar and four array elements; the not_found rows
+    Seedgraph stores for null scalars and empty arrays are not counted."""
+    paper = make_paper(lib, 1)
+    view = routine.create_batch(lib, "notes", paper_ids=[paper.paper_id])
+    msg = routine.claim_next(lib, view.batch_id, W1).message
+    note = good_note()
+    note["robustness_checks"] = [{"claim_text": "Nothing to see.", "normalized_label": "none",
+                                  "status": "not_found"}]
+    result = routine.submit(lib, msg["packet_id"], msg["claim_id"], note=note)
+    assert result.status == "accepted", result.as_dict()
+    assert result.claims_kept == 6
 
 
 def test_submit_reads_the_note_from_a_file(lib):

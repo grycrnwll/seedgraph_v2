@@ -137,3 +137,45 @@ def test_result_is_explainable_and_versioned():
     assert "Ö" in result.summary
     assert any("identiÖed" in ex for ex in result.examples)
     assert result.as_dict()["status"] == "garbled"
+
+
+# --- repeated text: a corroborating signal that never gates ---------------------------------
+
+def test_degenerate_repetition_is_reported_but_does_not_change_the_verdict():
+    result = assess_text(_words(1500) + "\n\n" + "the gadget estimator converges " * 12 + "\n\n" + _words(200))
+    assert result.status == "pass"
+    assert result.repeated_runs == 1
+    assert "repeated text: 1 run" in result.summary
+    assert "the gadget estimator converges" in result.summary
+
+
+def test_a_repeated_line_is_reported():
+    line = "Invented Journal of Gadget Studies, volume nine\n"
+    result = assess_text(_words(1500) + "\n" + line * 6 + _words(100))
+    assert result.repeated_runs == 1
+
+
+def test_clean_text_has_no_repeated_runs_and_an_unchanged_summary():
+    result = assess_text(_words(3000))
+    assert result.repeated_runs == 0
+    assert result.summary == "pass: no mojibake signals"
+
+
+def test_numbers_tables_and_short_repeats_are_not_repetition():
+    table = "| 0 | 0 | 0 | 0 | 0 | 0 | 0 |\n" * 3
+    numbers = "0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00\n"
+    few = "very " * 4 + "good\n"
+    result = assess_text(_words(1500) + "\n" + table + numbers + few)
+    assert result.repeated_runs == 0
+
+
+def test_repetition_never_turns_garbled_text_into_a_pass_or_back():
+    garbled = _words(1500) + " identiÖed di§erent" * 10
+    plain = assess_text(garbled)
+    repeated = assess_text(garbled + "\n" + "same words again " * 10)
+    assert plain.status == repeated.status == "garbled"
+    assert repeated.repeated_runs == plain.repeated_runs + 1
+
+
+def test_checker_version_was_bumped_for_the_repetition_signal():
+    assert assess_text("x").checker_version == "textquality-3"

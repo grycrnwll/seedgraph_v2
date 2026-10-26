@@ -17,6 +17,21 @@ import json
 from .format import PROMPT_VERSION, SCHEMA_ID, SCHEMA_VERSION
 from .vocab import VOCABULARIES
 
+#: Version of this instructions text. Bump on any wording change (the text is
+#: byte-stable for a given version). Independent of PROMPT_VERSION, which is stamped on
+#: saved notes. 2.1.0: reading tips, submit names, formula quote tip, errata rule,
+#: assumption_type guidance.
+INSTRUCTIONS_VERSION = "2.1.0"
+
+#: One line per ``assumption_type`` value (tested to cover the vocabulary).
+_ASSUMPTION_GUIDANCE: dict[str, str] = {
+    "identification": "what makes the target quantity recoverable from the data: parallel trends, "
+                      "unconfoundedness, exclusion restrictions, overlap, no anticipation, monotonicity",
+    "regularity": "technical conditions for estimation and inference: sparsity, smoothness, moment conditions, "
+                  "continuity or differentiability, mixing or dependence limits, rate conditions",
+    "general": "anything else the results rely on: modelling, behavioural or functional-form assumptions "
+               "that are neither of the above",
+}
 #: Invented worked example. It passes ``validate_note`` + ``check_note`` with no
 #: errors or warnings (tested).
 WORKED_EXAMPLE: dict = {
@@ -120,14 +135,24 @@ def _vocab_lines() -> list[str]:
 def render_instructions(*, has_parts: bool = False) -> str:
     """The ``instructions.md`` text. ``has_parts``: the batch contains split papers."""
     lines: list[str] = [
-        f"# Notes task: `{SCHEMA_ID}` (schema {SCHEMA_VERSION}, prompt {PROMPT_VERSION})",
+        f"# Notes task: `{SCHEMA_ID}` (schema {SCHEMA_VERSION}, prompt {PROMPT_VERSION}, "
+        f"instructions {INSTRUCTIONS_VERSION})",
         "",
         "You write one structured research note for the paper text in your package file. "
-        "Write the note as one JSON object, to the package's `result_path`, and submit it.",
+        "Write the note as one JSON object, to the package's `result_path`, and submit that file "
+        "(MCP: `work_submit` with `note_path`; CLI: `work submit` with `--note-file`).",
+        "",
+        "## Reading the package",
+        "",
+        "- The package text file can be large. Read it in ranges, about 300 lines at a time, "
+        "until you reach the end. The package gives its `lines` (line count).",
+        "- `est_tokens` is approximate (formula-heavy text often takes more tokens).",
         "",
         "## Rules",
         "",
         "- Use only the package text. Do not use outside knowledge of the paper.",
+        "- If the text includes an erratum or corrigendum, use the corrected values and say in "
+        "the claim's `claim_text` that they come from the correction.",
         "- Scalars may be null, arrays may be empty. Do not invent content to fill a field.",
         "- One array element per distinct method, data source, assumption, result, "
         "limitation, robustness check or open question.",
@@ -145,6 +170,9 @@ def render_instructions(*, has_parts: bool = False) -> str:
         "- Never repair characters, even when the text looks garbled. Copy what is there.",
         "- Make each quote long enough to be unique in the paper (one sentence or clause is "
         "usually enough).",
+        "- In formula-heavy text, prefer a plain-prose passage that states the claim. If the "
+        "quote must contain math, copy inline math exactly, including the spaces around it "
+        "(the text often has two spaces before and after `$...$`).",
         "- A quote that cannot be found comes back with the exact passage to copy. If no "
         "passage supports the claim, set `status` to `ambiguous`.",
         "- The text marks removed reference lists with `[references omitted]`; never quote "
@@ -165,6 +193,11 @@ def render_instructions(*, has_parts: bool = False) -> str:
         "## Fixed vocabularies",
         "",
         *_vocab_lines(),
+        "",
+        "Choosing `assumption_type`:",
+        "",
+        *[f"- `assumption_type` = `{value}`: {_ASSUMPTION_GUIDANCE[value]}."
+          for value in VOCABULARIES["assumption_type"]],
         "",
     ]
     if has_parts:

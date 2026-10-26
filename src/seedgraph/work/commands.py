@@ -15,7 +15,8 @@ MCP_SERVER_NAME = "seedgraph_v3"
 CLAUDE_CODE_TEMPLATE = "/{skill} {batch_id}"
 CODEX_TEMPLATE = (
     "Use the {skill} skill and the {server} MCP tools to work Seedgraph batch {batch_id} "
-    "until it is finished or paused. Submit results with note_path; follow the feedback."
+    "until it is finished or paused. Write each result to its result_path and submit that file "
+    "(MCP note_path, CLI --note-file); follow the feedback."
 )
 
 

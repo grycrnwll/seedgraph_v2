@@ -18,7 +18,7 @@ from seedgraph.library import mojibake
 
 #: Bump whenever the detector or its constants change; cached results with another
 #: version are re-assessed (design §5.3).
-CHECKER_VERSION = "textquality-2"
+CHECKER_VERSION = "textquality-3"  # 3: the repeated-text signal (reported only)
 
 DOC_RATE_MIN = 1.0  # strong hits per 1 000 words
 DOC_HITS_MIN = 10
@@ -30,6 +30,10 @@ BAD_PAGES_SHARE = 0.20
 NO_TEXT_MEDIAN_WORDS = 30
 MAX_EXAMPLES = 8
 EXAMPLE_CONTEXT = 20
+
+REPEAT_MAX_UNIT = 10  # tokens in a repeated unit (a phrase or a short line)
+REPEAT_MIN_COPIES = 5  # back-to-back copies that make a run
+MAX_REPEAT_EXAMPLES = 2
 
 REFERENCES_OMITTED_MARKER = "[references omitted]"
 
@@ -50,6 +54,9 @@ class TextQuality:
     corroborating_hits: int = 0
     examples: tuple[str, ...] = ()
     summary: str = ""
+    #: Runs of degenerate repetition (a unit of 1..REPEAT_MAX_UNIT tokens repeated back to
+    #: back REPEAT_MIN_COPIES+ times). Reported in the summary; never decides the verdict.
+    repeated_runs: int = 0
     checker_version: str = CHECKER_VERSION
 
     def as_dict(self) -> dict:
@@ -130,6 +137,37 @@ def _summary(status: str, by_signal: Counter, in_tables: Counter, examples: list
     return f"{status}: " + ", ".join(parts) + (f"; examples: {ex}" if ex else "")
 
 
+_TOKEN_RE = re.compile(r"\S+")
+_TABLE_LINE_RE = re.compile(r"^[ \t]*\|.*$", re.MULTILINE)
+
+
+def find_repeats(text: str) -> list[tuple[str, int]]:
+    """Degenerate repetition: ``[(unit, copies), ...]`` for each run where a unit of
+    1..:data:`REPEAT_MAX_UNIT` tokens repeats back to back at least
+    :data:`REPEAT_MIN_COPIES` times (tokens compared casefolded, edge punctuation
+    stripped). Table lines are skipped and a unit must hold a word, so number grids and
+    table rules never count. Linear in the text: one pass per unit length."""
+    raw = _TOKEN_RE.findall(_TABLE_LINE_RE.sub("", text))
+    toks = [t.strip(".,;:!?\"'()[]").casefold() for t in raw]
+    n = len(toks)
+    covered: list[tuple[int, int]] = []  # token spans already reported (shorter units win)
+    runs: list[tuple[int, int, int]] = []  # (start, unit length, copies)
+    for p in range(1, REPEAT_MAX_UNIT + 1):
+        matched = 0  # tokens so far equal to the token p places back
+        for i in range(p, n + 1):
+            if i < n and toks[i] == toks[i - p]:
+                matched += 1
+                continue
+            copies = (matched + p) // p
+            start = i - matched - p
+            if copies >= REPEAT_MIN_COPIES and any(_WORD_RE.search(t) for t in toks[start:start + p]) \
+                    and not any(s <= start and start + copies * p <= e for s, e in covered):
+                covered.append((start, start + copies * p))
+                runs.append((start, p, copies))
+            matched = 0
+    return [(" ".join(raw[s:s + p]), c) for s, p, c in sorted(runs)]
+
+
 def assess_text(
     markdown: str, *, reference_ranges: Iterable[tuple[int, int]] | None = None
 ) -> TextQuality:
@@ -181,6 +219,11 @@ def assess_text(
         status = "pass"
 
     examples = (strong_examples + garbage_examples)[:MAX_EXAMPLES]
+    repeats = find_repeats(text)
+    summary = _summary(status, by_signal, in_tables, examples)
+    if repeats:
+        shown = "; ".join(f"{unit[:60]!r} x{copies}" for unit, copies in repeats[:MAX_REPEAT_EXAMPLES])
+        summary += f"; repeated text: {len(repeats)} run{'s' if len(repeats) != 1 else ''} (e.g. {shown})"
     return TextQuality(
         status=status,
         doc_rate=round(doc_rate, 4),
@@ -192,5 +235,6 @@ def assess_text(
         hits_by_signal=dict(by_signal),
         corroborating_hits=corroborating,
         examples=tuple(examples),
-        summary=_summary(status, by_signal, in_tables, examples),
+        summary=summary,
+        repeated_runs=len(repeats),
     )

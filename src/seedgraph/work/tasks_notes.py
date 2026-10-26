@@ -133,12 +133,12 @@ class NotesTask(WholePaperTask):
         result.warnings += [{"field_key": i.path, "message": i.message} for i in checked.warnings]
         if result.errors:
             return result
-        if package.part == 1:
-            result.claims_kept = len(notes.normalize_note(note).drafts)
-            scalar_names = [name for name, _ in SCALAR_FIELDS]
-        else:
-            result.claims_kept = sum(len(getattr(note, name)) for name, _ in ARRAY_FIELDS)
-            scalar_names = []
+        # claims_kept = the claim objects the worker sent and Seedgraph keeps: non-null
+        # scalars (part 1 only; later parts' scalars were dropped above) plus array
+        # elements. The not_found rows stored for null scalars / empty arrays don't count.
+        scalar_names = [name for name, _ in SCALAR_FIELDS] if package.part == 1 else []
+        result.claims_kept = (sum(1 for name in scalar_names if getattr(note, name) is not None)
+                              + sum(len(getattr(note, name)) for name, _ in ARRAY_FIELDS))
         for name in scalar_names:
             env = getattr(note, name)
             if env is not None and _status(env.status) == _FOUND:
