@@ -1,0 +1,22 @@
+{#- The text view: the markdown of one page as plain text. Each chunk carries its code-point
+    offset (data-offset), so select.js maps a selection straight to markdown offsets.
+    Context: tv (views.paper.TextView). -#}
+<div class="sg-text-view" data-text-view data-anchor-url="/papers/{{ tv.paper_id }}/anchor-text">
+  {% if tv.markdown_id is none %}
+  <p class="sg-placeholder">This paper has no converted text.</p>
+  {% else %}
+    {% if tv.has_page_info %}
+    <nav class="sg-text-pages" aria-label="Text view pages">
+      {% for p in tv.pages %}
+      {% if p == tv.page %}<strong aria-current="page">{{ p }}</strong>{% else %}<a href="/papers/{{ tv.paper_id }}/text?page={{ p }}" hx-get="/papers/{{ tv.paper_id }}/text?page={{ p }}" hx-target="#sg-text-view" hx-swap="innerHTML">{{ p }}</a>{% endif %}
+      {% endfor %}
+    </nav>
+    {% else %}
+    <p class="sg-notice">No page markers: the whole text is shown.</p>
+    {% endif %}
+    <div class="sg-text-body">{% for c in tv.chunks %}<p class="sg-tv-chunk" data-offset="{{ c.offset }}">{{ c.text }}</p>{% endfor %}</div>
+    <div class="sg-selection-bar" data-text-selection-bar hidden>
+      <button type="button" data-add-from-text>Add claim from selection</button>
+    </div>
+  {% endif %}
+</div>

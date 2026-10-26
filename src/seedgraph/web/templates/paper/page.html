@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block head %}
+  <link rel="stylesheet" href="/static/vendor/pdfjs/pdf_viewer.css">
+  <link rel="stylesheet" href="/static/paper.css">
+{% endblock %}
+{% block scripts %}
+  <script type="module" src="/static/js/pdfpane.js"></script>
+  <script type="module" src="/static/js/select.js"></script>
+{% endblock %}
+{% block content %}
+{% set h = view.header %}
+{% include "paper/_header.html" %}
+<div class="sg-layout-toggle" role="group" aria-label="Layout">
+  <button type="button" data-layout-set="split" aria-pressed="{{ 'true' if view.layout == 'split' else 'false' }}">Side by side</button>
+  <button type="button" data-layout-set="pdf" aria-pressed="{{ 'true' if view.layout == 'pdf' else 'false' }}">PDF</button>
+  <button type="button" data-layout-set="notes" aria-pressed="{{ 'true' if view.layout == 'notes' else 'false' }}">Notes</button>
+</div>
+<div class="sg-layout sg-paper-layout" data-layout="{{ view.layout }}" data-paper-id="{{ h.paper_id }}">
+  <section class="sg-pane-pdf" aria-label="PDF">
+    {% if view.pdf_url %}
+    <div class="sg-pdf-toolbar">
+      <button type="button" data-pdf-action="prev" title="Previous page">&#8592;</button>
+      <label>Page <input type="number" min="1" value="1" class="sg-pdf-page-input" data-pdf-page-input aria-label="Page number"></label>
+      <span data-pdf-page-count></span>
+      <button type="button" data-pdf-action="next" title="Next page">&#8594;</button>
+      <button type="button" data-pdf-action="zoom-out" title="Zoom out">&minus;</button>
+      <button type="button" data-pdf-action="zoom-in" title="Zoom in">+</button>
+      <input type="search" class="sg-pdf-find" data-pdf-find placeholder="Find in PDF" aria-label="Find in PDF">
+    </div>
+    <div id="sg-pdf-notice" class="sg-pdf-notice" role="status" hidden></div>
+    <div class="sg-pdf-wrap">
+      <div id="sg-pdf-container" class="sg-pdf-container" data-pdf-url="{{ view.pdf_url }}" tabindex="0">
+        <div id="sg-pdf-viewer" class="pdfViewer"></div>
+      </div>
+    </div>
+    <div id="sg-selection-bar" class="sg-selection-bar" hidden>
+      <button type="button" data-add-from-selection data-anchor-url="/papers/{{ h.paper_id }}/anchor">Add claim from selection</button>
+    </div>
+    {% elif h.held %}
+    <p class="sg-placeholder">The PDF file is missing from the library.</p>
+    {% else %}
+    <div class="sg-cited-only">
+      <p><strong>cited-only:</strong> add its PDF.</p>
+      <form method="post" action="/papers/{{ h.paper_id }}/add-pdf" enctype="multipart/form-data"
+            hx-post="/papers/{{ h.paper_id }}/add-pdf" hx-encoding="multipart/form-data">
+        {{ csrf_input }}
+        <input type="file" name="pdf" accept="application/pdf,.pdf" required aria-label="PDF file">
+        <button type="submit">Add PDF</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+  <section class="sg-pane-notes" aria-label="Notes">
+    {% with pane = view.notes %}{% include "paper/_notes.html" %}{% endwith %}
+    <div id="sg-add-claim" class="sg-add-claim" aria-live="polite"></div>
+    <details class="sg-text-toggle">
+      <summary>Text view</summary>
+      <div id="sg-text-view" hx-get="/papers/{{ h.paper_id }}/text" hx-trigger="toggle from:closest details once" hx-swap="innerHTML">
+        <p class="sg-placeholder">Loading the text…</p>
+      </div>
+    </details>
+  </section>
+</div>
+{% endblock %}

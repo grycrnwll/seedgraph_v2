@@ -1,0 +1,31 @@
+{#- The answer to a selection: the add form with the exact markdown slice, or a refusal.
+    Context: paper_id, result (library.pages.AnchorResult), expected_version, claim_types. -#}
+<div class="sg-anchor" data-anchor-status="{{ result.status }}">
+  {% if result.status == "ok" %}
+  <h3>Add claim from selection</h3>
+  <p class="sg-muted">The quote stored is this exact passage of the paper's text:</p>
+  <blockquote class="sg-quote sg-anchor-quote" data-anchor-quote>{{ result.quote }}</blockquote>
+  <form method="post" action="/papers/{{ paper_id }}/notes/add" hx-post="/papers/{{ paper_id }}/notes/add"
+        hx-target="#sg-notes" hx-swap="outerHTML" hx-include="#sg-notes-version" class="sg-form" data-anchor-form>
+    {{ csrf_input }}
+    <input type="hidden" name="kind" value="quote">
+    <input type="hidden" name="markdown_id" value="{{ result.markdown_id }}">
+    <input type="hidden" name="start_char" value="{{ result.start_char }}">
+    <input type="hidden" name="end_char" value="{{ result.end_char }}">
+    <label>Type
+      <select name="claim_type">
+        {% for t in claim_types %}<option value="{{ t }}"{% if t == "result" %} selected{% endif %}>{{ t | replace("_", " ") }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Label <input type="text" name="normalized_label" required></label>
+    <label>Claim text (yours) <textarea name="claim_text" rows="3" required></textarea></label>
+    <button type="submit">Add claim</button>
+    <button type="button" data-anchor-cancel>Cancel</button>
+  </form>
+  {% else %}
+  <div class="sg-flash sg-flash-warning" role="alert" data-anchor-message>{{ result.message }}</div>
+  {% if result.status in ("not_found", "no_markers", "ambiguous") %}
+  <p class="sg-muted">You can also select the passage in the <strong>text view</strong> below the notes.</p>
+  {% endif %}
+  {% endif %}
+</div>

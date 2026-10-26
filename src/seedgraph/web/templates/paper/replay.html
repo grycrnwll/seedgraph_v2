@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/paper.css">{% endblock %}
+{% macro side(s) -%}
+{%- if s and (s.claim_text or s.normalized_label) -%}
+<div class="sg-side">
+  {% if s.claim_type %}<span class="sg-muted">{{ s.claim_type | replace("_", " ") }}</span>{% endif %}
+  {% if s.normalized_label %}<p class="sg-claim-label">{{ s.normalized_label }}</p>{% endif %}
+  {% if s.claim_text %}<p class="sg-claim-text">{{ s.claim_text }}</p>{% endif %}
+</div>
+{%- else -%}<span class="sg-muted">—</span>{%- endif -%}
+{%- endmacro %}
+{% block content %}
+{% from "_pdf_button.html" import paper_title %}
+<h1>Compare with the newer extraction</h1>
+{% if h %}<p>{{ paper_title(h.paper_id, h.display_title, h.held) }}</p>{% endif %}
+{% if rv is none %}
+<p class="sg-placeholder">There is no newer extraction to compare for this paper.</p>
+{% else %}
+<p class="sg-replay-summary" data-replay-summary>
+  {{ rv.kept }} edits kept · {{ rv.still_hidden }} still hidden · {{ rv.new_claims | length }} new agent claims ·
+  {{ rv.unmatched }} edits that no longer match a claim{% if rv.hides_gone %} · {{ rv.hides_gone }} hidden claims are not in the new extraction{% endif %}
+</p>
+<p class="sg-muted">Nothing changes until you accept. Unmatched edits are kept as researcher claims unless you discard them.</p>
+<form method="post" action="/papers/{{ rv.paper_id }}/replay/accept" class="sg-form sg-replay-form">
+  {{ csrf_input }}
+  <input type="hidden" name="head_version_no" value="{{ rv.head_version_no }}">
+  <input type="hidden" name="new_note_id" value="{{ rv.new_note_id }}">
+
+  <h2>Your edits</h2>
+  <table class="sg-table sg-replay-table">
+    <thead><tr><th>Status</th><th>Yours</th><th>Agent before</th><th>Agent now</th><th>Decision</th></tr></thead>
+    <tbody>
+      {% for op in rv.ops %}
+      <tr data-op-key="{{ op.key }}" data-op-status="{{ op.status }}">
+        <td><span class="sg-chip sg-chip-{{ 'warn' if op.needs_decision else 'plain' }}">{{ op.status_label }}</span> <span class="sg-muted">({{ op.op }})</span></td>
+        <td>{{ side(op.yours) }}</td>
+        <td>{{ side(op.agent_old) }}</td>
+        <td>{{ side(op.agent_new) }}</td>
+        <td>
+          {% if op.status not in ("hide_gone",) %}
+          <select name="decision:{{ op.key }}" aria-label="Decision for {{ op.key }}">
+            <option value="keep" selected>keep{% if op.keep_as %} (as {{ op.keep_as }}){% endif %}</option>
+            <option value="discard">discard</option>
+            {% if op.op != "add" %}
+              {% for cand in op.candidates %}<option value="attach:{{ cand.claim_id }}">attach to: {{ cand.normalized_label or cand.claim_text }}</option>{% endfor %}
+              {% if op.status == "unmatched" %}
+                {% for nc in rv.new_claims %}<option value="attach:{{ nc.claim_id }}">attach to new: {{ nc.normalized_label or nc.claim_text }}</option>{% endfor %}
+              {% endif %}
+            {% endif %}
+          </select>
+          {% else %}<span class="sg-muted">no decision needed</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>New agent claims</h2>
+  {% if rv.new_claims %}
+  <ul class="sg-replay-new">
+    {% for nc in rv.new_claims %}
+    <li data-new-claim="{{ nc.claim_id }}"><label><input type="checkbox" name="accept_new" value="{{ nc.claim_id }}" checked> accept</label> {{ side(nc) }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="sg-muted">None.</p>{% endif %}
+
+  {% if rv.changed %}
+  <h2>Claims you did not edit whose wording changes</h2>
+  <table class="sg-table">
+    <thead><tr><th>Before</th><th>After</th></tr></thead>
+    <tbody>{% for old, new in rv.changed %}<tr><td>{{ side(old) }}</td><td>{{ side(new) }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+
+  {% if rv.gone %}
+  <h2>No longer in the new extraction</h2>
+  <ul>{% for g in rv.gone %}<li>{{ side(g) }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  <div class="sg-replay-actions">
+    <button type="submit" name="mode" value="all">Accept all</button>
+    <button type="submit" name="mode" value="selected">Accept with the new claims ticked</button>
+    <button type="submit" name="mode" value="dismiss_all">Accept, dismissing every new claim</button>
+    <a href="/papers/{{ rv.paper_id }}">Not now</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

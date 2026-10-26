@@ -1,0 +1,80 @@
+<header class="sg-paper-header">
+  <h1 class="sg-paper-h1">{{ h.display_title }}</h1>
+  <p class="sg-provenance" title="where this paper's metadata came from">Title from: {{ h.title_source_label }}</p>
+  <p class="sg-paper-meta">
+    {% if h.authors %}<span class="sg-authors">{{ h.authors | join(", ") }}</span>{% endif %}
+    {% if h.year %}<span class="sg-year">{{ h.year }}</span>{% endif %}
+    {% if h.venue %}<span class="sg-venue">{{ h.venue }}</span>{% endif %}
+  </p>
+  {% if h.identifiers %}
+  <p class="sg-identifiers">
+    {% for kind, value in h.identifiers %}<span class="sg-identifier"><span class="sg-id-type">{{ kind }}</span> {{ value }}</span>{% endfor %}
+  </p>
+  {% endif %}
+  <ul class="sg-badges" aria-label="Badges">
+    {% if h.held %}
+    <li class="sg-chip sg-chip-ok" data-badge="held">held</li>
+    {% else %}
+    <li class="sg-chip sg-chip-muted" data-badge="cited-only">cited-only</li>
+    {% endif %}
+    {% if h.pdf_check_label %}<li class="sg-chip sg-chip-{{ 'warn' if h.pdf_check == 'miss' else 'plain' }}" data-badge="pdf-check">{{ h.pdf_check_label }}</li>{% endif %}
+    {% if h.text_quality_label %}<li class="sg-chip sg-chip-{{ 'plain' if h.text_quality == 'pass' else 'warn' }}" data-badge="text-quality">{{ h.text_quality_label }}</li>{% endif %}
+    {% if h.held and not h.converted %}<li class="sg-chip sg-chip-muted" data-badge="not-converted">not converted yet</li>{% endif %}
+    {% if h.converter_version %}<li class="sg-chip sg-chip-plain" data-badge="converter">converter {{ h.converter_version }}</li>{% endif %}
+    {% if h.converted and not h.has_page_info %}<li class="sg-chip sg-chip-warn" data-badge="no-pages">no page information: re-convert to get pages</li>{% endif %}
+    <li class="sg-chip sg-chip-plain" data-badge="note-state">note: {{ h.note_state }}</li>
+    {% if h.edited %}<li class="sg-chip sg-chip-researcher" data-badge="edited">edited</li>{% endif %}
+    {% if h.newer_extraction %}<li class="sg-chip sg-chip-warn" data-badge="newer-extraction"><a href="/papers/{{ h.paper_id }}/replay">newer extraction available</a></li>{% endif %}
+    {% for item in h.attention %}
+    <li class="sg-chip sg-chip-warn" data-badge="attention"><a href="/review/attention?kind={{ item.kind }}" title="{{ item.detail or '' }}">{{ item.kind | replace("_", " ") }}</a>{% if item.hides_notes %} (notes hidden from agents){% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% if h.graphs %}
+  <p class="sg-paper-graphs">In graphs:
+    {% for g in h.graphs %}<a class="sg-graph-link" href="/graphs/{{ g.slug }}">{{ g.display_name }}</a> <span class="sg-muted">({{ g.status }}{% if g.is_seed %}, seed{% endif %})</span>{% if not loop.last %}, {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+  <div class="sg-paper-actions">
+    {% if h.held %}<a class="sg-button" href="/papers/{{ h.paper_id }}/pdf" target="_blank" rel="noopener">Open PDF</a>{% endif %}
+    {% if h.held %}
+    <form method="post" action="/papers/{{ h.paper_id }}/write-notes" class="sg-inline-form">
+      {{ csrf_input }}
+      <button type="submit"{% if h.estimate and not h.estimate.queued %} disabled{% endif %}>Write notes{% if h.estimate and h.estimate.replace %} (replace){% endif %}</button>
+      {% if h.estimate %}
+        {% if h.estimate.queued %}
+        <span class="sg-estimate" data-estimate>about {{ "{:,}".format(h.estimate.text_tokens) }} paper text tokens; agent {{ "{:,}".format(h.estimate.agent_tokens_low) }}–{{ "{:,}".format(h.estimate.agent_tokens_high) }} tokens</span>
+        {% else %}
+        <span class="sg-estimate sg-muted" data-estimate>would be skipped: {{ h.estimate.reason }}</span>
+        {% endif %}
+      {% endif %}
+    </form>
+    {% endif %}
+    {% if h.other_graphs %}
+    <form method="post" action="/papers/{{ h.paper_id }}/graphs" class="sg-inline-form">
+      {{ csrf_input }}
+      <label>Add to graph
+        <select name="slug">
+          {% for g in h.other_graphs %}<option value="{{ g.slug }}">{{ g.display_name }}</option>{% endfor %}
+        </select>
+      </label>
+      <select name="status" aria-label="Graph status">
+        {% if h.held %}<option value="member">member</option>{% endif %}
+        <option value="frontier">frontier</option>
+      </select>
+      <button type="submit">Add</button>
+    </form>
+    {% endif %}
+  </div>
+  <details class="sg-metadata-edit">
+    <summary>Edit metadata</summary>
+    <form method="post" action="/papers/{{ h.paper_id }}/metadata" class="sg-form">
+      {{ csrf_input }}
+      <label>Title <input type="text" name="title" value="{{ h.title or '' }}" required></label>
+      <label>Year <input type="number" name="year" value="{{ h.year or '' }}" min="1000" max="2200"></label>
+      <label>Venue <input type="text" name="venue" value="{{ h.venue or '' }}"></label>
+      <label>Authors (one per line) <textarea name="authors" rows="3">{{ h.authors | join("\n") }}</textarea></label>
+      <p class="sg-muted">Saved as your values: Ollama and the providers never overwrite them.</p>
+      <button type="submit">Save metadata</button>
+    </form>
+  </details>
+</header>

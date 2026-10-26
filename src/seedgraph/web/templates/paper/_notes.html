@@ -1,0 +1,170 @@
+{#- The notes pane (swapped whole after every save, so every form carries the new
+    expected_version). Context: pane (views.paper.NotesPane), csrf_input. -#}
+{% macro post_attrs(path) -%}
+method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#sg-notes" hx-swap="outerHTML"
+{%- endmacro %}
+{% macro common() -%}
+<input type="hidden" name="expected_version" value="{{ pane.expected_version }}">
+{%- if pane.show_hidden %}<input type="hidden" name="show_hidden" value="1">{% endif -%}
+{%- endmacro %}
+{% macro type_select(selected, name="claim_type") -%}
+<select name="{{ name }}" aria-label="Claim type">
+  {% for t in pane.claim_types %}<option value="{{ t }}"{% if t == selected %} selected{% endif %}>{{ t | replace("_", " ") }}</option>{% endfor %}
+</select>
+{%- endmacro %}
+{% set base = "/papers/" ~ pane.paper_id %}
+<div id="sg-notes" class="sg-notes" data-expected-version="{{ pane.expected_version }}">
+  <input type="hidden" id="sg-notes-version" name="expected_version" value="{{ pane.expected_version }}">
+  {% if pane.message %}
+  <div class="sg-flash sg-flash-{{ pane.message_level }}" role="alert" data-notes-message>{{ pane.message }}</div>
+  {% endif %}
+  {% if pane.newer_extraction %}
+  <div class="sg-newer" data-newer-extraction>
+    {% if pane.edited %}Newer extraction available — <a href="{{ base }}/replay">compare</a>{% else %}A newer extraction is available.{% endif %}
+  </div>
+  {% endif %}
+  {% if not pane.has_page_info and pane.has_note %}
+  <p class="sg-notice" data-no-pages>{{ "No page information for this paper: quotes cannot be shown in the PDF. Re-convert to get pages; select passages in the text view." }}</p>
+  {% endif %}
+  <div class="sg-notes-tools">
+    {% if pane.show_hidden %}
+    <a href="{{ base }}?layout=notes" hx-get="{{ base }}/notes" hx-target="#sg-notes" hx-swap="outerHTML">Hide hidden claims</a>
+    {% else %}
+    <a href="{{ base }}?show_hidden=1" hx-get="{{ base }}/notes?show_hidden=1" hx-target="#sg-notes" hx-swap="outerHTML">Show hidden claims</a>
+    {% endif %}
+  </div>
+
+  {% if not pane.has_note %}
+  <p class="sg-placeholder">No notes yet.</p>
+  {% endif %}
+
+  {% for group in pane.groups %}
+  <section class="sg-claim-group" data-claim-type="{{ group.claim_type }}">
+    <h2 class="sg-claim-group-h">{{ group.label }}</h2>
+    {% for c in group.claims %}
+    <article class="sg-claim{% if c.hidden %} sg-claim-hidden{% endif %}" id="claim-{{ c.claim_id }}" data-claim-id="{{ c.claim_id }}">
+      <div class="sg-claim-head">
+        <span class="sg-chip sg-trust sg-trust-{{ c.trust }}" data-trust="{{ c.trust }}">{{ c.trust_label }}</span>
+        {% if c.trust_note %}<span class="sg-trust-note">{{ c.trust_note }}</span>{% endif %}
+        {% if c.hidden %}<span class="sg-chip sg-chip-muted" data-hidden>hidden</span>{% endif %}
+        {% if c.status != "found" %}<span class="sg-chip sg-chip-muted">{{ c.status | replace("_", " ") }}</span>{% endif %}
+      </div>
+      {% if c.normalized_label %}<p class="sg-claim-label">{{ c.normalized_label }}</p>{% endif %}
+      {% if c.claim_text %}<p class="sg-claim-text">{{ c.claim_text }}</p>{% endif %}
+      {% if c.plain_words %}<p class="sg-claim-plain sg-muted">{{ c.plain_words }}</p>{% endif %}
+      {% if c.quote %}
+      {% set loc = c.locator %}
+      <blockquote class="sg-quote">
+        <button type="button" class="sg-quote-link" data-quote
+                data-page="{{ loc.page if loc and loc.page else '' }}" data-page-end="{{ loc.page_end if loc and loc.page_end else '' }}"
+                data-how="{{ loc.how if loc else 'none' }}" data-needle="{{ loc.needle if loc else '' }}"
+                title="{{ 'Show this passage in the PDF' if loc and loc.page else 'no page information' }}">“{{ c.quote }}”</button>
+        {% if loc and loc.page %}
+        <button type="button" class="sg-page-chip" data-quote data-page="{{ loc.page }}" data-page-end="{{ loc.page_end or loc.page }}"
+                data-how="{{ loc.how }}" data-needle="{{ loc.needle }}">p. {{ loc.page }}{% if loc.page_end and loc.page_end != loc.page %}–{{ loc.page_end }}{% endif %}</button>
+        {% else %}
+        <span class="sg-chip sg-chip-muted" data-no-page>no page</span>
+        {% endif %}
+        {% if loc and loc.warning %}<span class="sg-muted">{{ loc.warning }}</span>{% endif %}
+        {% if c.kind == "quote" %}<span class="sg-muted">(the paper's words; the claim text is the researcher's)</span>{% endif %}
+      </blockquote>
+      {% endif %}
+      {% if c.original %}
+      <details class="sg-original">
+        <summary>agent's original</summary>
+        <p class="sg-muted">{{ c.original.claim_type | replace("_", " ") }}{% if c.original.normalized_label %} · {{ c.original.normalized_label }}{% endif %}</p>
+        <p>{{ c.original.claim_text }}</p>
+      </details>
+      {% endif %}
+      <div class="sg-claim-controls">
+        <details class="sg-claim-edit">
+          <summary>Edit</summary>
+          <form {{ post_attrs(base ~ "/notes/edit") }} class="sg-form">
+            {{ csrf_input }}
+            {{ common() }}
+            <input type="hidden" name="claim_id" value="{{ c.claim_id }}">
+            <label>Type {{ type_select(c.claim_type) }}</label>
+            <label>Label <input type="text" name="normalized_label" value="{{ c.normalized_label or '' }}"></label>
+            <label>Text <textarea name="claim_text" rows="3" required>{{ c.claim_text or '' }}</textarea></label>
+            <button type="submit">Save edit</button>
+          </form>
+        </details>
+        {% if c.added %}
+        <form {{ post_attrs(base ~ "/notes/remove") }} class="sg-inline-form">
+          {{ csrf_input }}
+          {{ common() }}
+          <input type="hidden" name="claim_id" value="{{ c.claim_id }}">
+          <button type="submit">Remove</button>
+        </form>
+        {% elif c.hidden %}
+        <form {{ post_attrs(base ~ "/notes/unhide") }} class="sg-inline-form">
+          {{ csrf_input }}
+          {{ common() }}
+          <input type="hidden" name="claim_id" value="{{ c.claim_id }}">
+          <button type="submit">Unhide</button>
+        </form>
+        {% else %}
+        <form {{ post_attrs(base ~ "/notes/hide") }} class="sg-inline-form">
+          {{ csrf_input }}
+          {{ common() }}
+          <input type="hidden" name="claim_id" value="{{ c.claim_id }}">
+          <button type="submit">Hide</button>
+        </form>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  {% if pane.has_note %}
+  <details class="sg-add-assertion">
+    <summary>Add an assertion</summary>
+    <form {{ post_attrs(base ~ "/notes/add") }} class="sg-form">
+      {{ csrf_input }}
+      {{ common() }}
+      <input type="hidden" name="kind" value="assertion">
+      <label>Type {{ type_select("limitation") }}</label>
+      <label>Label <input type="text" name="normalized_label" required></label>
+      <label>Text <textarea name="claim_text" rows="3" required></textarea></label>
+      <p class="sg-muted">Shown as a researcher assertion — not the paper's words.</p>
+      <button type="submit">Add assertion</button>
+    </form>
+  </details>
+  <p class="sg-muted">To add a claim backed by a quote, select the passage in the PDF (or in the text view).</p>
+
+  <section class="sg-researcher-notes">
+    <h2 class="sg-claim-group-h">Researcher notes</h2>
+    <form {{ post_attrs(base ~ "/notes/researcher-notes") }} class="sg-form">
+      {{ csrf_input }}
+      {{ common() }}
+      <textarea name="text" rows="5" aria-label="Researcher notes">{{ pane.researcher_notes or '' }}</textarea>
+      <button type="submit">Save notes</button>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if pane.history and pane.history.rows %}
+  <details class="sg-history" data-history>
+    <summary>History ({{ pane.history.rows | length }} versions)</summary>
+    <ol class="sg-history-list">
+      {% for v in pane.history.rows %}
+      <li data-version="{{ v.version_no }}">
+        <span class="sg-history-no">v{{ v.version_no }}</span>
+        <span class="sg-history-action">{{ v.action | replace("_", " ") }}</span>
+        {% if v.summary %}<span class="sg-muted">{{ v.summary }}</span>{% endif %}
+        <time class="sg-muted" datetime="{{ v.created_at }}">{{ v.created_at[:16] | replace("T", " ") }}</time>
+        {% if v.is_head %}<span class="sg-chip sg-chip-plain">current</span>{% else %}
+        <form {{ post_attrs(base ~ "/notes/revert") }} class="sg-inline-form">
+          {{ csrf_input }}
+          {{ common() }}
+          <input type="hidden" name="to_version" value="{{ v.version_no }}">
+          <button type="submit">Revert to v{{ v.version_no }}</button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+  </details>
+  {% endif %}
+</div>

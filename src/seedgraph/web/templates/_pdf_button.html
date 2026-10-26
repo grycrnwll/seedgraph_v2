@@ -1,0 +1,19 @@
+{#- Reusable paper-title macros (docs/V3_UI_DESIGN.md §2: "Every paper title anywhere carries a
+    small PDF button ... next to the link to its paper page").
+
+    {% from "_pdf_button.html" import pdf_button, paper_link, paper_title %}
+    {{ paper_title(paper_id, title, held) }}     link + PDF button (the usual list cell)
+    {{ paper_link(paper_id, title) }}            just the link to /papers/{id}
+    {{ pdf_button(paper_id, held) }}             just the PDF button (nothing for a cited-only paper)
+-#}
+{% macro pdf_button(paper_id, held=True) -%}
+{%- if held -%}
+<a class="sg-pdf-button" href="/papers/{{ paper_id }}/pdf" target="_blank" rel="noopener" title="Open the PDF in a new tab">PDF</a>
+{%- endif -%}
+{%- endmacro %}
+{% macro paper_link(paper_id, title) -%}
+<a class="sg-paper-link" href="/papers/{{ paper_id }}">{{ title or "(untitled paper)" }}</a>
+{%- endmacro %}
+{% macro paper_title(paper_id, title, held=True) -%}
+<span class="sg-paper-title">{{ paper_link(paper_id, title) }} {{ pdf_button(paper_id, held) }}</span>
+{%- endmacro %}
