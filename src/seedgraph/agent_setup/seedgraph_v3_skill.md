@@ -36,6 +36,29 @@ Cite what you used as paper title, year and page (from the claim's anchors or th
 `page_start`). Say plainly when the library has nothing on a point; do not fill the gap
 from memory as if it came from the papers.
 
+## The researcher's version
+
+Notes and claims are the researcher's current version of each paper. The researcher may
+have reworded a claim, hidden one, added their own, or written `researcher_notes`. Every
+claim carries `trust`, a `trust_label` and a `trust_note`:
+
+- `paper states` - an agent claim backed by a quote from the paper;
+- `agent inferred` - an agent claim with no quote (inferred, ambiguous or not found);
+- `researcher` - a claim the researcher edited (`edited_by_researcher: true`, with the
+  agent's wording under `original`) or added. An added claim with `claim_kind`
+  `assertion` has no quote: its `trust_note` reads "researcher assertion - not the
+  paper's words". An added `quote` claim's anchor is the paper's words; its claim text
+  is the researcher's.
+
+Three rules:
+
+1. When the researcher's version and the agent's `original` (or your own reading)
+   disagree, follow the researcher's version and say so.
+2. Never present a researcher assertion as the paper's text. Quote the paper only from
+   a claim's anchors or from `paper_read`.
+3. Say "researcher" when you cite researcher content, for example "the researcher notes
+   that..." or "(edited by the researcher)".
+
 ## Hidden notes
 
 Some papers have `notes_hidden: true` because an open attention item (for example a

@@ -4,6 +4,12 @@ Everything here is read-only and uses the agent audience: a paper with an open a
 item that hides notes (for example a possible wrong PDF) shows no note, no claims and no
 lens results, only ``notes_hidden: true`` and the item. Paper text (``paper_read``) is
 never hidden; it is the paper itself.
+
+Notes and claims are the **current interpretation** (stage 3 §4.3): for a researcher-edited
+paper, the researcher's version (edited wording, added claims, hidden claims left out).
+Every claim carries ``trust`` / ``trust_label`` / ``trust_note``, ``claim_kind`` and
+``edited_by_researcher``; an edited claim keeps the agent's wording one level down in
+``original``.
 """
 
 from __future__ import annotations
@@ -185,18 +191,37 @@ def _paper_list(lib: Library, graph: str | None, status: str | None, needs: str 
     return {"total": len(out), "offset": offset, "limit": limit, "next_offset": nxt, "papers": page}
 
 
-def _claims(conn: sqlite3.Connection, note_id: str) -> list[dict[str, Any]]:
+def _original(o: Any) -> dict[str, Any]:
+    return {"claim_type": o.claim_type, "label": o.normalized_label, "claim_text": o.claim_text}
+
+
+def _trust(out: dict[str, Any], trust: str | None, trust_label: str | None, trust_note: str | None,
+           claim_kind: str | None, edited: bool, original: Any) -> dict[str, Any]:
+    """Add the trust fields; the agent's original only for an edited claim."""
+    out.update({"trust": trust, "trust_label": trust_label, "trust_note": trust_note,
+                "claim_kind": claim_kind, "edited_by_researcher": edited})
+    if original is not None:
+        out["original"] = _original(original)
+    return out
+
+
+def _claims(conn: sqlite3.Connection, interp: Any) -> list[dict[str, Any]]:
+    """The interpretation's claims in its display order, each with its anchors (an added
+    quote-backed claim anchors at its quote's span; an assertion has none)."""
     out = []
-    for cid, field_key, ctype, csub, label, text, status, plain in conn.execute(
-            "SELECT claim_id, field_key, claim_type, claim_subtype, normalized_label, claim_text, status, "
-            "plain_words FROM extracted_claims WHERE structured_note_id = ? ORDER BY field_key, claim_id",
-            (note_id,)):
+    for c in interp.claims:
         spans = conn.execute(
             "SELECT e.span_id, e.page_start, e.page_end FROM claim_spans c JOIN evidence_spans e "
-            "ON e.span_id = c.span_id WHERE c.claim_id = ? ORDER BY c.rank, c.span_id", (cid,)).fetchall()
-        out.append({"claim_id": cid, "field_key": field_key, "claim_type": ctype, "claim_subtype": csub,
-                    "label": label, "claim_text": text, "status": status, "plain_words": plain,
-                    "anchors": [{"span_id": s[0], "page_start": s[1], "page_end": s[2]} for s in spans]})
+            "ON e.span_id = c.span_id WHERE c.claim_id = ? ORDER BY c.rank, c.span_id", (c.claim_id,)).fetchall()
+        if not spans and c.span_id is not None:
+            spans = conn.execute("SELECT span_id, page_start, page_end FROM evidence_spans WHERE span_id = ?",
+                                 (c.span_id,)).fetchall()
+        row = {"claim_id": c.claim_id, "field_key": c.field_key, "claim_type": c.claim_type,
+               "claim_subtype": c.claim_subtype, "label": c.normalized_label, "claim_text": c.claim_text,
+               "status": c.status, "plain_words": c.plain_words,
+               "anchors": [{"span_id": s[0], "page_start": s[1], "page_end": s[2]} for s in spans]}
+        out.append(_trust(row, c.trust, c.trust_label, c.trust_note, c.kind, c.edited_by_researcher,
+                          c.original))
     return out
 
 
@@ -212,15 +237,19 @@ def _paper_show(lib: Library, paper_id: str) -> dict[str, Any]:
         "SELECT id_type, id_value FROM identifiers WHERE paper_id = ? ORDER BY id_type, id_value", (pid,))]
     items = attention.list_items(lib, status="open", paper_id=pid)
     hidden = pid in _hidden(conn)
-    note_id = _current_note(conn, pid)
+    from ..notes import interpretation
+
+    interp = None if hidden else interpretation.current(conn, pid, "agent")
     note: dict[str, Any] | None = None
-    if note_id is not None and not hidden:
+    if interp is not None:
         version_no, schema_version, created_at = conn.execute(
             "SELECT version_no, schema_version, created_at FROM structured_notes WHERE note_id = ?",
-            (note_id,)).fetchone()
-        claims = _claims(conn, note_id)
-        note = {"note_id": note_id, "version_no": version_no, "schema_version": schema_version,
-                "created_at": created_at,
+            (interp.note_id,)).fetchone()
+        claims = _claims(conn, interp)
+        note = {"note_id": interp.note_id, "version_no": version_no, "schema_version": schema_version,
+                "created_at": created_at, "edited_by_researcher": interp.overlay_id is not None,
+                "overlay_id": interp.overlay_id, "overlay_version": interp.version_no,
+                "researcher_notes": interp.researcher_notes,
                 "claims_found": sum(1 for c in claims if c["status"] == "found"), "claims": claims}
     from ..work.packages import primary_markdown
 
@@ -277,6 +306,10 @@ def _hit(h: Any) -> dict[str, Any]:
         value = getattr(h, key)
         if value is not None:
             out[key] = value
+    if h.kind == "claims":
+        _trust(out, h.trust, h.trust_label, h.trust_note, h.claim_kind, h.edited_by_researcher, h.original)
+    elif h.kind == "notes":
+        out["edited_by_researcher"] = h.edited_by_researcher
     return out
 
 
@@ -346,7 +379,10 @@ def register_library_tools(server: FastMCP, ctx: V3Context) -> None:
     @server.tool(annotations=READ)
     def paper_show(paper_id: str) -> dict[str, Any]:
         """One paper: metadata, files, section outline, open attention items, and its current
-        note's claims with anchor pages (hidden while an attention item hides its notes)."""
+        interpretation's claims with anchor pages (hidden while an attention item hides its
+        notes). Each claim has a trust label (paper states / agent inferred / researcher); a
+        researcher-edited claim has edited_by_researcher and the agent's `original`, and
+        researcher_notes holds the researcher's own notes. Follow the researcher's version."""
         with ctx.library() as lib:
             return _paper_show(lib, paper_id)
 
@@ -356,7 +392,9 @@ def register_library_tools(server: FastMCP, ctx: V3Context) -> None:
                limit: int = 20) -> dict[str, Any]:
         """Full-text search of the library: `kind` spans (paper text), claims or notes.
         The query is matched as one phrase. `graph` limits to a context graph's members
-        (`include_frontier` adds its frontier); `section_kind` applies to spans only."""
+        (`include_frontier` adds its frontier); `section_kind` applies to spans only.
+        Claims and notes are the researcher's current version; claim hits carry trust,
+        trust_note and edited_by_researcher (with the agent's `original`)."""
         with ctx.library() as lib:
             return _search(lib, query, kind, graph, paper_id, section_kind, include_frontier, limit)
 

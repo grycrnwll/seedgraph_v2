@@ -32,7 +32,18 @@ in-scope ``paper_id``, ``start_char``, ``span_id``; claims and notes by ``rank``
 
 **Pages** are the stored ``page_start``/``page_end`` that :mod:`seedgraph.segment`
 wrote when the span was created. A claim takes the pages of its top anchor
-(``claim_spans`` by ``rank``, then ``span_id``). Notes have no page.
+(``claim_spans`` by ``rank``, then ``span_id``; an added quote-backed claim, its quote's
+span). Notes have no page.
+
+**Current interpretation** (stage 3 §4.3). For a researcher-edited paper ``claim_fts`` and
+``note_fts`` hold the interpretation (edited wording under the base claim ids, added claims
+under ``rc_`` ids, hidden claims left out), and hits show it: a claim hit takes its text,
+``trust``, ``claim_kind``, ``overlay_id`` and ``version_no`` from ``interpretation_claims``
+and keeps the agent's wording in ``original`` when the researcher edited it; a note hit on
+the overlay base shows ``interpretation_notes`` (which carries the researcher notes). Every
+other claim gets the trust the ``current_claims`` view derives (``paper_states`` for a found
+claim with an anchor, else ``agent_inferred``). Hidden claims are found by no audience.
+Added claims follow their base note's audience rules. Keys (:attr:`Hit.key`) are unchanged.
 """
 
 from __future__ import annotations
@@ -43,6 +54,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from ..fts.search import build_match_query
+from ..notes.interpretation import ASSERTION_NOTE, EDITED_NOTE, TRUST_LABELS, OriginalClaim
 from . import graphs
 from .attention import HIDDEN_PAPERS_SQL
 from .store import Library, LibraryError
@@ -78,6 +90,26 @@ class Hit:
     is_current: bool = True
     version_label: str | None = None
     hidden: bool = False
+    trust: str | None = None                # claims: paper_states | agent_inferred | researcher
+    edited_by_researcher: bool = False      # claims: an edited claim; notes: an edited note
+    claim_kind: str | None = None           # claims: agent | quote | assertion
+    original: OriginalClaim | None = None   # claims: the agent's wording of an edited claim
+    overlay_id: str | None = None
+    version_no: int | None = None           # the overlay head version the hit was read from
+
+    @property
+    def trust_label(self) -> str | None:
+        """``paper states`` / ``agent inferred`` / ``researcher`` (claims only)."""
+        return TRUST_LABELS.get(self.trust) if self.trust else None
+
+    @property
+    def trust_note(self) -> str | None:
+        """"edited by researcher", or the researcher-assertion warning (claims only)."""
+        if self.claim_kind == "assertion":
+            return ASSERTION_NOTE
+        if self.kind == "claims" and self.edited_by_researcher:
+            return EDITED_NOTE
+        return None
 
     @property
     def paper_id(self) -> str | None:
@@ -282,26 +314,42 @@ def _claims(
     audience: str,
     limit: int | None,
 ) -> list[Hit]:
+    # Driven from claim_fts: an agent claim joins extracted_claims (c); the interpretation of
+    # an edited paper joins interpretation_claims (ic), and an added claim has only ic.
     params: list[object] = []
     cte = _scope_cte(scope, params)
     sql = [
-        f"WITH {cte}{_CURRENT_LENS_RUNS}, hits AS (",
-        "SELECT c.claim_id, c.paper_id, c.structured_note_id, c.normalized_label, c.claim_text, "
-        "       bm25(claim_fts) AS rank, n.version_label, "
-        f"      {_CLAIM_IS_CURRENT} AS is_current, "
-        "       c.paper_id IN (SELECT paper_id FROM hidden_papers) AS paper_hidden, "
-        "       (SELECT cs.span_id FROM claim_spans cs WHERE cs.claim_id = c.claim_id "
-        "        ORDER BY cs.rank, cs.span_id LIMIT 1) AS span_id "
-        "FROM claim_fts JOIN extracted_claims c ON c.claim_id = claim_fts.claim_id "
-        "LEFT JOIN structured_notes n ON n.note_id = c.structured_note_id "
+        f"WITH {cte}{_CURRENT_LENS_RUNS}, joined AS (",
+        "SELECT claim_fts.claim_id, bm25(claim_fts) AS rank, "
+        "       COALESCE(c.paper_id, ic.paper_id) AS paper_id, "
+        "       COALESCE(c.structured_note_id, o.base_note_id) AS note_id, "
+        "       CASE WHEN c.claim_id IS NULL "
+        "            THEN o.base_note_id IN (SELECT note_id FROM current_notes) "
+        f"           ELSE {_CLAIM_IS_CURRENT} END AS is_current, "
+        "       CASE WHEN ic.claim_id IS NULL THEN c.claim_text ELSE ic.claim_text END AS claim_text, "
+        "       CASE WHEN ic.claim_id IS NULL THEN c.normalized_label ELSE ic.normalized_label END AS label, "
+        "       COALESCE(c.status, ic.status) AS status, ic.trust AS ic_trust, "
+        "       COALESCE(ic.edited, 0) AS edited, COALESCE(ic.kind, 'agent') AS claim_kind, "
+        "       ic.span_id AS ic_span, ic.overlay_id, ic.version_no, "
+        "       c.claim_type AS o_type, c.normalized_label AS o_label, c.claim_text AS o_text "
+        "FROM claim_fts "
+        "LEFT JOIN extracted_claims c ON c.claim_id = claim_fts.claim_id "
+        "LEFT JOIN interpretation_claims ic ON ic.claim_id = claim_fts.claim_id "
+        "LEFT JOIN note_overlays o ON o.overlay_id = ic.overlay_id "
         "LEFT JOIN extraction_runs er ON er.extraction_run_id = c.extraction_run_id "
-        "WHERE claim_fts MATCH ?",
+        "WHERE claim_fts MATCH ? AND COALESCE(ic.hidden, 0) = 0 "
+        "AND (c.claim_id IS NOT NULL OR ic.claim_id IS NOT NULL)",
+        "), hits AS (SELECT j.*, n.version_label, "
+        "       j.paper_id IN (SELECT paper_id FROM hidden_papers) AS paper_hidden, "
+        "       COALESCE((SELECT cs.span_id FROM claim_spans cs WHERE cs.claim_id = j.claim_id "
+        "        ORDER BY cs.rank, cs.span_id LIMIT 1), j.ic_span) AS span_id "
+        "FROM joined j LEFT JOIN structured_notes n ON n.note_id = j.note_id WHERE 1",
     ]
     params.append(match)
     if scope is not None:
-        sql.append("AND c.paper_id IN (SELECT paper_id FROM scope)")
+        sql.append("AND j.paper_id IN (SELECT paper_id FROM scope)")
     if paper_id is not None:
-        sql.append("AND c.paper_id = ?")
+        sql.append("AND j.paper_id = ?")
         params.append(paper_id)
     sql.append(") SELECT h.*, e.markdown_id, e.page_start, e.page_end FROM hits h "
                "LEFT JOIN evidence_spans e ON e.span_id = h.span_id")
@@ -309,17 +357,24 @@ def _claims(
         sql.append("WHERE h.is_current AND NOT h.paper_hidden AND h.version_label IS NULL")
     sql.append("ORDER BY h.rank, h.paper_id, h.claim_id")
     sql.append(_limit_clause(limit, params))
-    return [
-        Hit(
-            kind="claims", rank=float(r["rank"]), paper_ids=(r["paper_id"],),
-            text=r["claim_text"] or r["normalized_label"] or "", claim_id=r["claim_id"],
-            note_id=r["structured_note_id"], span_id=r["span_id"], markdown_id=r["markdown_id"],
-            page_start=r["page_start"], page_end=r["page_end"],
-            is_current=bool(r["is_current"]), version_label=r["version_label"],
-            hidden=bool(r["paper_hidden"]) or r["version_label"] is not None,
-        )
-        for r in conn.execute(" ".join(sql), params)
-    ]
+    return [_claim_hit(r) for r in conn.execute(" ".join(sql), params)]
+
+
+def _claim_hit(r: sqlite3.Row) -> Hit:
+    edited = bool(r["edited"])
+    trust = r["ic_trust"] or (
+        "paper_states" if r["status"] == "found" and r["span_id"] is not None else "agent_inferred")
+    return Hit(
+        kind="claims", rank=float(r["rank"]), paper_ids=(r["paper_id"],),
+        text=r["claim_text"] or r["label"] or "", claim_id=r["claim_id"],
+        note_id=r["note_id"], span_id=r["span_id"], markdown_id=r["markdown_id"],
+        page_start=r["page_start"], page_end=r["page_end"],
+        is_current=bool(r["is_current"]), version_label=r["version_label"],
+        hidden=bool(r["paper_hidden"]) or r["version_label"] is not None,
+        trust=trust, edited_by_researcher=edited, claim_kind=r["claim_kind"],
+        original=OriginalClaim(r["o_type"], r["o_label"], r["o_text"]) if edited else None,
+        overlay_id=r["overlay_id"], version_no=r["version_no"],
+    )
 
 
 def _notes(
@@ -334,11 +389,16 @@ def _notes(
     cte = _scope_cte(scope, params)
     sql = [
         f"WITH {cte}{_CURRENT_LENS_RUNS}, hits AS (",
-        "SELECT n.note_id, n.paper_id, n.markdown_id, n.note_text, n.version_label, "
+        "SELECT n.note_id, n.paper_id, n.markdown_id, n.version_label, "
+        "       COALESCE(i.note_text, n.note_text) AS note_text, i.note_text IS NOT NULL AS edited, "
+        "       CASE WHEN i.note_text IS NULL THEN NULL ELSE o.overlay_id END AS overlay_id, "
+        "       CASE WHEN i.note_text IS NULL THEN NULL ELSE o.head_version_no END AS version_no, "
         "       bm25(note_fts) AS rank, "
         "       n.note_id IN (SELECT note_id FROM current_notes) AS is_current, "
         "       n.paper_id IN (SELECT paper_id FROM hidden_papers) AS paper_hidden "
         "FROM note_fts JOIN structured_notes n ON n.note_id = note_fts.note_id "
+        "LEFT JOIN note_overlays o ON o.base_note_id = n.note_id "
+        "LEFT JOIN interpretation_notes i ON i.paper_id = o.paper_id AND i.schema_id IS o.schema_id "
         "WHERE note_fts MATCH ?",
     ]
     params.append(match)
@@ -358,6 +418,7 @@ def _notes(
             note_id=r["note_id"], markdown_id=r["markdown_id"],
             is_current=bool(r["is_current"]), version_label=r["version_label"],
             hidden=bool(r["paper_hidden"]) or r["version_label"] is not None,
+            edited_by_researcher=bool(r["edited"]), overlay_id=r["overlay_id"], version_no=r["version_no"],
         )
         for r in conn.execute(" ".join(sql), params)
     ]
