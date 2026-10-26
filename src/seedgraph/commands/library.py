@@ -288,15 +288,45 @@ def delete(
 
 # --- refetch-metadata, prune-replaced -------------------------------------------------------------
 
+def refetch_chain(lib: Library):
+    """The provider chain ``refetch-metadata`` uses (the real one). Tests replace this."""
+    from ..library import metadata_verify
+
+    return metadata_verify.default_chain(lib)
+
+
 @library_app.command("refetch-metadata")
 def refetch_metadata(
-    malformed: bool = typer.Option(False, "--malformed", help="Papers flagged with a malformed title."),
+    paper_ids: Optional[list[str]] = typer.Argument(None, help="Papers to look up again."),
+    malformed: bool = typer.Option(False, "--malformed",
+                                   help="Also every paper whose title is missing, footnote-marked or generic."),
     root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
 ) -> None:
-    """Re-fetch metadata from the providers. Not available yet: arrives with the stage 2 metadata task."""
-    with _common.cli_errors():
-        raise _common.NotAvailable(
-            "`library refetch-metadata` is not available yet; it arrives with the stage 2 metadata task")
+    """Re-run the provider lookups: verify each paper's DOI with OpenAlex / Crossref and prefer the
+    verified values; footnote marks are cleaned. Researcher-set metadata is never changed."""
+    import sqlite3
+
+    from ..library import metadata_verify
+
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        if not paper_ids and not malformed:
+            _common.fail("name papers or pass --malformed")
+        chain = refetch_chain(lib)
+        try:
+            outcomes = metadata_verify.refetch(lib, paper_ids or None, malformed=malformed, chain=chain)
+        finally:
+            engine = getattr(chain, "cache_engine", None)
+            if isinstance(engine, sqlite3.Connection):
+                engine.close()
+    if json_out:
+        _common.echo_json([o.as_dict() for o in outcomes])
+    elif not outcomes:
+        typer.echo("no papers to look up")
+    else:
+        _common.echo_table(["paper_id", "status", "doi", "provider", "changed", "detail"],
+                           [[o.paper_id, o.status, o.doi or "", o.provider or "", ",".join(o.changed),
+                             _common.one_line(o.detail)] for o in outcomes])
 
 
 @library_app.command("prune-replaced")

@@ -1,5 +1,6 @@
 """`seedgraph convert [PDF...] [--queued] [--paper ID]`: a thin adapter over
-:func:`seedgraph.library.files.convert_files` (the stage 0 warm converter pool)."""
+:func:`seedgraph.library.files.convert_files` (the stage 0 warm converter pool).
+It refuses while ``seedgraph serve`` holds the converter lock (UI design §6)."""
 
 from __future__ import annotations
 
@@ -21,7 +22,12 @@ def convert(
     root: Optional[Path] = _common.ROOT_OPTION,
     json_out: bool = _common.JSON_OPTION,
 ) -> None:
-    """Convert PDFs to markdown in the library. A failed file does not stop the batch (exit 1)."""
+    """Convert PDFs to markdown in the library. A failed file does not stop the batch (exit 1).
+    Refused while `seedgraph serve` runs: it owns the converters (add PDFs in the UI)."""
+    from ..web.jobs import check_converter_free  # the lock API; no web framework import
+
+    with _common.cli_errors():
+        check_converter_free(_common.home(root))
     with _common.cli_errors(), _common.existing_library(root) as lib:
         outcomes = files.convert_files(lib, pdfs=tuple(pdfs or ()), queued=queued, paper_id=paper,
                                        force=force)

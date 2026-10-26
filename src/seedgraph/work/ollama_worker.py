@@ -2,7 +2,14 @@
 calls every other worker uses, never a side path.
 
     run_ollama_worker(lib, batch_id, *, model, max_packages, base_url, client,
-                      worker_id, retries, timeout)              -> OllamaRunReport
+                      worker_id, retries, timeout, chain)       -> OllamaRunReport
+
+Metadata quality (design §7) is applied by the ``metadata`` task itself, so this worker
+gets exactly what every other worker gets: titles cleaned, generic titles held back as
+``metadata_generic_title`` items. With ``chain`` (a provider chain with ``by_doi``) the
+task's post-commit hook also verifies each saved paper's DOI with the providers, outside
+the submit transaction; the chain is set for this run only (``metadata_verify.set_chain``)
+and reset afterwards. Without one, titles stay ``'ollama'`` (unverified).
 
 Loop: ``claim_next`` as ``WorkerRef('ollama', ...)`` -> system prompt =
 ``instructions.md`` (read once per batch), user prompt = the package text (for
@@ -104,12 +111,27 @@ def _submit_errors(result: routine.SubmitResult) -> list[str]:
 def run_ollama_worker(lib: Library, batch_id: str, *, model: str, max_packages: int | None = None,
                       base_url: str | None = None, client: OllamaClient | None = None,
                       worker_id: str | None = None, retries: int = 1,
-                      timeout: float = DEFAULT_TIMEOUT_S) -> OllamaRunReport:
+                      timeout: float = DEFAULT_TIMEOUT_S, chain: Any = None) -> OllamaRunReport:
     """Work ``batch_id`` with Ollama ``model`` until it stops (see the module docstring)."""
     if not model:
         raise ValueError("an Ollama model is required")
     if max_packages is not None and max_packages < 1:
         raise ValueError("max_packages must be positive")
+    if chain is None:
+        return _run(lib, batch_id, model=model, max_packages=max_packages, base_url=base_url, client=client,
+                    worker_id=worker_id, retries=retries, timeout=timeout)
+    from ..library import metadata_verify
+
+    token = metadata_verify.set_chain(chain)
+    try:
+        return _run(lib, batch_id, model=model, max_packages=max_packages, base_url=base_url, client=client,
+                    worker_id=worker_id, retries=retries, timeout=timeout)
+    finally:
+        metadata_verify.reset_chain(token)
+
+
+def _run(lib: Library, batch_id: str, *, model: str, max_packages: int | None, base_url: str | None,
+         client: OllamaClient | None, worker_id: str | None, retries: int, timeout: float) -> OllamaRunReport:
     ollama = client or OllamaClient(base_url, timeout=timeout)
     worker = WorkerRef("ollama", worker_id or default_worker_id(), client=CLIENT_NAME, model=model)
     report = OllamaRunReport(batch_id=batch_id, model=model, worker_id=worker.worker_id)

@@ -16,6 +16,11 @@ Rules chosen where the design is silent:
 - A PDF shared by several papers switches for all of them, so every one is re-matched.
 - A gate item the researcher already resolved (e.g. ``accept_text``) is never touched.
 - A failed conversion leaves attention items as they were; the result carries the error.
+
+Converter lock (UI design §6): while another process (``seedgraph serve``) holds
+``<home>/run/converter.lock``, :func:`reconvert_ocr` refuses with
+:class:`~seedgraph.web.jobs.ConverterLockHeld` before touching anything. The process that
+holds the lock (serve's own jobs) is not refused.
 """
 
 from __future__ import annotations
@@ -93,11 +98,25 @@ def _keep_open(lib: Library, paper_id: str, old_md: str, new_summary: str) -> st
                                 detail=f"{old.summary}; {detail}", hides_notes=False).item_id
 
 
+def refuse_if_converters_busy(lib: Library) -> None:
+    """Raise :class:`ConverterLockHeld` while a process other than this one holds the
+    converter lock of the library's home."""
+    import os
+
+    from ..web.jobs import ConverterLockHeld, converter_lock_holder, converter_lock_path  # no web framework
+
+    home = lib.root.parent
+    pid = converter_lock_holder(home)
+    if pid is not None and pid != os.getpid():
+        raise ConverterLockHeld(pid, converter_lock_path(home))
+
+
 def reconvert_ocr(lib: Library, paper_id: str, *, backend: MarkerBackend | None = None) -> ReconvertResult:
     """Re-convert the paper's primary PDF with forced OCR (see the module doc).
 
     Must not be called inside an open library transaction.
     """
+    refuse_if_converters_busy(lib)
     row = lib.conn.execute(
         "SELECT source_file_id, markdown_id FROM paper_files WHERE paper_id = ? AND role = 'primary'",
         (paper_id,)).fetchone()

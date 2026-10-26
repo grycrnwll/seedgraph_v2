@@ -370,7 +370,9 @@ def index_sections(lib: Library, markdown_id: str) -> int:
     """Parse and store ``document_sections`` for a converted markdown (v2's
     ``parse_sections``, deterministic ``sec_`` ids), so its reference ranges exist for
     packaging and the gate. A markdown that already has sections (migrated, or an
-    earlier conversion of the same bytes) is left as it is. Returns rows written."""
+    earlier conversion of the same bytes) is left as it is - checked again inside the
+    write, so two concurrent conversions of identical markdown cannot collide. Returns
+    rows written."""
     from ..notes.spans import read_markdown  # local: notes imports the library
     from ..sections.parser import SECTION_PARSER_VERSION, parse_sections
 
@@ -389,9 +391,14 @@ def index_sections(lib: Library, markdown_id: str) -> int:
                               source_file_hash=row[2], work_id="")
     now = _now()
     with lib.write() as wconn:
+        # Re-checked inside the write: another conversion of the same bytes (two PDFs with
+        # identical markdown converting at once) may have indexed it since the check above.
+        if wconn.execute("SELECT 1 FROM document_sections WHERE markdown_id = ? LIMIT 1",
+                         (markdown_id,)).fetchone() is not None:
+            return 0
         for sec in sections:
             wconn.execute(
-                "INSERT INTO document_sections (section_id, markdown_id, markdown_hash, source_file_id, "
+                "INSERT OR IGNORE INTO document_sections (section_id, markdown_id, markdown_hash, source_file_id, "
                 "source_file_hash, parent_section_id, level, ordinal, heading_text, heading_path, section_kind, "
                 "start_char, end_char, page_start, page_end, section_parser_version, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

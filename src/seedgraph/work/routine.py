@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime
@@ -431,7 +432,22 @@ def submit(lib: Library, packet_id: str, claim_id: str, *, note: dict | str | No
         result.next_action = _after_accept(state.derive_state(conn, batch.batch_id))
         if result.parts_done == total:
             _complete_item(lib, conn, batch, store.get_item(conn, batch.batch_id, package.ordinal), tt, result, now)
+    if result.paper_status == "done":
+        _after_commit(lib, tt, item, result)
     return result
+
+
+def _after_commit(lib: Library, tt: tasks.TaskType, item: store.BatchItem, result: SubmitResult) -> None:
+    """Run the task's optional post-commit hook (:data:`tasks.AFTER_COMMIT`) once the save
+    has committed and no transaction is open. The submission is already accepted, so a
+    failing hook is logged and never raised."""
+    hook = getattr(tt, tasks.AFTER_COMMIT, None)
+    if hook is None or lib.conn.in_transaction:
+        return
+    try:
+        hook(lib, item, result)
+    except Exception:  # noqa: BLE001 - an accepted submission never fails afterwards
+        logging.getLogger(__name__).exception("post-commit hook of %s failed for %s", tt.name, item.subject_id)
 
 
 def _after_accept(st: BatchState) -> str:

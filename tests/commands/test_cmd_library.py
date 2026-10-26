@@ -152,10 +152,17 @@ def test_delete_with_yes_deletes(runner, migrated_home):
 
 # --- refetch-metadata, prune-replaced ------------------------------------------------------------
 
-def test_refetch_metadata_is_not_available_yet(runner, migrated_home):
-    result = _invoke(runner, migrated_home, "refetch-metadata", "--malformed")
-    assert result.exit_code == 4
-    assert "stage 2" in result.output
+def test_refetch_metadata_runs_on_malformed_papers(runner, migrated_home, monkeypatch):
+    from seedgraph.commands import library as library_cmd
+
+    class NoProvider:  # offline: no provider knows any DOI
+        async def by_doi(self, doi):
+            return None
+
+    monkeypatch.setattr(library_cmd, "refetch_chain", lambda lib: NoProvider())
+    result = _invoke(runner, migrated_home, "refetch-metadata", "--malformed", "--json")
+    assert result.exit_code == 0, result.output
+    assert isinstance(json.loads(result.output), list)
 
 
 def test_prune_replaced_needs_yes(runner, migrated_home):

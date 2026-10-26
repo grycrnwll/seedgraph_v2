@@ -5,10 +5,19 @@
   hits from that same region (never a cited work's id from a later reference list).
 - Output: ``{title, authors, year, venue, doi, arxiv}``, each null when unknown.
 - Save: fill empty fields only, so a researcher-set field is never overwritten;
+  the title is cleaned first (footnote marks, ``library.metadata_quality.clean_title``)
+  and a generic one ("Contents", "Abstract", the venue's name …) is not saved: a
+  ``metadata_generic_title`` attention item records the proposed value and its source,
+  and ``metadata_needed`` stays open;
   ``title_source = 'ollama'`` for an Ollama worker, else ``'agent'``; new ids into
   ``identifiers`` (an id already held by another paper is skipped and reported); the
   worker's id wins, the deterministic hit fills a null; resolves the paper's open
   ``metadata_needed`` item once it has a title.
+- After the commit (:meth:`MetadataTask.after_commit`, called by the routine outside the
+  submit transaction): the paper's DOI is verified with the providers
+  (``library.metadata_verify.verify``) when a chain is set for this context
+  (``metadata_verify.set_chain``; the Ollama worker sets its ``chain``). No chain, no
+  lookup: the title stays ``'ollama'`` / ``'agent'`` (unverified).
 - Workers: Ollama (the default worker for this task, P6), interactive, background.
   Only the text-quality gate holds a paper back (a title miss is what metadata fixes).
 
@@ -26,6 +35,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..library.identity import normalize_ids
+from ..library.metadata_quality import clean_title, generic_title_reason
 from . import packages
 from .tasks import (
     AcceptedPart,
@@ -46,6 +56,7 @@ if TYPE_CHECKING:
 HEAD_CHARS = 2600
 TASK_VERSION = "metadata-1"
 METADATA_NEEDED = "metadata_needed"
+GENERIC_TITLE = "metadata_generic_title"
 FIELDS = ("title", "authors", "year", "venue", "doi", "arxiv")
 
 _DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
@@ -165,10 +176,16 @@ class MetadataTask:
         title, authors, year, venue = conn.execute(
             "SELECT title, authors_json, year, venue FROM papers WHERE paper_id = ?", (pid,)).fetchone()
         filled: list[str] = []
-        if not (title or "").strip() and meta["title"]:
-            conn.execute("UPDATE papers SET title = ?, title_source = ? WHERE paper_id = ?",
-                         (meta["title"], source, pid))
-            filled.append("title")
+        rejected: str | None = None
+        proposed = clean_title(meta["title"])
+        if not (title or "").strip() and proposed:
+            reason = generic_title_reason(proposed, venue=meta["venue"] or venue)
+            if reason is None:
+                conn.execute("UPDATE papers SET title = ?, title_source = ? WHERE paper_id = ?",
+                             (proposed, source, pid))
+                filled.append("title")
+            else:
+                rejected = _reject_title(ctx.lib, pid, proposed, source, reason, part.model)
         if not authors and meta["authors"]:
             conn.execute("UPDATE papers SET authors_json = ? WHERE paper_id = ?",
                          (json.dumps(meta["authors"], ensure_ascii=False), pid))
@@ -199,7 +216,29 @@ class MetadataTask:
                 "UPDATE attention_items SET status = 'resolved', resolution = 'metadata_filled', resolved_at = ? "
                 "WHERE paper_id = ? AND kind = ? AND status = 'open'", (_now(), pid, METADATA_NEEDED)).rowcount
         return SaveResult(pid, {"filled": filled, "ids_attached": attached, "ids_collided": collided,
-                                "resolved_items": resolved})
+                                "resolved_items": resolved, "generic_title_item": rejected})
+
+    def after_commit(self, lib: Library, item: BatchItem, result: Any) -> Any:
+        """Verify the paper's DOI with the providers once the save has committed (outside
+        the submit transaction); a no-op when no chain is set for this context."""
+        from ..library import metadata_verify
+
+        chain = metadata_verify.current_chain()
+        if chain is None or lib.conn.in_transaction:
+            return None
+        return metadata_verify.verify(lib, item.subject_id, chain=chain)
+
+
+def _reject_title(lib: Library, paper_id: str, proposed: str, source: str, reason: str,
+                  model: str | None) -> str:
+    """Raise the ``metadata_generic_title`` item for a title that is not saved."""
+    from ..library import attention
+
+    who = source + (f" ({model})" if model else "")
+    item = attention.raise_item(
+        lib, GENERIC_TITLE, {"paper_id": paper_id, "title": proposed}, paper_id=paper_id,
+        detail=f"{who} proposed the title '{proposed}', which was not saved: {reason}")
+    return item.item_id
 
 
 def _opt_str(value: Any) -> str | None:

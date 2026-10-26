@@ -108,6 +108,14 @@ class SaveContext:
     options: Mapping[str, Any]
 
 
+#: Optional post-commit hook a task type may define (not part of :class:`TaskType`, so
+#: task types without one need nothing): ``after_commit(lib, item, result)``. The routine
+#: calls it after the submit transaction that saved the item ``done`` has committed, with
+#: no transaction open (network work such as the metadata task's DOI verification belongs
+#: here, never inside ``save``); an exception from it is logged, never raised.
+AFTER_COMMIT = "after_commit"
+
+
 class TaskType(Protocol):
     name: str
     version: str
