@@ -1,0 +1,15 @@
+<nav class="sg-sidebar" aria-label="Main">
+  <div class="sg-brand">seedgraph</div>
+  <ul class="sg-nav">
+    {% for item in nav %}
+    <li><a class="sg-nav-link{% if nav_active == item.key %} sg-nav-active{% endif %}" href="{{ item.href }}"{% if nav_active == item.key %} aria-current="page"{% endif %}>{{ item.label }}</a>
+      {% if item.key == "library" and review_open %}
+      <ul class="sg-subnav">
+        <li><a class="sg-nav-link{% if nav_active == 'review' %} sg-nav-active{% endif %}" href="/review/attention">Review</a>
+          <span class="sg-badge">{{ review_open }}</span></li>
+      </ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</nav>

@@ -40,12 +40,20 @@ dependencies = [
     # PDF engine Marker uses, so counts agree. Binary wheel, no torch. Lazy-imported
     # inside seedgraph/golden/pdf.py.
     "pypdfium2>=5.14.0",
+    # Stage 3 web UI (`seedgraph serve`, docs/V3_UI_DESIGN.md §1.1): server-rendered
+    # Starlette + Jinja2 pages served by plain uvicorn (not `[standard]`), and
+    # python-multipart for form and upload parsing. Exact versions pinned in uv.lock.
+    "starlette",
+    "jinja2",
+    "uvicorn",
+    "python-multipart",
 ]
 # Marker / Surya / torch are NOT here: PDF conversion runs in the separate,
 # separately locked converter environment under `converter/` (see
 # docs/DEPENDENCY_POLICY.md). The app environment never contains torch.
 # Stage 2 removed `keyring` (scholarly-API keys come from environment variables
-# only) and the old web UI's fastapi/jinja2/uvicorn/python-multipart.
+# only) and the old web UI's fastapi; stage 3 re-added starlette/jinja2/uvicorn/
+# python-multipart for the new web UI (no FastAPI).
 
 [project.scripts]
 # Interim name: v2's `seedgraph.exe` is already on PATH, so v3 installs as
@@ -77,6 +85,8 @@ seedgraph = [
     "db/schema/graph/*.sql",
     "migrate/v2_schema/project/*.sql",
     "migrate/v2_schema/cache/*.sql",
+    "web/templates/**/*",
+    "web/static/**/*",
 ]
 
 [tool.pytest.ini_options]

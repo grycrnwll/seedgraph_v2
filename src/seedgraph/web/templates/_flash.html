@@ -1,0 +1,5 @@
+<div id="sg-flashes" class="sg-flashes">
+  {% for f in flashes %}
+  <div class="sg-flash sg-flash-{{ f.level }}" role="status">{{ f.text }}</div>
+  {% endfor %}
+</div>
