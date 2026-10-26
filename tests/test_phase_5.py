@@ -19,10 +19,8 @@ from sqlmodel import Session, select
 
 # Import-cleanliness: these must all import without error at collection time.
 from seedgraph.db import engine as db_engine
-from seedgraph.db import project_models
 from seedgraph.db.project_models import Identifier, ProjectDocument, ReviewQueueItem, Work
 from seedgraph.errors import ValidationError
-from seedgraph.project import config as project_config
 from seedgraph.project import identity, layout, review, service
 
 _SCHEMA_DIR = Path(db_engine.__file__).resolve().parent / "schema"
@@ -384,88 +382,7 @@ def test_phase5_review_queue_payload_validation():
 # test_cli_project
 # --------------------------------------------------------------------------
 
-def test_phase5_cli_project_flow(tmp_path):
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-
-    runner = CliRunner()
-    root = str(tmp_path / "home")
-
-    def run(*args):
-        return runner.invoke(app, [*args, "--root", root])
-
-    assert run("project", "new", "cliproj", "--name", "CLI Proj").exit_code == 0
-    assert run(
-        "project", "add", "cliproj", "--doi", "10.1/a", "--title", "Paper A", "--seed"
-    ).exit_code == 0
-    assert run(
-        "project", "add", "cliproj", "--arxiv", "2101.1", "--title", "Paper B",
-        "--status", "metadata_only",
-    ).exit_code == 0
-    assert run(
-        "project", "add", "cliproj", "--title", "Paper C",
-        "--status", "excluded", "--reason", "user_excluded",
-    ).exit_code == 0
-
-    show = run("project", "show", "cliproj")
-    assert show.exit_code == 0
-    assert "Paper A" in show.output and "included" in show.output
-    assert "metadata_only" in show.output and "excluded" in show.output
-
-    # doctor reports FK pragma ON for the project scope (uses the existing surface)
-    doc = runner.invoke(app, ["doctor", "--project", "cliproj", "--root", root])
-    assert doc.exit_code == 0
-    assert "foreign_keys_project" in doc.output and "ON" in doc.output
-
-    # FK enforcement is real: deleting a work cascades project_documents + identifiers
-    h = service.open_project("cliproj", root=Path(root))
-    with Session(h.engine) as s:
-        work = s.exec(select(Work).where(Work.canonical_title == "Paper A")).one()
-        wid = work.work_id
-        s.delete(work)
-        s.commit()
-    with Session(h.engine) as s:
-        assert s.get(ProjectDocument, wid) is None
-        assert s.exec(select(Identifier).where(Identifier.work_id == wid)).all() == []
-
-
 # --------------------------------------------------------------------------
 # test_api_read_routes (scaffold-critic gap 1)
 # --------------------------------------------------------------------------
 
-def test_phase5_milestone_acceptance(tmp_path):
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-
-    runner = CliRunner()
-    root = str(tmp_path / "home")
-
-    def run(*args):
-        result = runner.invoke(app, [*args, "--root", root])
-        assert result.exit_code == 0, result.output
-        return result
-
-    run("project", "new", "did_demo", "--name", "DiD demo")
-    run("project", "add", "did_demo", "--doi", "10.x/aaa", "--title", "Paper A", "--seed")
-    run("project", "add", "did_demo", "--arxiv", "2101.00001", "--title", "Paper B",
-        "--status", "metadata_only")
-    run("project", "add", "did_demo", "--title", "Paper C", "--status", "excluded",
-        "--reason", "user_excluded")
-
-    show = run("project", "show", "did_demo").output
-    # A=included(seed), B=metadata_only, C=excluded all present
-    assert "Paper A" in show and "Paper B" in show and "Paper C" in show
-    assert "included" in show and "metadata_only" in show and "excluded" in show
-
-    # Isolation assertion: two projects' corpora are disjoint and each non-empty.
-    run("project", "new", "did_demo2")
-    run("project", "add", "did_demo2", "--doi", "10.y/zzz", "--title", "Paper Z")
-
-    h1 = service.open_project("did_demo", root=Path(root))
-    h2 = service.open_project("did_demo2", root=Path(root))
-    c1 = {w.work_id for w in service.corpus_works(h1)}
-    c2 = {w.work_id for w in service.corpus_works(h2)}
-    assert c1 and c2  # each non-empty
-    assert c1.isdisjoint(c2)  # disjoint — query only that project's corpus

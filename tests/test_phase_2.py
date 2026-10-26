@@ -33,7 +33,6 @@ from seedgraph.citation.edges import (
     write_edge,
 )
 from seedgraph.citation.project_edges import project_provider_edges
-from seedgraph.cli import app
 from seedgraph.db.connection import open_cache_db
 from seedgraph.db.migrations import run_migrations
 from seedgraph.db.project_models import CitationEdge, ReferenceEntry
@@ -214,32 +213,6 @@ def test_unresolved_target_diagnostic_surfaced():
 
 
 # --- run_id allocation (must-fix #3) --------------------------------------
-
-def test_standalone_cite_project_allocates_not_null_run_id():
-    """Standalone ``cite project`` writes edges carrying a valid, NOT-NULL
-    ``run_id`` allocated at the start of the invocation (must-fix #3) — the
-    ``citation_edges.run_id`` NOT NULL constraint is always satisfied."""
-    h = service.create_project("standalone")
-    service.add_work(h, ids={"openalex": "W_A"}, title="A")
-    service.add_work(h, ids={"openalex": "W_B"}, title="B")
-    _seed_refs({"openalex_id": "W_A"}, [{"openalex_id": "W_B"}])
-
-    result = runner.invoke(app, ["cite", "project", "standalone"])
-    assert result.exit_code == 0, result.output
-
-    conn = _project_conn(h)
-    try:
-        rows = conn.execute("SELECT run_id FROM citation_edges").fetchall()
-        nulls = conn.execute(
-            "SELECT COUNT(*) FROM citation_edges WHERE run_id IS NULL"
-        ).fetchone()[0]
-    finally:
-        conn.close()
-
-    assert len(rows) == 1
-    assert rows[0][0] and rows[0][0].startswith("run-")
-    assert nulls == 0
-
 
 def test_two_projections_distinct_run_ids_both_preserved():
     """Two successive projections mint two distinct ``run_id`` values, and both
@@ -625,46 +598,3 @@ def test_migration_parity_orm_equals_migrated_schema(tmp_path):
 
 # --- acceptance milestone (doc 10 §9) -------------------------------------
 
-def test_acceptance_cite_table_matches_known_relationships():
-    """After phase_5b has grown the corpus and populated ``provider_cache``,
-    ``cite run`` then ``cite table <slug>`` prints the included->included citation
-    matrix projected purely from cached provider metadata (no network, no PDFs),
-    matching the 5-10 paper corpus's known shared-citation relationships
-    (doc 10 §9/§16; criteria 1/2)."""
-    h = service.create_project("accept")
-    service.add_work(h, ids={"openalex": "W_A", "doi": "10.a"}, title="Paper A")
-    service.add_work(h, ids={"openalex": "W_B", "doi": "10.b"}, title="Paper B")
-    service.add_work(h, ids={"openalex": "W_C", "doi": "10.c"}, title="Paper C")
-    # Known relationships: A cites B and C; B cites C.
-    _seed_refs({"openalex_id": "W_A"}, [{"openalex_id": "W_B"}, {"openalex_id": "W_C"}])
-    _seed_refs({"openalex_id": "W_B"}, [{"openalex_id": "W_C"}])
-
-    before = _works_count(h)
-
-    run_result = runner.invoke(app, ["cite", "run", "accept"])
-    assert run_result.exit_code == 0, run_result.output
-
-    table_result = runner.invoke(app, ["cite", "table", "accept"])
-    assert table_result.exit_code == 0, table_result.output
-    out = table_result.output
-
-    # included->included matrix matches the known shared-citation relationships.
-    assert "Paper A\tPaper B" in out
-    assert "Paper A\tPaper C" in out
-    assert "Paper B\tPaper C" in out
-    # no spurious reverse edges (outbound referenced_works only).
-    assert "Paper B\tPaper A" not in out
-    assert "Paper C\tPaper A" not in out
-
-    # ZERO works created by the projection (no vivification; D3).
-    assert _works_count(h) == before == 3
-
-    # graph.json was written and reloads into NetworkX with matching counts.
-    runs_dir = h.db_path.parent / "runs"
-    run_id = max(
-        (p for p in runs_dir.iterdir() if p.is_dir()),
-        key=lambda p: (p.stat().st_mtime, p.name),
-    ).name
-    graph = load_graph(runs_dir / run_id / "graph.json")
-    assert graph.number_of_nodes() == 3
-    assert graph.number_of_edges() == 3

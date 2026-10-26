@@ -352,7 +352,7 @@ def test_weak_id_match_missing_title_hash_still_merges():
 
 
 # --------------------------------------------------------------------------
-# Chunks 6-8 — merge executor, review appliers, manual override, doctor scan
+# Chunks 6-8 — merge executor, review appliers, manual override
 # --------------------------------------------------------------------------
 
 import os  # noqa: E402
@@ -362,7 +362,6 @@ from pathlib import Path  # noqa: E402
 from seedgraph.citation.edges import authoritative_edges, write_edge  # noqa: E402
 from seedgraph.errors import ValidationError  # noqa: E402
 from seedgraph.project import merge, review as review_mod  # noqa: E402
-from seedgraph.project.doctor_reconcile import work_refs_findings  # noqa: E402
 from seedgraph.project.merge import FK_REMAP_MANIFEST, merge_works  # noqa: E402
 
 
@@ -584,8 +583,13 @@ def test_merge_works_full_fixture_remaps_everything():
         from seedgraph.doctor import semantic_graph_findings
         dangling, _orphans = semantic_graph_findings(conn)
         assert dangling == []
-        soft_dangling, _drift = work_refs_findings(conn)
-        assert soft_dangling == []
+        # soft work refs (no FK): span_fts rows and open work review items
+        assert conn.execute(
+            "SELECT DISTINCT work_id FROM span_fts WHERE work_id IS NOT NULL "
+            "AND work_id NOT IN (SELECT work_id FROM works)").fetchall() == []
+        assert conn.execute(
+            "SELECT DISTINCT target_id FROM review_queue WHERE target_type = 'work' "
+            "AND status = 'open' AND target_id NOT IN (SELECT work_id FROM works)").fetchall() == []
     finally:
         conn.close()
 
@@ -944,31 +948,5 @@ def test_manual_override_empty_run_id_refused_and_reject_writes_nothing():
         assert conn.execute(
             "SELECT status, action FROM review_queue WHERE item_id=?", (item_id,)
         ).fetchone() == ("resolved", "reject")
-    finally:
-        conn.close()
-
-
-# --------------------------------------------------------------------------
-# Chunk 6 — work_refs_reconcile doctor scan
-# --------------------------------------------------------------------------
-
-def test_work_refs_reconcile_reports_dangling_and_drift():
-    h = service.create_project("wrfdoctor")
-    a = service.add_work(h, ids={"doi": "10.6/a"}, title="A").work_id
-    conn = _conn(h)
-    try:
-        dangling, drift = work_refs_findings(conn)
-        assert dangling == [] and drift == 0
-        # a dangling span_fts soft ref + a non-normalized stored identifier
-        conn.execute(
-            "INSERT INTO span_fts (quote_text, span_id, markdown_id, work_id, section_id) "
-            "VALUES ('q', 'span_x', 'md_x', 'work_gone', NULL)")
-        conn.execute(
-            "INSERT INTO identifiers (work_id, id_type, id_value) "
-            "VALUES (?, 'arxiv', 'arXiv:2401.99999v2')", (a,))
-        conn.commit()
-        dangling, drift = work_refs_findings(conn)
-        assert ("span_fts", "work_gone") in dangling
-        assert drift == 1
     finally:
         conn.close()

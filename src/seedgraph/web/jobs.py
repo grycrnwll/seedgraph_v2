@@ -301,6 +301,12 @@ class JobRunner:
             self._pool = get_pool()
         return self._pool
 
+    def pool_if_started(self) -> Any:
+        """The converter pool if one is already built, else ``None``. Never builds one
+        (building probes GPUs), so a page can show converter state on a GET. No lock:
+        ``start()`` builds the pool while holding it, and one attribute read is atomic."""
+        return self._pool
+
     def start(self) -> list[str]:
         """Start the worker threads and resume ``conversion_queue`` (once).
 

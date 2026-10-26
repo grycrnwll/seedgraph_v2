@@ -12,8 +12,8 @@ machinery around it:
   (success-criterion §1; doc 09 §5). Offsets are Python ``str`` code-point indices
   into the decoded markdown string, NOT UTF-8 byte offsets — the documented
   producer/consumer contract.
-* ``locate_quote`` — unique exact-substring locate used by ``ensure_span`` and
-  ``spans create --quote`` (None on zero or >=2 occurrences; never guesses).
+* ``locate_quote`` — unique exact-substring locate used by ``ensure_span``
+  (None on zero or >=2 occurrences; never guesses).
 * ``reanchor`` — exact-substring relocation of an unchanged quote into re-flowed
   markdown after reconversion (decisions 20/53/83). Exact-substring only; no fuzzy
   (difflib/rapidfuzz) matching in Phase 3.
@@ -23,10 +23,16 @@ from __future__ import annotations
 
 import hashlib
 import unicodedata
-from typing import TYPE_CHECKING
+from typing import Protocol
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from seedgraph.spans.store import Span
+
+class Span(Protocol):
+    """What :func:`assert_invariant` reads from a span row (any object with these fields)."""
+
+    start_char: int
+    end_char: int
+    exact_quote: str
+    quote_hash: str
 
 #: Versioned normalization scheme stamped onto every ``quote_hash`` (column
 #: ``evidence_spans.norm_version``). Bump when the normalization changes.
@@ -55,7 +61,7 @@ def slice_quote(markdown: str, start: int, end: int) -> str:
     return markdown[start:end]
 
 
-def assert_invariant(markdown: str, span: "Span") -> None:
+def assert_invariant(markdown: str, span: Span) -> None:
     """Assert the write-time span invariant, raising ``ValueError`` on violation.
 
     Checks both ``markdown[span.start_char:span.end_char] == span.exact_quote`` and
@@ -102,7 +108,7 @@ def locate_quote(markdown: str, quote: str) -> tuple[int, int] | None:
     Returns ``(start_char, end_char)`` half-open code-point offsets when the quote
     occurs exactly once; ``None`` when it occurs zero or two-or-more times (never
     guesses among duplicates — the caller must fall back to explicit ``--start/--end``).
-    Backs ``ensure_span`` locate + dedup and ``spans create --quote``.
+    Backs ``ensure_span`` locate + dedup.
     """
     return _find_unique(markdown, quote)
 

@@ -1,8 +1,10 @@
 """`seedgraph setup`: create the v3 home and library.db, check the converter env and GPUs.
 
 Idempotent. The converter check is static (folder, lock file, uv on PATH, GPU count);
-it never starts a converter. ``seedgraph setup agents`` (in :mod:`.mcp`) is mounted on
-the same group.
+it never starts a converter. It also lists which scholarly-API environment variables
+are set (names only) and, with ``--probe-ollama``, asks the local Ollama server for its
+models (no model call). These replaced the v2 ``doctor`` command (design §1.3).
+``seedgraph setup agents`` (in :mod:`.mcp`) is mounted on the same group.
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ def setup(
     ctx: typer.Context,
     root: Optional[Path] = _common.ROOT_OPTION,
     json_out: bool = _common.JSON_OPTION,
+    probe_ollama: bool = typer.Option(
+        False, "--probe-ollama", help="Also check that the local Ollama server answers (no model call)."),
 ) -> None:
     """Create the v3 home and its library (if missing) and check the PDF converter."""
     if ctx.invoked_subcommand is not None:
@@ -53,7 +57,10 @@ def setup(
             "marker_version": pool.locked_marker_version(),
             "uv_found": shutil.which("uv") is not None,
             "gpus": gpus,
+            "scholarly_env": _scholarly_env(),
         }
+        if probe_ollama:
+            report["ollama"] = _ollama()
     if json_out:
         _common.echo_json(report)
         return
@@ -64,5 +71,28 @@ def setup(
                f"marker-pdf {report['marker_version'] or 'unknown'}; "
                f"uv {'found' if report['uv_found'] else 'NOT on PATH'}")
     typer.echo(f"gpus: {'unknown' if gpus is None else gpus} (nvidia-smi)")
+    typer.echo("scholarly API variables (optional): "
+               + ", ".join(f"{name}={'set' if on else 'unset'}" for name, on in report["scholarly_env"].items()))
+    if probe_ollama:
+        o = report["ollama"]
+        if o["reachable"]:
+            typer.echo(f"ollama: reachable at {o['base_url']} ({', '.join(o['models'][:8]) or 'no models pulled'})")
+        else:
+            typer.echo(f"ollama: not reachable at {o['base_url']} ({o['error']}); `work ollama` needs it")
     if not report["converter_found"] or not report["uv_found"]:
         typer.echo("warning: PDF conversion will not work until the converter environment is set up")
+
+
+def _scholarly_env() -> dict[str, bool]:
+    """Which scholarly-API environment variables are set (names only, never values)."""
+    from ..providers import SCHOLARLY_ENV_VARS, env_key
+
+    return {name: bool(env_key(name)) for name in SCHOLARLY_ENV_VARS}
+
+
+def _ollama() -> dict:
+    """``GET /api/tags`` on the local Ollama server; unreachable is information, not an error."""
+    from ..llm import ollama
+
+    r = ollama.check_reachable(timeout=1.0)
+    return {"reachable": bool(r.ok), "base_url": r.base_url, "models": list(r.models), "error": r.error}

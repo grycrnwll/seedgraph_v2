@@ -15,7 +15,7 @@ _STATE_KEY = "sg_ollama_check"
 
 def _existing_pool(web):
     # Never resolve the pool on a GET (that would probe GPUs): only one already built.
-    return web.pool if web.pool is not None else getattr(web.jobs, "_pool", None)
+    return web.pool if web.pool is not None else web.jobs.pool_if_started()
 
 
 def settings_page(request):

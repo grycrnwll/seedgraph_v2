@@ -451,27 +451,3 @@ def test_run_corpus_backfill_is_fail_soft(monkeypatch):
 # ==========================================================================
 # CLI smoke: `seedgraph corpus backfill-titles <slug>` prints the counters
 # ==========================================================================
-def test_cli_backfill_titles_prints_counters(monkeypatch):
-    """The verb round-trips offline under SEEDGRAPH_FAKE_PROVIDERS and prints
-    the four counters; the untitled W-id work really is titled by the pass."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("clibackfill")
-    work_id = _seed_untitled(h, "W12345")
-
-    runner = CliRunner()
-    res = runner.invoke(app, ["corpus", "backfill-titles", "clibackfill"])
-    assert res.exit_code == 0, res.output
-    assert "queried=1" in res.output
-    assert "fetched=1" in res.output
-    assert "filled=1" in res.output
-    assert "still_missing=0" in res.output
-    assert _get_work(h, work_id).canonical_title == "Referenced work W12345"
-
-    # Idempotent from the CLI too.
-    res2 = runner.invoke(app, ["corpus", "backfill-titles", "clibackfill"])
-    assert res2.exit_code == 0, res2.output
-    assert "queried=0" in res2.output and "still_missing=0" in res2.output

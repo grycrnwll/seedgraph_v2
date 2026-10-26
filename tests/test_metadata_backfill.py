@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
 from sqlmodel import Session, select
 from typer.testing import CliRunner
 
@@ -19,7 +18,6 @@ from seedgraph.acquisition.bridge import write_bridge
 from seedgraph.cache.convert import convert_source_file
 from seedgraph.cache.ingest import ingest_file
 from seedgraph.cache.marker_backend import FakeMarkerBackend
-from seedgraph.cli import app
 from seedgraph.db.project_models import Identifier, ReviewQueueItem, Work
 from seedgraph.extraction import metadata
 from seedgraph.extraction.metadata import BiblioMeta, deterministic_identifiers
@@ -294,11 +292,3 @@ def test_backfill_unknown_work_is_skipped():
 # 5. CLI smoke — `corpus identify`
 # ==========================================================================
 
-def test_cli_corpus_identify_reports():
-    h, wid = _project_with_markdown("id_cli", title="2023 santanna", markdown=MD_DOI)
-    result = cli.invoke(app, ["corpus", "identify", "id_cli"])
-    assert result.exit_code == 0, result.output
-    assert wid in result.output
-    assert "doi:10.2307/27086719" in result.output
-    with Session(h.engine) as s:
-        assert s.get(Work, wid).doi == "10.2307/27086719"

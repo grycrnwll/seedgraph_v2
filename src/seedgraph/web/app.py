@@ -144,12 +144,29 @@ class Web:
     def render(self, request: Request, template: str, context: dict[str, Any] | None = None, *,
                status_code: int = 200, nav: str | None = None, flash: Sequence[Flash] = (),
                headers: dict[str, str] | None = None) -> Response:
-        """Render ``template`` with the shell context (CSRF, sidebar, flashes, jobs)."""
+        """Render ``template`` with the shell context (CSRF, sidebar, flashes, jobs).
+
+        ``review_open`` (the sidebar's Review badge) is filled in here for every page; a
+        page that passes its own value keeps it. (Starlette context processors override
+        the page's context, so this one shell value is set here, not in ``_shell_context``.)
+        """
         ctx = dict(context or {})
         ctx.setdefault("nav_active", nav)
+        if "review_open" not in ctx:
+            ctx["review_open"] = self.review_open()
         ctx["flashes"] = tuple(flash) + self.flashes.pop(request.query_params.get("flash"))
         return self.templates.TemplateResponse(request, template, ctx, status_code=status_code,
                                                headers=headers)
+
+    def review_open(self) -> int:
+        """Open attention items (the sidebar's Review badge); 0 if the library can't be read,
+        so a broken library never breaks the page (or the error page) that shows the badge."""
+        from .views.review import open_count  # local: views import this module
+
+        try:
+            return open_count(self.library())
+        except Exception:  # noqa: BLE001 - a badge is never worth a failed render
+            return 0
 
     def redirect(self, url: str, *, flash: Sequence[Flash] = ()) -> RedirectResponse:
         """303 to ``url`` (a local path), carrying one-shot flash messages."""

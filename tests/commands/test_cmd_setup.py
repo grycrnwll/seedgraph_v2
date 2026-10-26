@@ -62,3 +62,41 @@ def test_setup_stamps_a_new_library_origin_setup_and_keeps_it(runner, tmp_path):
     with open_library(home) as lib:
         meta = read_meta(lib.conn)
     assert meta["origin"] == "setup" and meta["dirty"] == "0"
+
+
+# The `doctor` command is gone (design §1.3); its two checks that still matter in v3
+# moved here: which scholarly-API variables are set, and an opt-in Ollama probe.
+
+def test_setup_lists_scholarly_variables_by_name_never_by_value(runner, tmp_path, monkeypatch):
+    monkeypatch.setenv("S2_API_KEY", "invented-secret-value-123")
+    monkeypatch.delenv("OPENALEX_API_KEY", raising=False)
+    home = tmp_path / "fresh"
+    text = runner.invoke(app, ["setup", "--root", str(home)])
+    assert text.exit_code == 0, text.output
+    assert "S2_API_KEY=set" in text.output and "OPENALEX_API_KEY=unset" in text.output
+    data = json.loads(runner.invoke(app, ["setup", "--root", str(home), "--json"]).output)
+    assert data["scholarly_env"]["S2_API_KEY"] is True
+    assert data["scholarly_env"]["OPENALEX_API_KEY"] is False
+    assert "invented-secret-value-123" not in text.output + json.dumps(data)
+
+
+def test_setup_probes_ollama_only_when_asked(runner, tmp_path, monkeypatch):
+    import seedgraph.llm.ollama as ollama
+    from seedgraph.llm.ollama import Reachability
+
+    calls = []
+
+    def fake(*a, **k):
+        calls.append(1)
+        return Reachability(ok=True, base_url="http://invented:1", models=["invented:1b"])
+
+    monkeypatch.setattr(ollama, "check_reachable", fake)
+    home = tmp_path / "fresh"
+    plain = json.loads(runner.invoke(app, ["setup", "--root", str(home), "--json"]).output)
+    assert calls == [] and "ollama" not in plain
+    probed = runner.invoke(app, ["setup", "--root", str(home), "--probe-ollama", "--json"])
+    assert probed.exit_code == 0, probed.output
+    assert json.loads(probed.output)["ollama"] == {
+        "reachable": True, "base_url": "http://invented:1", "models": ["invented:1b"], "error": None}
+    text = runner.invoke(app, ["setup", "--root", str(home), "--probe-ollama"])
+    assert "ollama: reachable at http://invented:1" in text.output

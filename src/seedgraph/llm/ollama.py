@@ -9,7 +9,7 @@ this module must not depend on the hosted layer, which P8 deletes).
 - :class:`OllamaClient` - ``complete_json(model, system, user, schema)`` posts a
   non-streaming ``/api/chat`` with ``format`` set to the JSON schema (or ``"json"``)
   and returns an :class:`OllamaReply`; ``list_models()`` reads ``/api/tags``;
-  ``check()`` is the reachability probe for ``doctor``.
+  ``check()`` is the reachability probe for ``setup --probe-ollama`` and Settings.
 - :func:`complete_json` - the design's module-level form, returning the text.
 
 Every transport or HTTP failure raises :class:`OllamaError` with a ``code``:

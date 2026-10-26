@@ -1,4 +1,10 @@
-"""``seedgraph doctor`` — validate the whole foundation with actionable messages.
+"""v2 foundation checks (``CheckResult`` and the project-db scans).
+
+The ``doctor`` CLI command was removed in v3 stage 3 (design §1.3: the converter,
+Ollama and scholarly-variable checks live in ``seedgraph setup`` and the Settings
+page). The module stays because reserved stage 4 code (``acquisition``) and its tests
+use ``CheckResult`` and the scans. Its original v2 description:
+
 
 Bootstraps + migrates both scopes (cache always; project when ``--project`` is
 given and the slug is valid), then runs the doc 13 §13 checks. Any error-severity

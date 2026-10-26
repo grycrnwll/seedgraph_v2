@@ -8,7 +8,7 @@ inside :func:`build_default_providers` so ``httpx`` is touched only when a chain
 actually built (decisions 39/73). Ported wholesale from v1.
 
 Scholarly-API keys come from environment variables only (stage 2; the keyring store
-is gone): see :data:`SCHOLARLY_ENV_VARS`. ``seedgraph doctor`` lists them.
+is gone): see :data:`SCHOLARLY_ENV_VARS`. ``seedgraph setup`` and the Settings page list them.
 """
 
 from __future__ import annotations

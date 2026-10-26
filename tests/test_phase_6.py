@@ -19,7 +19,6 @@ from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlmodel import Session
 from typer.testing import CliRunner
 
-from seedgraph.cli import app
 from seedgraph.db.migrations import discover_migrations
 from seedgraph.db.models_project import ExtractionRun, Lens, LensOutput
 from seedgraph.lenses import prompt, registry, schema  # noqa: F401 — import-cleanliness
@@ -250,30 +249,4 @@ def test_lens_migration(tmp_path):
 # --------------------------------------------------------------------------
 # CLI (plan §11 test_lens_cli)
 # --------------------------------------------------------------------------
-
-def test_lens_cli():
-    """`lens validate` exits non-zero on bad YAML and 0 on the template; `lens new
-    --from-template` scaffolds the project-local YAML."""
-    h = service.create_project("reg_cli")
-
-    # lens new --from-template scaffolds the YAML + registers it.
-    res_new = cli.invoke(
-        app, ["lens", "new", "regularity_conditions_v1",
-               "--from-template", "regularity_conditions_v1", "--project", "reg_cli"]
-    )
-    assert res_new.exit_code == 0, res_new.output
-    assert (h.root / "projects" / "reg_cli" / "lenses" / "regularity_conditions_v1.yaml").exists()
-
-    # lens validate on a BAD yaml -> non-zero exit.
-    bad_dir = h.root / "projects" / "reg_cli" / "lenses"
-    (bad_dir / "broken_v1.yaml").write_text(
-        "lens_id: broken_v1\nname: B\nobject_type: assumption\n"
-        "positive_anchors: [a]\noutput_schema:\n  foo: {type: not_a_type}\n"
-    )
-    res_bad = cli.invoke(app, ["lens", "validate", "broken_v1", "--project", "reg_cli"])
-    assert res_bad.exit_code != 0
-
-    # lens validate on the good template -> exit 0.
-    res_ok = cli.invoke(app, ["lens", "validate", "regularity_conditions_v1", "--project", "reg_cli"])
-    assert res_ok.exit_code == 0
 

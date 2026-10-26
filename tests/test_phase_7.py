@@ -17,7 +17,6 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 
 import seedgraph.db.migrations as migrations
-from seedgraph import semantic
 from seedgraph.db.models_project import (
     Concept,
     ConceptAlias,
@@ -38,7 +37,6 @@ from seedgraph.semantic import (
 )
 from seedgraph.semantic import build_semantic_overlay
 from seedgraph.semantic.proposer import NullProposer
-from seedgraph.semantic.query import concept_detail, list_concepts
 
 
 def _now() -> str:
@@ -538,38 +536,6 @@ def test_co_occurs_strength_provenance(tmp_path):
     conn.close()
 
 
-def test_concepts_build_min_shared_cli_knob(tmp_path):
-    """`concepts build --min-shared 3` threads through to build_co_occurs_edges."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app as cli_app
-    from seedgraph.project import service
-
-    h = service.create_project("minshared")
-    conn = sqlite3.connect(str(h.db_path))
-    conn.execute("PRAGMA foreign_keys=ON")
-    for i in range(2):
-        wid = f"work_{i}"
-        _add_work(conn, wid)
-        _add_run(conn, f"extr_{wid}", wid)
-        _add_claim(conn, f"al_{wid}", f"extr_{wid}", wid, "method", "alpha concept")
-        _add_claim(conn, f"be_{wid}", f"extr_{wid}", wid, "method", "beta concept")
-    conn.commit()
-    conn.close()
-
-    runner = CliRunner()
-    # default threshold (2): the 2-shared pair survives.
-    res = runner.invoke(cli_app, ["concepts", "build", "minshared", "--no-llm"])
-    assert res.exit_code == 0, res.output
-    assert "co_occurs=1" in res.output
-    # --min-shared 3 drops it on the rebuild.
-    res3 = runner.invoke(
-        cli_app, ["concepts", "build", "minshared", "--no-llm", "--min-shared", "3"]
-    )
-    assert res3.exit_code == 0, res3.output
-    assert "co_occurs=0" in res3.output
-
-
 def _seed_borderline(conn):
     """Two near-synonyms that cluster (jaccard 0.6) but are not acronym-related."""
     _add_work(conn, "work_a")
@@ -869,37 +835,6 @@ def test_no_llm_overlay(tmp_path):
 # --------------------------------------------------------------------------
 # Milestone (doc 10 §11)
 # --------------------------------------------------------------------------
-
-
-def test_concept_select_milestone(tmp_path):
-    """concepts build then concepts show <id> returns the concept's linked papers,
-    claims, and evidence spans (the old web route went with web/ in stage 2)."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app as cli_app
-    from seedgraph.project import service
-
-    h = service.create_project("milestone")
-    conn = sqlite3.connect(str(h.db_path))
-    conn.execute("PRAGMA foreign_keys=ON")
-    _seed_basic(conn)
-    conn.close()
-
-    runner = CliRunner()
-    res = runner.invoke(cli_app, ["concepts", "build", "milestone"])
-    assert res.exit_code == 0, res.output
-
-    cid = "concept::masked language modeling"
-    conn = sqlite3.connect(str(h.db_path))
-    detail = concept_detail(conn, cid)
-    conn.close()
-    assert {p["work_id"] for p in detail["papers"]} == {"work_a", "work_b"}
-    assert {c["claim_id"] for c in detail["claims"]} == {"claim_1", "claim_2"}
-    assert {s["span_id"] for s in detail["spans"]} == {"span_1"}
-
-    show = runner.invoke(cli_app, ["concepts", "show", "milestone", cid])
-    assert show.exit_code == 0, show.output
-    assert "work_a" in show.output and "claim_1" in show.output and "span_1" in show.output
 
 
 # --------------------------------------------------------------------------

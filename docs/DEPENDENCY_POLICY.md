@@ -61,7 +61,7 @@ over a stdin/stdout pipe. The message format is in
 
 The app stores no secrets and has no keyring dependency (removed in v3 stage 2,
 with the hosted-LLM layer). Scholarly-API keys are read from environment
-variables only; every one is optional. `seedgraph-v3 doctor` lists which are set
+variables only; every one is optional. `seedgraph-v3 setup` and the Settings page list which are set
 (names only, never values).
 
 | Variable | Used for |

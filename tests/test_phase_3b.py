@@ -30,7 +30,7 @@ from sqlmodel import Session
 from typer.testing import CliRunner
 
 from seedgraph import cache_access
-from seedgraph.acquisition.bridge import backfill_markdown, resolve_work_markdown, write_bridge
+from seedgraph.acquisition.bridge import backfill_markdown, write_bridge
 from seedgraph.cache.convert import convert_source_file
 from seedgraph.cache.db import init_cache_db
 from seedgraph.cache.ingest import ingest_file
@@ -51,7 +51,6 @@ from seedgraph.citation.edges import (
 )
 from seedgraph.citation.parsed_bib import build_parsed_edges
 from seedgraph.citation.resolve import resolve_references
-from seedgraph.cli import app
 from seedgraph.db.adapter import raw_conn
 from seedgraph.db.connection import open_cache_db
 from seedgraph.graph.build import build_citation_graph
@@ -59,7 +58,6 @@ from seedgraph.graph.export import export_graph, load_graph
 from seedgraph.project import identity as identity_mod
 from seedgraph.project import review as review_mod
 from seedgraph.project import service
-from seedgraph.run import ensure_run
 from seedgraph.sections.parser import parse_sections
 from seedgraph.sections.store import replace_sections
 from seedgraph.vocab import AccessClass, AcquisitionMethod
@@ -1218,102 +1216,3 @@ def _milestone_setup(slug, monkeypatch):
     return h, a, b, c
 
 
-def test_milestone_confirm_disagreement(monkeypatch):
-    """``seedgraph cite disagreements`` shows ≥1 (source, target) pair where the
-    parsed tier confirms the provider tier (both provenances, winner parsed)."""
-    h, a, b, c = _milestone_setup("mileconfirm", monkeypatch)
-    assert runner.invoke(app, ["cite", "project", "mileconfirm"]).exit_code == 0
-    pr = runner.invoke(app, ["cite", "parse", "mileconfirm"])
-    assert pr.exit_code == 0, pr.output
-
-    dr = runner.invoke(app, ["cite", "disagreements", "mileconfirm"])
-    assert dr.exit_code == 0, dr.output
-    assert f"{a}\t{b}\t" in dr.output
-    assert "parsed_bibliography,provider_reference" in dr.output
-    # The line names parsed_bibliography as the authoritative winner.
-    line = next(ln for ln in dr.output.splitlines() if ln.startswith(f"{a}\t{b}\t"))
-    assert line.endswith("parsed_bibliography")
-
-
-def test_milestone_adds_coverage(monkeypatch):
-    """``seedgraph cite table`` reflects an included→target citation the provider
-    tier missed (a parsed-only edge), verified via ``cite table`` (criterion 3)."""
-    h, a, b, c = _milestone_setup("mileadds", monkeypatch)
-    assert runner.invoke(app, ["cite", "project", "mileadds"]).exit_code == 0
-    assert runner.invoke(app, ["cite", "parse", "mileadds"]).exit_code == 0
-
-    tr = runner.invoke(app, ["cite", "table", "mileadds"])
-    assert tr.exit_code == 0, tr.output
-    # A->C is the parsed-only adds-coverage edge (both included -> appears in table).
-    assert f"{a}\t{c}\t" in tr.output
-    # ...and it is NOT a disagreement (single provenance).
-    dr = runner.invoke(app, ["cite", "disagreements", "mileadds"])
-    assert f"{a}\t{c}\t" not in dr.output
-
-
-def test_milestone_rerun_noop_same_run(monkeypatch):
-    """Re-running ``cite parse`` on unchanged markdown under the same run is a
-    no-op (criterion 7a)."""
-    h, a, b, c = _milestone_setup("milenoop", monkeypatch)
-    runner.invoke(app, ["cite", "project", "milenoop"])
-    runner.invoke(app, ["cite", "parse", "milenoop"])
-
-    def _counts():
-        conn = _project_conn(h)
-        try:
-            refs = conn.execute("SELECT COUNT(*) FROM reference_entries").fetchone()[0]
-            edges = conn.execute(
-                "SELECT COUNT(*) FROM citation_edges WHERE provenance='parsed_bibliography'"
-            ).fetchone()[0]
-            return refs, edges
-        finally:
-            conn.close()
-
-    before = _counts()
-    r2 = runner.invoke(app, ["cite", "parse", "milenoop"])
-    assert r2.exit_code == 0, r2.output
-    assert "(current)" in r2.output  # Stage A skipped
-    assert _counts() == before  # no new refs, no duplicate edges
-
-
-def test_milestone_rerun_projects_under_new_run(monkeypatch):
-    """Re-running ``cite parse`` under a freshly minted run still projects the full
-    parsed tier into that run (criterion 7b)."""
-    h, a, b, c = _milestone_setup("milenewrun", monkeypatch)
-    runner.invoke(app, ["cite", "project", "milenewrun"])
-    runner.invoke(app, ["cite", "parse", "milenewrun"])
-
-    r2 = ensure_run("milenewrun", root=h.root)
-    pr = runner.invoke(app, ["cite", "parse", "milenewrun", "--run-id", r2])
-    assert pr.exit_code == 0, pr.output
-
-    conn = _project_conn(h)
-    try:
-        n = conn.execute(
-            "SELECT COUNT(*) FROM citation_edges WHERE provenance='parsed_bibliography' AND run_id=?", (r2,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert n == 2  # full parsed tier projected into the new run
-
-
-def test_cite_parse_prints_progress_heartbeat(monkeypatch):
-    """``cite parse`` over 2 included+bridged works prints an ``N/M works`` stdout
-    heartbeat per work AND the unchanged final summary line (shared Progress; the
-    per-work state string — e.g. ``(current)`` — is preserved)."""
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h, a, _md, _src = _citing_paper("progcli")
-    b = service.add_work(
-        h, ids={"doi": "10.3000/bbb", "openalex": "W_BB"}, title="Paper BB"
-    ).work_id
-    _convert_bridge_sections(h, b, REFS_MD, slug_file="cit2")
-
-    pr = runner.invoke(app, ["cite", "parse", "progcli"])
-    assert pr.exit_code == 0, pr.output
-    # Two works → an N/M heartbeat for each.
-    assert "1/2 works" in pr.output
-    assert "2/2 works" in pr.output
-    # The per-work state string still surfaces (backward-compat with the old line).
-    assert "(reparsed)" in pr.output or "(current)" in pr.output
-    # The final summary line is preserved verbatim (works=2 …).
-    assert "works=2" in pr.output

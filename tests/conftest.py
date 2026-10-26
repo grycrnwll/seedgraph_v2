@@ -22,7 +22,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 _CONTRACT_SYMBOLS: tuple[tuple[str, str], ...] = (
-    ("seedgraph.spans.store", "ensure_span"),
+    ("seedgraph.notes.spans", "ensure_span"),
     ("seedgraph.citation.edges", "write_edge"),
     ("seedgraph.citation.bib_parser", "parse_references"),
     ("seedgraph.sections.parser", "parse_sections"),

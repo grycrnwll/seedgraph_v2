@@ -1841,33 +1841,6 @@ def test_run_corpus_threads_walk_hint_and_budgets(monkeypatch):
     assert captured["order_hint"]  # depth=1 walk counted A and B once each
 
 
-def test_cli_corpus_budget_flags(monkeypatch):
-    """``--max-papers`` / ``--budget-seconds`` parse on ``corpus acquire`` and
-    ``corpus run``, and the echo accounts ``skipped_budget`` (never silent)."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("clibudget")
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-
-    runner = CliRunner()
-    res = runner.invoke(app, ["corpus", "acquire", "clibudget", "--max-papers", "0"])
-    assert res.exit_code == 0, res.output
-    assert "skipped_budget=1" in res.output
-    assert "acquired=0" in res.output
-
-    res2 = runner.invoke(
-        app,
-        ["corpus", "run", "clibudget", "--depth", "1",
-         "--max-papers", "0", "--budget-seconds", "60"],
-    )
-    assert res2.exit_code == 0, res2.output
-    assert "skipped_budget=" in res2.output
-    assert "acquired=0" in res2.output
-
-
 # --------------------------------------------------------------------------
 # Build D chunk 6 — per-paper acquisition progress events (D-7)
 # --------------------------------------------------------------------------
@@ -1937,45 +1910,6 @@ def test_walk_progress_steps_per_source_per_generation():
     assert sorted(f["data"]["cited"] for f in frames[1:]) == [2, 3]  # A cites 2, B cites 3
 
 
-def test_cli_corpus_verbs_heartbeat_but_no_progress_events(monkeypatch):
-    """CLI corpus verbs keep the stdout N/M heartbeat but append NO events.jsonl
-    events (``emit=None``): a CLI run must never leave a non-terminal ``progress``
-    event that strands ``_status_from_events`` on ``running`` (the D-7 hazard)."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-    from seedgraph.paths import project_dir
-    from seedgraph.run import _status_from_events, read_events
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("cliprogress")
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-
-    runner = CliRunner()
-    res = runner.invoke(app, ["corpus", "run", "cliprogress", "--depth", "1"])
-    assert res.exit_code == 0, res.output
-    # Stdout heartbeat: the walk's 1/1 source frame + the acquire pass's N/M frames.
-    assert "1/1 works" in res.output
-    assert "3/3 works" in res.output
-
-    # The standalone verbs heartbeat too (walk grows total; acquire reconciles it).
-    res2 = runner.invoke(app, ["corpus", "acquire", "cliprogress"])
-    assert res2.exit_code == 0, res2.output
-    assert "3/3 works" in res2.output
-    res3 = runner.invoke(app, ["corpus", "walk", "cliprogress", "--depth", "1"])
-    assert res3.exit_code == 0, res3.output
-    assert " works — " in res3.output
-
-    # NO run of this project carries ANY event — let alone a stranding 'progress'.
-    runs_dir = project_dir("cliprogress") / "runs"
-    run_ids = [p.name for p in runs_dir.iterdir() if p.is_dir()]
-    assert run_ids  # the verbs really did mint runs
-    for rid in run_ids:
-        events = read_events("cliprogress", rid)
-        assert events == []
-        assert _status_from_events(events) is None  # never 'running'
-
-
 # --------------------------------------------------------------------------
 # Build F chunk 10 — resolve-loop progress rider + invariant re-verification
 # (the piece Build D chunk 6 left untouched: the per-item step in resolve_corpus,
@@ -2041,37 +1975,6 @@ def test_resolve_no_hook_emits_nothing():
         )
     )
     assert read_events("progresolve_none", rid_stdout) == []
-
-
-def test_cli_corpus_resolve_appends_zero_events(monkeypatch):
-    """INVARIANT PIN: the CLI ``corpus resolve`` verb resolves with NO progress hook,
-    so the resolve-loop rider never fires on the CLI path and NO event — least of all
-    a stranding non-terminal ``progress`` — ever lands in events.jsonl. This is the
-    invariant risk 7's accepted crash-sweep rationale AND chunk 9's interrupted-sweep
-    safety both depend on (the sweep can only touch web-job runs precisely because CLI
-    builds emit no job events); Build F re-verifies it rather than assuming it."""
-    from typer.testing import CliRunner
-
-    from seedgraph.cli import app
-    from seedgraph.paths import project_dir
-    from seedgraph.run import _status_from_events, read_events
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h = service.create_project("cliresolve")
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-
-    runner = CliRunner()
-    res = runner.invoke(app, ["corpus", "resolve", "cliresolve"])
-    assert res.exit_code == 0, res.output
-    assert "resolved=" in res.output  # the verb really ran the resolve pass
-
-    runs_dir = project_dir("cliresolve") / "runs"
-    run_ids = [p.name for p in runs_dir.iterdir() if p.is_dir()]
-    assert run_ids  # the verb minted a run
-    for rid in run_ids:
-        events = read_events("cliresolve", rid)
-        assert events == []
-        assert _status_from_events(events) is None  # never 'running'
 
 
 # --------------------------------------------------------------------------

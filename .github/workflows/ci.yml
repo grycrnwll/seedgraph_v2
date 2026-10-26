@@ -46,7 +46,7 @@ jobs:
           import importlib
 
           SYMBOLS = (
-              ("seedgraph.spans.store", "ensure_span"),
+              ("seedgraph.notes.spans", "ensure_span"),
               ("seedgraph.citation.edges", "write_edge"),
               ("seedgraph.citation.bib_parser", "parse_references"),
               ("seedgraph.sections.parser", "parse_sections"),
@@ -71,21 +71,22 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-      - name: Doctor --json smoke
-        # Parse the LAST non-empty stdout line as JSON — v1 live-caught scar: an
-        # import-time banner once prefixed stdout and broke json.loads over the
-        # whole stream. Second v1 scar, carried as policy: if a future step needs
-        # this JSON, pass it via an env var (as below), never a stdin pipe.
+      - name: Setup --json smoke
+        # `setup --json` prints one indented JSON object, so json.loads runs over the
+        # whole stdout (that also catches an import-time banner, a v1 scar). v1
+        # policy: if a future step needs this JSON, pass it via an env var (as
+        # below), never a stdin pipe. (v3 stage 3 removed `doctor`; `setup` carries
+        # its still-useful checks.)
         run: |
-          out="$(seedgraph doctor --json)"
+          out="$(seedgraph-v3 setup --root "$RUNNER_TEMP/sg_home" --json)"
           echo "$out"
-          DOCTOR_JSON="$(printf '%s\n' "$out" | awk 'NF{line=$0} END{print line}')" \
+          SETUP_JSON="$out" \
           python - <<'PY'
           import json
           import os
 
-          doc = json.loads(os.environ["DOCTOR_JSON"])
-          assert isinstance(doc, dict) and "checks" in doc and "ok" in doc, doc
-          assert doc["ok"] is True, doc
-          print(f"doctor --json smoke OK ({len(doc['checks'])} checks)")
+          doc = json.loads(os.environ["SETUP_JSON"])
+          assert isinstance(doc, dict) and doc["library_created"] is True, doc
+          assert "scholarly_env" in doc, doc
+          print("setup --json smoke OK")
           PY
