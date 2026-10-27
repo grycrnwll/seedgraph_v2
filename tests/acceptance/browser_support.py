@@ -1,7 +1,7 @@
 """Playwright helpers for the opt-in ``browser`` acceptance tests.
 
 The tests skip cleanly when the Playwright package (the ``browser`` dependency group) or
-its Chromium build (``uv run --group browser playwright install chromium``) is missing,
+its Chromium headless shell (``uv run --group browser playwright install chromium --only-shell``) is missing,
 or when ``SEEDGRAPH_ACCEPTANCE_HOME`` does not name the v3 home to test (the suite's
 own conftest gives every test a throwaway home, so the real one must be named
 explicitly).
@@ -36,20 +36,48 @@ def chromium() -> Iterator[object]:
     sync_api = pytest.importorskip("playwright.sync_api", reason="the `browser` dependency group is not installed")
     pw = sync_api.sync_playwright().start()
     try:
-        exe = Path(pw.chromium.executable_path)
-        if not exe.exists():
-            pytest.skip("Chromium for Playwright is not installed "
-                        "(`uv run --group browser playwright install chromium`)")
+        # Headless runs use Playwright's headless shell (``chromium_headless_shell-*``,
+        # installed by ``playwright install chromium --only-shell``), not the full build at
+        # ``pw.chromium.executable_path``; so a missing full build is not a reason to skip.
+        # Headed runs (SEEDGRAPH_ACCEPTANCE_HEADED) need the full build.
+        headed = bool(os.environ.get(HEADED_ENV))
+        if headed and not Path(pw.chromium.executable_path).exists():
+            pytest.skip("headed runs need full Chromium (`uv run --group browser playwright install chromium`)")
         try:
-            browser = pw.chromium.launch(headless=not os.environ.get(HEADED_ENV))
+            browser = pw.chromium.launch(headless=not headed)
         except sync_api.Error as exc:  # pragma: no cover - depends on the machine
-            pytest.skip(f"Chromium did not launch: {exc}")
+            pytest.skip("Chromium for Playwright did not launch (`uv run --group browser playwright install "
+                        f"chromium --only-shell`): {exc}")
         try:
             yield browser
         finally:
             browser.close()
     finally:
         pw.stop()
+
+
+class ConsoleWatch:
+    """Console errors/warnings, uncaught page errors, CSP violations and failed (>= 400)
+    responses seen by one page, for the reports (CSP or PDF.js l10n regressions)."""
+
+    def __init__(self) -> None:
+        self.console: list[dict[str, str]] = []
+        self.page_errors: list[str] = []
+        self.failed: list[dict[str, object]] = []
+
+    def summary(self) -> dict[str, object]:
+        csp = [m for m in self.console if "content security policy" in m["text"].lower()]
+        return {"console": self.console[:50], "console_count": len(self.console), "csp_violations": csp[:20],
+                "csp_count": len(csp), "page_errors": self.page_errors[:20], "failed_responses": self.failed[:50]}
+
+
+def watch_console(page) -> ConsoleWatch:
+    w = ConsoleWatch()
+    page.on("console", lambda m: w.console.append({"type": m.type, "text": m.text[:500]})
+            if m.type in ("error", "warning") else None)
+    page.on("pageerror", lambda e: w.page_errors.append(str(e)[:500]))
+    page.on("response", lambda r: w.failed.append({"status": r.status, "url": r.url}) if r.status >= 400 else None)
+    return w
 
 
 # The page-side probe for one quote button: run pdfpane.js's own showQuote, then report

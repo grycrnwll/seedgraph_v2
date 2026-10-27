@@ -205,7 +205,7 @@ def test_every_response_carries_the_csp_and_hardening_headers(app, client_for):
     for r in _responses(app, client_for):
         assert r.headers["content-security-policy"] == CSP, r.request.url
         assert r.headers["x-content-type-options"] == "nosniff"
-        assert r.headers["referrer-policy"] == "no-referrer"
+        assert r.headers["referrer-policy"] == "same-origin"
 
 
 def test_no_response_sets_a_cookie(app, client_for):

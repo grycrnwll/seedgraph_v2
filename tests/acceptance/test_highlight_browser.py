@@ -63,6 +63,7 @@ def test_proto5_finder_agrees_with_server_tiers():
     rows: list[dict[str, Any]] = []
     with bs.chromium() as browser, h.QuietServer(home) as server:
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
+        console = bs.watch_console(page)
         for pid in papers:
             page.goto(f"{server.base_url}/papers/{pid}?layout=split")
             bs.wait_pdf_ready(page)
@@ -79,7 +80,8 @@ def test_proto5_finder_agrees_with_server_tiers():
     matrix = Counter(f"{r['server_tier']} / {r['browser']}" for r in rows)
     summary = {"quotes_server": len(tiers), "quotes_browser": len(rows),
                "agree": sum(r["agrees"] for r in rows), "matrix": dict(matrix),
-               "elsewhere": [r for r in rows if r["browser"] == "elsewhere"]}
+               "elsewhere": [r for r in rows if r["browser"] == "elsewhere"],
+               "console": console.summary()}
     run = h.new_run(home, f"highlight-{h.stamp()}")
     h.write_json(run / "highlight_browser.json", {"summary": summary, "rows": rows})
     print(summary)

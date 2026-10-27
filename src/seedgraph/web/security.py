@@ -2,7 +2,7 @@
 
 Three pure ASGI middlewares, applied outermost first by :func:`secure`:
 
-1. :class:`SecurityHeaders` - adds the CSP, ``nosniff`` and ``no-referrer`` headers to
+1. :class:`SecurityHeaders` - adds the CSP, ``nosniff`` and ``Referrer-Policy: same-origin`` headers to
    every response (refusals, 404s and static files included) and strips any
    ``Set-Cookie``: the UI sets no cookies at all.
 2. :class:`LoopbackGuard` - 403 unless ``scope["client"]`` is ``127.0.0.1`` / ``::1``
@@ -23,6 +23,11 @@ Rules chosen where the design is silent:
 - A missing or wrong token answers 403 with :data:`RESTART_HINT` (a stale tab after a
   restart is the usual cause); a foreign Origin / Sec-Fetch-Site answers 403 with
   :data:`CROSS_SITE_MESSAGE`, so the page banner can tell them apart.
+- ``Referrer-Policy`` is ``same-origin``, not ``no-referrer``: under ``no-referrer`` a
+  browser sends ``Origin: null`` on a plain form POST (Fetch, "append a request Origin
+  header"), which the Origin check refuses, so every non-htmx form would 403. With
+  ``same-origin`` the page's own POSTs carry its real Origin and no referrer ever goes
+  to another site (tests/acceptance/test_form_post_browser.py).
 - ``'wasm-unsafe-eval'`` is in ``script-src``: the pinned PDF.js worker decodes JPEG 2000
   images with an embedded WebAssembly module. It allows compiling WebAssembly only,
   not JavaScript ``eval``.
@@ -60,7 +65,7 @@ CSP = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'se
 SECURITY_HEADERS: tuple[tuple[bytes, bytes], ...] = (
     (b"content-security-policy", CSP.encode()),
     (b"x-content-type-options", b"nosniff"),
-    (b"referrer-policy", b"no-referrer"),
+    (b"referrer-policy", b"same-origin"),
 )
 
 

@@ -12,11 +12,18 @@ converts the dropped PDF; note that it also resumes the home's conversion queue)
    standing check result shows.
 2. Paper page -> add to the graph -> Write notes -> the batch page shows the copyable
    commands.
-3. **Worker hook** (:func:`wait_for_worker`): writes ``WORKER_NEEDED.json`` (batch id,
-   commands, CLI mirror) into the run folder and polls the batch page until the paper is
-   done. ``SEEDGRAPH_ACCEPTANCE_WORKER=agent`` (the default) waits up to
-   ``worker_timeout_s`` for an agent working the batch through the CLI mirror
-   (``seedgraph-v3 work claim/submit``); ``none`` stops the walk-through here (skip).
+3. **Worker hook**: writes ``WORKER_NEEDED.json`` (batch id, paper id, commands, CLI
+   mirror, how to resume) and the batch page into the run folder.
+   ``SEEDGRAPH_ACCEPTANCE_WORKER=agent`` (the default) then polls the batch (its
+   ``batch_items`` state in the database) for up to ``worker_timeout_s`` while an agent
+   works it through the CLI mirror (``seedgraph-v3 work claim/submit``) and carries on;
+   ``none`` stops here (skip) and serve is stopped.
+   **Resume** after the batch is worked: ``SEEDGRAPH_ACCEPTANCE_RESUME=<run folder name>``
+   (e.g. ``walkthrough-20261027T130000Z``) reruns the same test in that run folder: it
+   starts a fresh serve, checks once that the batch is done (fails clearly if not) and
+   does steps 4-8, appending to the same ``walkthrough.json`` (a run that stopped after
+   step 1 resumes at step 2). No serve process has to
+   survive the hand-off.
 4. Paper page -> click three quotes: each scrolls to its page and a ``mark.sg-hl``
    appears on that page.
 5. Re-word, re-label and re-type one claim; hide one; add an assertion; add a
@@ -32,6 +39,7 @@ Writes ``walkthrough.json`` into ``<home>/ui/acceptance/<run>/``.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import time
@@ -73,26 +81,55 @@ def _paper_for_hash(home: Path, sha: str, *, converted: bool = False) -> str | N
     return row[0]
 
 
-def wait_for_worker(page, base: str, batch_id: str, run: Path, timeout_s: float) -> str:
-    """The hook where an agent works the batch through the CLI mirror; returns the items
-    partial's final text."""
+RESUME_ENV = "SEEDGRAPH_ACCEPTANCE_RESUME"
+DONE = ("done",)
+PENDING = ("queued", "in_progress", "held_back")
+
+
+def batch_states(home: Path, batch_id: str) -> dict[str, str]:
+    """``{subject_id: state}`` of the batch's items, read-only from the database."""
+    from seedgraph.library import pagecheck
+    from seedgraph.library.store import library_dir
+
+    with pagecheck.open_readonly(library_dir(home)) as lib:
+        return dict(lib.conn.execute("SELECT subject_id, state FROM batch_items WHERE batch_id = ?",
+                                     (batch_id,)).fetchall())
+
+
+def worker_done(home: Path, batch_id: str, pid: str) -> bool:
+    return batch_states(home, batch_id).get(pid) in DONE
+
+
+def worker_needed(page, base: str, run: Path, batch_id: str, pid: str, graph: str) -> Path:
+    """Write the hand-off for the agent (``WORKER_NEEDED.json``) and the batch page."""
     from seedgraph.work.commands import work_commands
 
     cmds = work_commands(batch_id)
-    h.write_json(run / "WORKER_NEEDED.json", {
-        "batch_id": batch_id, "commands": cmds.as_dict(),
+    page.goto(f"{base}/batches/{batch_id}")
+    (run / "batch_page.html").write_text(page.content(), encoding="utf-8")
+    resume = f"{RESUME_ENV}={run.name}"
+    path = h.write_json(run / "WORKER_NEEDED.json", {
+        "batch_id": batch_id, "paper_id": pid, "graph": graph, "commands": cmds.as_dict(),
         "cli_mirror": [f"seedgraph-v3 work claim {batch_id} --worker <name> --client claude",
-                       f"seedgraph-v3 work submit {batch_id} ... (see the claim's reply)"]})
-    print(f"\nWORKER NEEDED: batch {batch_id}\n  {cmds.claude_code}\n")
+                       f"seedgraph-v3 work submit {batch_id} ... (see the claim's reply)"],
+        "resume": (f"{bs.HOME_ENV}=<home> {resume} uv run --group browser pytest -m browser "
+                   "tests/acceptance/test_walkthrough_browser.py -s")})
+    print(f"\nWORKER NEEDED: batch {batch_id}\n  {cmds.claude_code}\n  resume with {resume}\n")
+    return path
+
+
+def wait_for_worker(home: Path, batch_id: str, pid: str, timeout_s: float) -> dict[str, str]:
+    """Poll the batch's items until the paper is done (every 15 s, up to ``timeout_s``)."""
     deadline = time.monotonic() + timeout_s
-    text = ""
-    while time.monotonic() < deadline:
-        page.goto(f"{base}/batches/{batch_id}")
-        text = page.inner_text("main") if page.query_selector("main") else page.content()
-        if re.search(r"\bdone\b", text, re.I) and not re.search(r"\b(queued|claimed)\b", text, re.I):
-            return text
+    while True:
+        states = batch_states(home, batch_id)
+        if states.get(pid) in DONE:
+            return states
+        if states.get(pid) not in PENDING:
+            pytest.fail(f"batch {batch_id}: the paper ended in state {states.get(pid)!r}")
+        if time.monotonic() >= deadline:
+            pytest.fail(f"the batch {batch_id} was not worked within {timeout_s}s")
         time.sleep(15)
-    pytest.fail(f"the batch {batch_id} was not worked within {timeout_s}s")
 
 
 def _saved(page) -> str:
@@ -124,15 +161,93 @@ def _select_in_pdf(page) -> bool:
     return False
 
 
+def _drop_pdf(page, base: str, home: Path, inp: dict[str, Any], step) -> str:
+    """Step 1: drop the PDF and wait for its conversion. Returns the paper id."""
+    # 1. drop the PDF; converting -> converted; the standing check shows
+    page.goto(f"{base}/library")
+    page.set_input_files("#sg-files", str(inp["pdf"]))
+    page.click("form[action='/library/add'] button[type=submit]")
+    page.wait_for_selector("#sg-jobs .sg-job", timeout=60_000)
+    deadline = time.monotonic() + float(inp.get("convert_timeout_s", 3600))
+    strip = ""
+    seen_converting = False
+    while time.monotonic() < deadline:
+        strip = page.inner_text("#sg-jobs")
+        seen_converting = seen_converting or "convert" in strip.lower()
+        # the strip may stay active for other queued conversions: wait for this PDF's text
+        if _paper_for_hash(home, inp["sha"], converted=True):
+            break
+        time.sleep(10)
+    pid = _paper_for_hash(home, inp["sha"], converted=True)
+    assert pid, strip
+    page.goto(f"{base}/library")
+    strip = page.inner_text("#sg-jobs")
+    check_shown = any(t in strip for t in ("PDF matches the paper", "PDF probably matches", "may not be this paper",
+                                            "could not check"))
+    step("drop PDF", paper_id=pid, saw_converting=seen_converting, standing_check_shown=check_shown,
+         strip=strip[-1500:])
+    assert check_shown, strip
+    return pid
+
+
+def _write_notes(page, base: str, pid: str, graph: str, step) -> str:
+    """Step 2: add the paper to the graph, Write notes, the batch page's copyable
+    commands. Returns the batch id."""
+    page.goto(f"{base}/papers/{pid}")
+    if page.query_selector("form[action$='/graphs'] select[name=slug]"):
+        page.select_option("form[action$='/graphs'] select[name=slug]", graph)
+        page.select_option("form[action$='/graphs'] select[name=status]", "member")
+        with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/graphs")) as resp:
+            page.click("form[action$='/graphs'] button[type=submit]")
+        assert resp.value.status < 400, f"add to graph: {resp.value.status} {resp.value.text()[:200]}"
+    page.goto(f"{base}/papers/{pid}")
+    in_graphs = page.inner_text(".sg-paper-graphs") if page.query_selector(".sg-paper-graphs") else ""
+    assert graph in in_graphs, f"the paper is not in {graph}: {in_graphs!r}"
+    page.click("form[action$='/write-notes'] button[type=submit]")
+    page.wait_for_url(re.compile(r".*/batches/b_[0-9a-f]+.*"), timeout=30_000)
+    batch_id = re.search(r"/batches/(b_[0-9a-f]+)", page.url).group(1)
+    cmd = page.inner_text("#sg-cmd-claude")
+    assert batch_id in cmd
+    step("write notes", paper_id=pid, batch_id=batch_id, command=cmd, in_graphs=in_graphs)
+    return batch_id
+
+
+def _resume_state(home: Path, name: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    """The run folder, its log, and how far it got: ``{"paper_id", "batch_id"}`` (from
+    ``WORKER_NEEDED.json``), or just ``{"paper_id"}`` when only step 1 passed."""
+    run = h.acceptance_dir(home) / name
+    if not (run / "walkthrough.json").is_file():
+        pytest.fail(f"{RESUME_ENV}={name}: {run / 'walkthrough.json'} is missing (run the walk-through first)")
+    log = json.loads((run / "walkthrough.json").read_text(encoding="utf-8"))
+    need = run / "WORKER_NEEDED.json"
+    if need.is_file():
+        return run, log, json.loads(need.read_text(encoding="utf-8"))
+    dropped = [s for s in log["steps"] if s.get("step") == "drop PDF" and s.get("paper_id")]
+    if not dropped:
+        pytest.fail(f"{RESUME_ENV}={name}: step 1 never passed there; start a new walk-through")
+    return run, log, {"paper_id": dropped[-1]["paper_id"]}
+
+
 def test_walkthrough():
     home = bs.acceptance_home()
     inp = _inputs(home)
     graph = inp.get("graph") or "diff_in_diff"
     worker = os.environ.get(WORKER_ENV, inp.get("worker") or "agent")
-    if _paper_for_hash(home, inp["sha"]):
-        pytest.skip("the walk-through PDF is already in the library; choose another (inputs.json)")
-    run = h.new_run(home, f"walkthrough-{h.stamp()}")
-    log: dict[str, Any] = {"steps": []}
+    resume = os.environ.get(RESUME_ENV)
+    pid = batch_id = None
+    if resume:
+        run, log, need = _resume_state(home, resume)
+        pid, batch_id = need["paper_id"], need.get("batch_id")
+        if _paper_for_hash(home, inp["sha"]) != pid:
+            pytest.fail(f"{RESUME_ENV}={resume}: the walk-through PDF is no longer paper {pid}")
+        if batch_id and not worker_done(home, batch_id, pid):
+            pytest.fail(f"{RESUME_ENV}={resume}: batch {batch_id} is not done yet "
+                        f"(items: {batch_states(home, batch_id)}); work it, then rerun")
+    else:
+        if _paper_for_hash(home, inp["sha"]):
+            pytest.skip("the walk-through PDF is already in the library; choose another (inputs.json)")
+        run = h.new_run(home, f"walkthrough-{h.stamp()}")
+        log = {"steps": []}
 
     def step(name: str, **detail: Any) -> None:
         log["steps"].append({"step": name, **detail})
@@ -142,52 +257,20 @@ def test_walkthrough():
         base = server.base_url
         ctx = browser.new_context(viewport={"width": 1600, "height": 1000}, accept_downloads=True)
         page = ctx.new_page()
-
-        # 1. drop the PDF; converting -> converted; the standing check shows
-        page.goto(f"{base}/library")
-        page.set_input_files("#sg-files", str(inp["pdf"]))
-        page.click("form[action='/library/add'] button[type=submit]")
-        page.wait_for_selector("#sg-jobs .sg-job", timeout=60_000)
-        deadline = time.monotonic() + float(inp.get("convert_timeout_s", 3600))
-        strip = ""
-        seen_converting = False
-        while time.monotonic() < deadline:
-            strip = page.inner_text("#sg-jobs")
-            seen_converting = seen_converting or "convert" in strip.lower()
-            # the strip may stay active for other queued conversions: wait for this PDF's text
-            if _paper_for_hash(home, inp["sha"], converted=True):
-                break
-            time.sleep(3)
-        pid = _paper_for_hash(home, inp["sha"], converted=True)
-        assert pid, strip
-        page.goto(f"{base}/library")
-        strip = page.inner_text("#sg-jobs")
-        check_shown = any(t in strip for t in ("PDF matches the paper", "PDF probably matches", "may not be this paper",
-                                                "could not check"))
-        step("drop PDF", paper_id=pid, saw_converting=seen_converting, standing_check_shown=check_shown,
-             strip=strip[-1500:])
-        assert check_shown, strip
-
-        # 2. add to the graph, Write notes, the batch page's copyable commands
-        page.goto(f"{base}/papers/{pid}")
-        if page.query_selector("form[action$='/graphs'] select[name=slug]"):
-            page.select_option("form[action$='/graphs'] select[name=slug]", graph)
-            page.select_option("form[action$='/graphs'] select[name=status]", "member")
-            page.click("form[action$='/graphs'] button[type=submit]")
-        page.goto(f"{base}/papers/{pid}")
-        page.click("form[action$='/write-notes'] button[type=submit]")
-        page.wait_for_url(re.compile(r".*/batches/b_[0-9a-f]+.*"), timeout=30_000)
-        batch_id = re.search(r"/batches/(b_[0-9a-f]+)", page.url).group(1)
-        cmd = page.inner_text("#sg-cmd-claude")
-        assert batch_id in cmd
-        step("write notes", batch_id=batch_id, command=cmd)
-
-        # 3. the worker hook
-        if worker == "none":
-            step("worker skipped")
-            pytest.skip(f"{WORKER_ENV}=none: batch {batch_id} left for an agent; rerun to continue")
-        items = wait_for_worker(page, base, batch_id, run, float(inp.get("worker_timeout_s", 3600)))
-        step("worker done", items=items[-800:])
+        if resume:
+            step("resumed", run=run.name, paper_id=pid, batch_id=batch_id,
+                 batch_items=batch_states(home, batch_id) if batch_id else None)
+        if pid is None:
+            pid = _drop_pdf(page, base, home, inp, step)
+        if batch_id is None:
+            batch_id = _write_notes(page, base, pid, graph, step)
+            worker_needed(page, base, run, batch_id, pid, graph)
+            if worker == "none":
+                step("worker needed", batch_id=batch_id, resume=f"{RESUME_ENV}={run.name}")
+                pytest.skip(f"{WORKER_ENV}=none: batch {batch_id} left for an agent; "
+                            f"resume with {RESUME_ENV}={run.name}")
+            states = wait_for_worker(home, batch_id, pid, float(inp.get("worker_timeout_s", 3600)))
+            step("worker done", batch_items=states)
 
         # 4. three quotes, each highlighted on its own page
         page.goto(f"{base}/papers/{pid}?layout=split")

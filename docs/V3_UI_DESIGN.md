@@ -598,7 +598,7 @@ All of these live in `library/metadata_quality.py` (pure) and `library/metadata_
 - **GET never mutates.** A route-table test asserts that every route with side effects is POST-only.
 - **Headers**: `Content-Security-Policy: default-src 'self'; script-src 'self'; worker-src 'self';
   img-src 'self' data: blob:; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`,
-  plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. There are no inline scripts (the
+  plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` (not `no-referrer`: that makes browsers send `Origin: null` on plain form POSTs, which the Origin rule refuses). There are no inline scripts (the
   token is read from the meta tag). htmx's injected indicator style is turned off (`htmx.config.includeIndicatorStyles
   = false`; the CSS lives in `app.css`). Whether the pinned PDF.js build needs more (e.g. `wasm-unsafe-eval` for
   image decoders) is settled when U4 is built, not assumed. The Playwright pass (U10) fails on any CSP violation

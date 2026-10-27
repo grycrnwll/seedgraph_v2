@@ -69,7 +69,7 @@ dev = [
 # Stage 3 acceptance (docs/V3_UI_DESIGN.md §10.1): the Playwright walk-through and the
 # browser highlight pass in tests/acceptance/ (marked `browser`, opt-in). Dev only, never
 # an app dependency. The Chromium build is a separate one-time download:
-# `uv run --group browser playwright install chromium`.
+# `uv run --group browser playwright install chromium --only-shell` (the headless shell suffices).
 browser = [
     "playwright",
 ]

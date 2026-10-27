@@ -162,18 +162,25 @@ function clearHighlights() {
   document.querySelectorAll(".page.sg-hl-page").forEach((el) => el.classList.remove("sg-hl-page"));
 }
 
-// Concatenate the text nodes of the pages' text layers, remembering where each node starts.
-function collect(pages) {
+// Concatenate the text nodes of the given text layers, remembering where each node starts.
+// PDF.js ends each text line with a <br>, which has no text node: it becomes "\n" here, as
+// in the server's PDF text. Without it the lines run together and the fold's line-bounded
+// rules misfire (two dollar amounts on different lines read as one inline $...$ span, and
+// the prose between them is folded away).
+function collectLayers(layers) {
   const nodes = [];
   let raw = "";
-  pages.forEach((n) => {
-    const layer = textLayerOf(n);
+  layers.forEach((layer) => {
     if (!layer) return;
-    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
     let node = walker.nextNode();
     while (node) {
-      nodes.push({ node, start: raw.length });
-      raw += node.data;
+      if (node.nodeType === Node.TEXT_NODE) {
+        nodes.push({ node, start: raw.length });
+        raw += node.data;
+      } else if (node.nodeName === "BR") {
+        raw += "\n";
+      }
       node = walker.nextNode();
     }
     raw += "\n";
@@ -181,14 +188,22 @@ function collect(pages) {
   return { raw, nodes };
 }
 
-function find(pages, needle) {
-  const { raw, nodes } = collect(pages);
+function collect(pages) {
+  return collectLayers(pages.map((n) => textLayerOf(n)));
+}
+
+function locateIn(collected, needle) {
+  const { raw, nodes } = collected;
   if (!nodes.length) return null;
   const folded = fold(raw);
   const hits = findPassage(folded.text, needle);
   if (!hits.length) return null;
   const [rs, re] = folded.rawSpan(hits[0][0], hits[0][1]);
   return { nodes, rs, re };
+}
+
+function find(pages, needle) {
+  return locateIn(collect(pages), needle);
 }
 
 // Wrap [rs, re) of the concatenated text in mark.sg-hl, one mark per text node.
@@ -316,7 +331,19 @@ document.addEventListener("keydown", (evt) => {
 });
 
 window.seedgraph = window.seedgraph || {};
-window.seedgraph.pdfPane = { showQuote, state };
+// locate / highlightIn: the finder over given text-layer elements (for the browser tests).
+function locate(layers, needle) {
+  const found = locateIn(collectLayers(layers), needle);
+  return found ? [found.rs, found.re] : null;
+}
+
+function highlightIn(layers, needle) {
+  clearHighlights();
+  const found = locateIn(collectLayers(layers), needle);
+  return found ? wrap(found).map((m) => m.textContent).join("") : null;
+}
+
+window.seedgraph.pdfPane = { showQuote, state, locate, highlightIn };
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
