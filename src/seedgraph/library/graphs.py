@@ -101,13 +101,13 @@ def _open(lib: Library, slug: str) -> Graph:
 
 
 @contextmanager
-def _write(g: Graph) -> Iterator[sqlite3.Connection]:
+def graph_write(g: Graph) -> Iterator[sqlite3.Connection]:
     g.lib.mark_dirty()  # flag first: a crash after this leaves dirty set, never an unflagged write
     with transaction(g.conn) as conn:
         yield conn
 
 
-def _set_meta(conn: sqlite3.Connection, key: str, value: str | None) -> None:
+def set_graph_meta(conn: sqlite3.Connection, key: str, value: str | None) -> None:
     conn.execute(
         "INSERT INTO graph_meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -129,11 +129,11 @@ def create_graph(
         raise GraphError(f"graph {slug!r} already exists")
     g = _open(lib, slug)
     try:
-        with _write(g) as conn:
-            _set_meta(conn, "slug", slug)
-            _set_meta(conn, "display_name", display_name or slug)
-            _set_meta(conn, "created_at", created_at or _now())
-            _set_meta(conn, "origin", origin)
+        with graph_write(g) as conn:
+            set_graph_meta(conn, "slug", slug)
+            set_graph_meta(conn, "display_name", display_name or slug)
+            set_graph_meta(conn, "created_at", created_at or _now())
+            set_graph_meta(conn, "origin", origin)
     except BaseException:
         g.close()
         raise
@@ -175,8 +175,8 @@ def rename_graph(lib: Library, slug: str, display_name: str) -> None:
     """Change the display name. The slug is fixed."""
     if not display_name or not display_name.strip():
         raise GraphError("display name must not be empty")
-    with open_graph(lib, slug) as g, _write(g) as conn:
-        _set_meta(conn, "display_name", display_name)
+    with open_graph(lib, slug) as g, graph_write(g) as conn:
+        set_graph_meta(conn, "display_name", display_name)
 
 
 def set_membership(
@@ -203,7 +203,7 @@ def set_membership(
         raise NotHeldError(
             f"paper {paper_id!r} is cited-only (no PDF); add it to the frontier until its PDF is added"
         )
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         conn.execute(
             "INSERT INTO graph_papers (paper_id, status, is_seed, reason, added_at, origin) "
             "VALUES (?, ?, ?, ?, ?, ?) "
@@ -217,7 +217,7 @@ def remove_membership(g: Graph, paper_id: str) -> GraphPaper | None:
     """Delete the paper's row from this graph; return the removed row (so callers
     can say whether it was a seed), or None when the paper was not in the graph.
     Nothing in the library changes."""
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         row = conn.execute(
             "SELECT paper_id, status, is_seed, reason, added_at, origin FROM graph_papers "
             "WHERE paper_id = ?",
@@ -244,7 +244,7 @@ def membership(g: Graph, *, status: Status | None = None) -> list[GraphPaper]:
 
 def choose_lens(g: Graph, lens_id: str, *, origin: str = "library", chosen_at: str | None = None) -> None:
     """Apply a library lens to this graph (idempotent)."""
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         conn.execute(
             "INSERT INTO graph_lenses (lens_id, chosen_at, origin) VALUES (?, ?, ?) "
             "ON CONFLICT(lens_id) DO NOTHING",
@@ -257,7 +257,7 @@ def unchoose_lens(g: Graph, lens_id: str) -> bool:
     results stay in the library."""
     if g.conn.execute("SELECT 1 FROM graph_lenses WHERE lens_id = ?", (lens_id,)).fetchone() is None:
         return False
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         conn.execute("DELETE FROM graph_lenses WHERE lens_id = ?", (lens_id,))
     return True
 

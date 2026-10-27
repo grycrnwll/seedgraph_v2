@@ -34,7 +34,7 @@ from typing import Literal
 
 import networkx as nx
 
-from .graphs import Graph, GraphError, _write, graph_citations, membership
+from .graphs import Graph, GraphError, graph_write, graph_citations, membership
 
 ALGORITHM = "louvain"
 LADDER: tuple[float, ...] = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
@@ -457,7 +457,7 @@ def regroup(
         resolution, chosen_by = prev.resolution, "researcher"
     plan = plan_for_graph(g, resolution=resolution, stability_seeds=stability_seeds)
     matched = _match(plan.groups, literatures(g))
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         cur = conn.execute(
             "INSERT INTO literature_runs (algorithm, resolution, chosen_by, rule_met, seed, "
             "modularity, ari_mean, nmi_mean, stability_seeds, citation_sha256, built_at) "
@@ -537,7 +537,7 @@ def rename_literature(
         name = name.strip()
         if not name:
             raise GraphError("literature name must not be empty")
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         conn.execute(
             "UPDATE literatures SET researcher_name = ?, named_at = ? WHERE literature_id = ?",
             (name, named_at or _now(), literature_id),
@@ -557,7 +557,7 @@ def set_agent_name(
     _literature_exists(g, literature_id)
     if not name or not name.strip():
         raise GraphError("literature name must not be empty")
-    with _write(g) as conn:
+    with graph_write(g) as conn:
         conn.execute(
             "UPDATE literatures SET agent_name = ?, agent_description = ?, named_at = ? "
             "WHERE literature_id = ?",

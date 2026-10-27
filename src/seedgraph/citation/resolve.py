@@ -5,8 +5,9 @@ Resolves each :class:`~seedgraph.citation.bib_parser.BibEntry` against the
 applies v1's precision guard (``is_false_resolution`` +
 ``REFERENCE_WORK_DOI_PREFIXES``). This module is **PURE with respect to the DB**:
 it performs resolution only (it may hit the provider chain, which is offline-safe
-within its ``provider_cache`` TTL) and writes nothing — persistence and edge
-projection live in :mod:`seedgraph.citation.parsed_bib`.
+within its ``provider_cache`` TTL) and writes nothing — persistence lives in
+:func:`seedgraph.library.growth.parse_references_for` (``reference_entries`` and
+``citation_links``).
 
 Resolution-confidence rubric (§7; decision 73(b); deterministic, no-LLM —
 decisions 15/58/75):
@@ -39,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from seedgraph.citation.bib_parser import BibEntry
+from seedgraph.library.titlecheck import OVERLAP_STOPWORDS  # stage 3 §9: one stopword set
 
 # ===========================================================================
 # Resolution-precision guard (ported from v1 — kill false-positive refwork hits)
@@ -105,15 +107,6 @@ def _doi_is_refwork(doi: Optional[str]) -> bool:
     return _refwork_subtoken(d) in REFERENCE_WORK_DOI_PREFIXES
 
 
-#: Stopwords removed before counting SHARED CONTENT tokens for the overlap gate.
-_OVERLAP_STOPWORDS: frozenset[str] = frozenset(
-    {
-        "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at",
-        "by", "with", "from", "as", "is", "are", "be", "this", "that", "into",
-        "über", "der", "die", "das", "und", "le", "la", "les", "de", "du",
-    }
-)
-
 #: Word-character token splitter for the overlap gate (drops punctuation).
 _CONTENT_TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
@@ -123,7 +116,7 @@ def _content_tokens(text: Optional[str]) -> set[str]:
     if not text:
         return set()
     toks = {t.lower() for t in _CONTENT_TOKEN_RE.findall(text)}
-    return {t for t in toks if t not in _OVERLAP_STOPWORDS and len(t) > 1}
+    return {t for t in toks if t not in OVERLAP_STOPWORDS and len(t) > 1}
 
 
 @dataclass

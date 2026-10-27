@@ -102,25 +102,3 @@ def test_marker_result_new_fields_are_optional():
     assert r.page_count is None and r.timings == {} and r.converter_version is None
 
 
-def _ingest(pdf):
-    from seedgraph.acquisition.service import ingest_upload
-
-    return ingest_upload(pdf)
-
-
-def test_ocr_fallback_does_not_retry_a_converter_crash(pool, tmp_path):
-    from seedgraph.acquisition.service import convert_with_ocr_fallback
-
-    src = _ingest(synthetic_pdf(tmp_path, "crash.pdf", "FAKE:CRASH"))
-    with pytest.raises(ConversionError):
-        convert_with_ocr_fallback(src.source_file_id, backend=WarmMarkerBackend(pool))
-    assert [r["run_status"] for r in _runs()] == ["failed"]  # no force_ocr re-run
-
-
-def test_ocr_fallback_still_retries_an_engine_error(pool, tmp_path):
-    from seedgraph.acquisition.service import convert_with_ocr_fallback
-
-    src = _ingest(synthetic_pdf(tmp_path, "bad.pdf", "FAKE:ERROR"))
-    with pytest.raises(ConversionError):
-        convert_with_ocr_fallback(src.source_file_id, backend=WarmMarkerBackend(pool))
-    assert [r["run_status"] for r in _runs()] == ["failed", "failed"]

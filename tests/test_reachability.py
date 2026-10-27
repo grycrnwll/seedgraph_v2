@@ -10,9 +10,9 @@ MCP server, the web app, the app side of the converter worker (``seedgraph.conve
 and every module in ``seedgraph.web.routes`` (the web app discovers those with
 ``pkgutil``, which a static scan cannot see).
 
-Reserved roots are v2 modules kept for stage 4 (the orchestrator's build rule: code is
-deleted in the stage that replaces it). They count as roots, so what they import stays
-too, and their own unit tests keep running.
+Reserved roots were v2 modules kept for a later stage (the orchestrator's build rule: code
+is deleted in the stage that replaces it). Stage 4 (C10) deleted or wired the last of them,
+so the reserved list is empty and must stay so.
 """
 
 from __future__ import annotations
@@ -32,32 +32,15 @@ ENTRY_POINTS = (
     "seedgraph.web.routes.*",
 )
 
-STAGE4 = "reserved for stage 4 (concepts/graphs/growth)"
-
-# module or package (``.*`` = every module under it) -> reason. Reserved roots: kept and
-# followed (their imports stay reachable).
-RESERVED = {
-    "seedgraph.concepts.*": STAGE4 + ": concept model (C1); wired to the CLI, MCP and web by C4/C5/C7",
-    "seedgraph.library.literatures": STAGE4 + ": literatures (C2); wired to the CLI, MCP and web by C7/C8/C9",
-    "seedgraph.library.growth": STAGE4 + ": guided corpus growth (C6); wired to the growth wizard by C8",
-    "seedgraph.semantic.*": STAGE4 + ": concept guardrails, closure, stoplist, type fence (ADR-0013)",
-    "seedgraph.graph.*": STAGE4 + ": citation graph and communities (keeps networkx)",
-    "seedgraph.citation.*": STAGE4 + ": reference parsing and resolution, citation edges",
-    "seedgraph.acquisition.resolve": STAGE4 + ": corpus growth (resolve)",
-    "seedgraph.acquisition.walk": STAGE4 + ": corpus growth (citation walk)",
-    "seedgraph.acquisition.backfill": STAGE4 + ": corpus growth (title backfill)",
-    "seedgraph.acquisition.bridge": STAGE4 + ": corpus growth (work/markdown bridge)",
-    "seedgraph.acquisition.preview": STAGE4 + ": corpus growth (walk preview)",
-    "seedgraph.extraction.metadata": STAGE4 + ": deterministic identifier scan for growth",
-}
+# module or package (``.*`` = every module under it) -> reason. Reserved roots are kept and
+# followed (their imports stay reachable). Stage 4 (C10) emptied it; it must stay empty.
+RESERVED: dict[str, str] = {}
 
 # Unreachable modules that stay on purpose (not followed further).
 KEEP = {
-    "seedgraph.lenses.registry": "lens definitions for the stage 4 lens choice (lenses/{schema,registry,prompt})",
     "seedgraph.migrate.v2_schema": "frozen v2 schema, package data read by the migrate test fixtures",
     "seedgraph.library._calibrate_textquality": "calibration script, run by hand",
     "seedgraph.library._calibrate_titlecheck": "calibration script, run by hand",
-    "seedgraph.db.models_project": STAGE4 + ": ORM mapping the kept lens-registry (test_phase_6) and reserved semantic (test_phase_7) tests build data with",
 }
 
 
@@ -141,6 +124,69 @@ def test_kept_modules_are_really_unreachable():
     # A KEEP entry that the core already reaches is dead weight on the list.
     reachable = _closure(_roots(ENTRY_POINTS) | _roots(RESERVED))
     assert not (set(KEEP) & reachable), sorted(set(KEEP) & reachable)
+
+
+def test_nothing_is_reserved_for_a_later_stage():
+    # Stage 4 was the last stage with reserved v2 code (docs/V3_CONCEPTS_DESIGN.md §10).
+    assert RESERVED == {}
+    assert not [name for name, why in KEEP.items() if "reserved" in why.lower()]
+
+
+# v2 code the stage 4 design deletes (docs/V3_CONCEPTS_DESIGN.md §10): stored co-occurrence
+# and broader/narrower edges, the labels-only merge proposer and its review-every-merge
+# flow, the v2 citation graph, and the ORM-bound corpus-growth pipeline.
+DELETED_IN_STAGE4 = (
+    "seedgraph.semantic.access", "seedgraph.semantic.audit", "seedgraph.semantic.canon",
+    "seedgraph.semantic.concepts", "seedgraph.semantic.current", "seedgraph.semantic.edges",
+    "seedgraph.semantic.export", "seedgraph.semantic.graph_build", "seedgraph.semantic.proposer",
+    "seedgraph.semantic.query", "seedgraph.graph",
+    "seedgraph.citation.edges", "seedgraph.citation.parsed_bib", "seedgraph.citation.project_edges",
+    "seedgraph.acquisition.walk", "seedgraph.acquisition.resolve", "seedgraph.acquisition.backfill",
+    "seedgraph.acquisition.bridge", "seedgraph.acquisition.service",
+    "seedgraph.acquisition.doctor_reconcile", "seedgraph.extraction", "seedgraph.db.models_project",
+    "seedgraph.project.review", "seedgraph.project.merge", "seedgraph.project.service",
+)
+
+
+def test_stage4_deletions_are_gone():
+    present = sorted(m for m in DELETED_IN_STAGE4 if _expand(m + ".*"))
+    assert not present, present
+
+
+def test_no_stored_concept_edge_types_remain():
+    # Co-occurrence and broader/narrower concept edges were v2 only (§10).
+    words = ("co_occurs_with", "broader_than", "narrower_than")
+    hits = sorted(m for m, p in MODULES.items()
+                  if not m.startswith("seedgraph.migrate.v2_schema")
+                  and any(w in p.read_text(encoding="utf-8") for w in words))
+    assert not hits, hits
+
+
+def _private_names_used_across_modules(name: str) -> list[str]:
+    """``from X import _y`` and ``mod._y`` accesses in ``name`` that reach a sibling
+    seedgraph module's private helper."""
+    tree = ast.parse(MODULES[name].read_text(encoding="utf-8"))
+    seedgraph_aliases = set()
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.level or (node.module or "").startswith("seedgraph")):
+            for alias in node.names:
+                if alias.name.startswith("_") and not alias.name.startswith("__"):
+                    found.append(f"{node.module}.{alias.name}")
+                else:
+                    seedgraph_aliases.add(alias.asname or alias.name)
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id in seedgraph_aliases
+                and node.attr.startswith("_") and not node.attr.startswith("__")):
+            found.append(f"{node.value.id}.{node.attr}")
+    return sorted(set(found))
+
+
+def test_growth_uses_only_public_library_helpers():
+    # C6 reached into ingest/graphs privates; C10 made them public (§12 C10).
+    assert _private_names_used_across_modules("seedgraph.library.growth") == []
+    assert _private_names_used_across_modules("seedgraph.library.literatures") == []
 
 
 def test_the_scan_sees_lazy_and_relative_imports():

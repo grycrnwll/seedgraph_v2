@@ -291,7 +291,7 @@ def _fill_existing(lib: Library, paper_id: str, ids, record: Mapping[str, Any]) 
 
 def _create_cited_only(lib: Library, ids: tuple[tuple[str, str], ...], record: Mapping[str, Any]) -> tuple[str, list[str]]:
     """A new cited-only paper keyed on its strong ids; returns ``(paper_id, attention ids)``."""
-    from .ingest import _identity_item, _similar_papers
+    from .ingest import raise_identity_check, similar_papers
 
     provider = provider_of(dict(record))
     values = record_values(dict(record))
@@ -314,9 +314,9 @@ def _create_cited_only(lib: Library, ids: tuple[tuple[str, str], ...], record: M
             item_ids.append(attention.raise_item(
                 lib, METADATA_NEEDED, {"paper_id": pid}, paper_id=pid,
                 detail="found by guided growth; its provider gave no usable title").item_id)
-        similar = _similar_papers(lib, pid, values["title"], values["year"])
+        similar = similar_papers(lib, pid, values["title"], values["year"])
         if similar:
-            item = _identity_item(lib, pid, similar, "a paper found by guided growth may be the same paper as")
+            item = raise_identity_check(lib, pid, similar, "a paper found by guided growth may be the same paper as")
             if item:
                 item_ids.append(item)
     return pid, item_ids
@@ -485,8 +485,8 @@ def _store_found(lib: Library, slug: str, payload: dict) -> None:
         stored = g.conn.execute("SELECT value FROM graph_meta WHERE key = ?", (WALK_META_KEY,)).fetchone()
         if stored is not None and stored[0] == text:
             return
-        with graphs._write(g) as conn:
-            graphs._set_meta(conn, WALK_META_KEY, text)
+        with graphs.graph_write(g) as conn:
+            graphs.set_graph_meta(conn, WALK_META_KEY, text)
 
 
 def _load_found(lib: Library, slug: str) -> dict:
@@ -554,7 +554,7 @@ def approve(lib: Library, slug: str, choices: Mapping[str, Choice], *, chain: An
     """Add the researcher's ticked papers to the graph (module doc). Every choice is checked
     before anything is written; then each paper joins, and each cited-only one gets one
     open-access attempt. Results follow ``choices`` order."""
-    from .ingest import _fetch_oa
+    from .ingest import fetch_open_access
 
     if fetch is None:
         from ..acquisition.fetch import fetch_oa
@@ -588,7 +588,7 @@ def approve(lib: Library, slug: str, choices: Mapping[str, Choice], *, chain: An
         if is_held(lib.conn, pid):
             out.append(Approval(pid, choice, True, "already_held", None, False, doi_url, f"joined as {choice}"))
             continue
-        oa, source = _fetch_oa(lib, pid, _source_record(lib, pid), fetch)
+        oa, source = fetch_open_access(lib, pid, _source_record(lib, pid), fetch)
         now_held = oa == "held"
         detail = (f"joined as {choice}; open-access PDF from {source}, queued for conversion" if now_held
                   else f"joined as {choice}; no open-access copy, so it is on the needs-a-PDF list")

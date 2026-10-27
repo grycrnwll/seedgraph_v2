@@ -10,37 +10,17 @@ The module-level imports double as an import-cleanliness check of the kept modul
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
-from sqlmodel import Session
 from typer.testing import CliRunner
 
-from seedgraph.db.migrations import discover_migrations
-from seedgraph.db.models_project import ExtractionRun, Lens, LensOutput
-from seedgraph.lenses import prompt, registry, schema  # noqa: F401 — import-cleanliness
-from seedgraph.project import service
+from seedgraph.lenses import schema
 
 cli = CliRunner()
 
 TEMPLATE = Path(schema.__file__).resolve().parent / "templates" / "regularity_conditions_v1.yaml"
-
-
-def _install_lens(h, lens_id="regularity_conditions_v1", content=None):
-    """Write the lens YAML into the project + sync; return (project_dir, lens)."""
-    project_dir = h.root / "projects" / h.slug
-    lens_dir = project_dir / "lenses"
-    lens_dir.mkdir(parents=True, exist_ok=True)
-    text = content if content is not None else TEMPLATE.read_text(encoding="utf-8")
-    if lens_id != "regularity_conditions_v1" and content is None:
-        text = text.replace("lens_id: regularity_conditions_v1", f"lens_id: {lens_id}")
-    (lens_dir / f"{lens_id}.yaml").write_text(text, encoding="utf-8")
-    with Session(h.engine) as session:
-        registry.sync_lens(session, project_dir, lens_id)
-    return project_dir, registry.load_lens(project_dir, lens_id)
 
 
 # --------------------------------------------------------------------------
@@ -141,43 +121,6 @@ def test_lens_schema():
 # registry (plan §11 test_lens_registry)
 # --------------------------------------------------------------------------
 
-def test_lens_registry():
-    """`sync_lens` creates a `lenses` row with the correct `definition_hash` and
-    NULL `definition_yaml` while `draft`; editing the YAML in `draft`/
-    `calibrating` updates the hash (prior runs go stale, not deleted); promotion
-    to `active` snapshots `definition_yaml` once; editing after `active` is
-    rejected (requires a new `_v2` lens_id)."""
-    from seedgraph.errors import ValidationError
-
-    h = service.create_project("reg_registry")
-    project_dir, lens = _install_lens(h)
-    with Session(h.engine) as session:
-        row = registry.get_lens_row(session, "regularity_conditions_v1")
-        assert row is not None
-        assert row.status == "draft"
-        assert row.definition_yaml is None
-        assert row.definition_hash == lens.definition_hash()
-
-        # edit YAML while draft -> hash refreshes in place, definition_yaml stays NULL.
-        text = (project_dir / "lenses" / "regularity_conditions_v1.yaml").read_text()
-        text2 = text.replace("- continuity", "- continuity\n  - boundedness")
-        (project_dir / "lenses" / "regularity_conditions_v1.yaml").write_text(text2)
-        row2 = registry.sync_lens(session, project_dir, "regularity_conditions_v1")
-        assert row2.definition_hash != row.definition_hash
-        assert row2.definition_yaml is None
-
-        # promote to active -> definition_yaml snapshotted once.
-        lens2 = registry.load_lens(project_dir, "regularity_conditions_v1")
-        promoted = registry.promote_to_active(session, lens2)
-        assert promoted.status == "active"
-        assert promoted.definition_yaml is not None
-
-        # editing after active is rejected (immutability-on-use).
-        text3 = text2.replace("- boundedness", "- boundedness\n  - coercivity")
-        (project_dir / "lenses" / "regularity_conditions_v1.yaml").write_text(text3)
-        with pytest.raises(ValidationError):
-            registry.sync_lens(session, project_dir, "regularity_conditions_v1")
-
 
 # --------------------------------------------------------------------------
 # migration parity (plan §11 test_lens_migration; D6)
@@ -206,44 +149,6 @@ def _assert_table_parity(insp, table_name, model):
         assert orm_aff == _affinity(str(mig_col["type"])), f"{table_name}.{name}: type drift"
         if name not in mig_pk:
             assert orm_col.nullable == mig_col["nullable"], f"{table_name}.{name}: nullability drift"
-
-
-def test_lens_migration(tmp_path):
-    """Applying `0009_lenses.sql` creates `lenses` + `lens_outputs` and adds
-    `extraction_runs.lens_definition_hash`; the SQLModel metadata mirrors the
-    migrated schema (D6; `create_all()` is not used to author schema)."""
-    db = tmp_path / "parity6.db"
-    conn = sqlite3.connect(str(db))
-    for version, path in discover_migrations("project"):
-        if version > 9:
-            continue
-        conn.executescript(path.read_text(encoding="utf-8"))
-    conn.close()
-
-    insp = inspect(create_engine(f"sqlite:///{db.as_posix()}"))
-    names = insp.get_table_names()
-    assert "lenses" in names and "lens_outputs" in names
-
-    _assert_table_parity(insp, "lenses", Lens)
-    _assert_table_parity(insp, "lens_outputs", LensOutput)
-
-    # extraction_runs gained the (nullable) lens_definition_hash column at 0009.
-    run_cols = {c["name"]: c for c in insp.get_columns("extraction_runs")}
-    assert "lens_definition_hash" in run_cols
-    assert run_cols["lens_definition_hash"]["nullable"] is True
-    # schema_id is nullable (lens-origin runs leave it NULL; decision 22 / §4.3).
-    assert run_cols["schema_id"]["nullable"] is True
-    # D6 mirror: the ExtractionRun ORM now mirrors the post-0009 migrated
-    # extraction_runs (incl. lens_definition_hash + the nullable schema_id), so
-    # assert full ORM == migrated parity for the co-owned table this phase ALTERs.
-    _assert_table_parity(insp, "extraction_runs", ExtractionRun)
-
-    # lens_outputs FK targets + access_class default present.
-    referred = {fk["referred_table"] for fk in insp.get_foreign_keys("lens_outputs")}
-    assert {"extraction_runs", "lenses", "works", "extracted_claims"} <= referred
-    lo_cols = {c["name"]: c for c in insp.get_columns("lens_outputs")}
-    assert lo_cols["claim_id"]["nullable"] is True
-    assert lo_cols["fields_json"]["nullable"] is False
 
 
 # --------------------------------------------------------------------------

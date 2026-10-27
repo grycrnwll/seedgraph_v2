@@ -17,17 +17,6 @@ from seedgraph.config.loader import (
     _FORBIDDEN_SECRET_KEYS,
     config_fingerprint,
     effective_config_snapshot,
-    load_project_config,
-    write_project_overrides,
-)
-from seedgraph.project import service
-from seedgraph.run import (
-    _status_from_events,
-    append_event,
-    ensure_run,
-    list_runs,
-    mark_interrupted_runs,
-    read_events,
 )
 
 runner = CliRunner()
@@ -61,14 +50,6 @@ def _all_keys(node):
             yield from _all_keys(item)
 
 
-def test_different_config_knob_gives_different_fingerprint():
-    service.create_project("fingknob")
-    before = config_fingerprint(effective_config_snapshot(load_project_config("fingknob")))
-    write_project_overrides("fingknob", {"answer": {"max_evidence_tokens": 4321}})
-    after = config_fingerprint(effective_config_snapshot(load_project_config("fingknob")))
-    assert before != after
-
-
 def test_fingerprint_is_key_order_invariant():
     assert config_fingerprint({"a": 1, "b": [2, 3]}) == config_fingerprint({"b": [2, 3], "a": 1})
     assert config_fingerprint({"a": 1}) != config_fingerprint({"a": 2})
@@ -96,63 +77,5 @@ def test_snapshot_strips_secret_named_keys_from_hostile_mapping():
 # --------------------------------------------------------------------------
 # ch9 — done-vs-crashed: `interrupted` terminal + mark_interrupted_runs sweep
 # --------------------------------------------------------------------------
-
-def test_status_from_events_recognizes_interrupted_terminal():
-    assert _status_from_events([{"event": "started"}, {"event": "interrupted"}]) == "interrupted"
-    assert _status_from_events([{"event": "started"}]) == "running"
-    assert _status_from_events([]) is None
-
-
-def test_sweep_marks_stale_running_run_interrupted():
-    service.create_project("swproj")
-    rid = ensure_run("swproj")
-    append_event("swproj", rid, phase="extract", event="started")
-    assert list_runs("swproj")[0]["status"] == "running"
-
-    assert mark_interrupted_runs("swproj") == [rid]
-
-    rows = list_runs("swproj")
-    assert rows[0]["status"] == "interrupted"
-    last = read_events("swproj", rid)[-1]
-    assert last["event"] == "interrupted"
-    assert last["level"] == "warning"
-    assert last["message"] == "process restarted mid-run"
-
-
-def test_sweep_is_idempotent():
-    service.create_project("swidem")
-    rid = ensure_run("swidem")
-    append_event("swidem", rid, phase="p", event="started")
-    assert mark_interrupted_runs("swidem") == [rid]
-    n_events = len(read_events("swidem", rid))
-
-    assert mark_interrupted_runs("swidem") == []  # second sweep appends nothing
-    assert len(read_events("swidem", rid)) == n_events
-
-
-def test_sweep_leaves_terminal_and_eventless_runs_untouched():
-    service.create_project("swterm")
-    rid_fin = ensure_run("swterm")
-    append_event("swterm", rid_fin, phase="p", event="started")
-    append_event("swterm", rid_fin, phase="p", event="finished")
-    rid_fail = ensure_run("swterm")
-    append_event("swterm", rid_fail, phase="p", event="started")
-    append_event("swterm", rid_fail, phase="p", event="failed")
-    # A manifest-only run with NO events (the CLI cite-run shape) must never be
-    # stamped — CLI runs are event-silent by invariant (risk 7).
-    rid_cli = ensure_run("swterm")
-
-    assert mark_interrupted_runs("swterm") == []
-
-    by_id = {row["run_id"]: row["status"] for row in list_runs("swterm")}
-    assert by_id[rid_fin] == "finished"
-    assert by_id[rid_fail] == "failed"
-    assert by_id[rid_cli] is None
-    assert read_events("swterm", rid_cli) == []  # still no events.jsonl
-
-
-def test_sweep_on_project_without_runs_dir_is_noop():
-    service.create_project("swnone")
-    assert mark_interrupted_runs("swnone") == []
 
 

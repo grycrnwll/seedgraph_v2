@@ -23,14 +23,12 @@ import pytest
 
 _CONTRACT_SYMBOLS: tuple[tuple[str, str], ...] = (
     ("seedgraph.notes.spans", "ensure_span"),
-    ("seedgraph.citation.edges", "write_edge"),
     ("seedgraph.citation.bib_parser", "parse_references"),
+    ("seedgraph.citation.resolve", "resolve_references"),
     ("seedgraph.sections.parser", "parse_sections"),
     ("seedgraph.work.routine", "claim_next"),
     ("seedgraph.llm.ollama", "check_reachable"),
-    ("seedgraph.project.identity", "upsert_work"),
-    ("seedgraph.project.identity", "merge_decision"),
-    ("seedgraph.doctor", "collect_checks"),
+    ("seedgraph.project.identity", "canonical_key"),
 )
 
 

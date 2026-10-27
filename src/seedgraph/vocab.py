@@ -491,40 +491,6 @@ def lens_claim_type(object_type: str | None, lens_id: str) -> str:
     return f"lens:{lens_id}"
 
 
-# --- phase_7: semantic graph node/edge vocab -------------------------------
-
-class NodeType(StrEnum):
-    """Closed node-type vocabulary for project_graph_edges endpoints (phase_7).
-    Values mirror ``semantic.edges.NODE_HOME_TABLES`` keys."""
-
-    Work = "Work"
-    Concept = "Concept"
-    Claim = "Claim"
-    EvidenceSpan = "EvidenceSpan"
-
-
-# Open semantic graph edge-type vocabulary (phase_7) + catch-all normalize.
-GRAPH_EDGE_TYPE_OTHER = "related_to"
-GRAPH_EDGE_TYPES: frozenset[str] = frozenset(
-    {
-        "discusses",
-        "related_to",
-        "broader_than",
-        "narrower_than",
-        "contrasts_with",
-        "co_occurs_with",
-        "has_alias",
-        "mentions_concept",
-    }
-)
-
-
-def normalize_graph_edge_type(value: str | None) -> str:
-    """Map an arbitrary semantic edge_type onto a GRAPH_EDGE_TYPES member, else the
-    ``'related_to'`` catch-all."""
-    return normalize(value, GRAPH_EDGE_TYPES, fallback=GRAPH_EDGE_TYPE_OTHER)
-
-
 # --- phase_8: answer-harness closed enums (relocated from answer/types.py) ---
 
 class QueryType(StrEnum):

@@ -169,13 +169,6 @@ def test_seeding_queries_never_overwrites_the_researchers_file(fx, tmp_path):
     assert parity.load_queries(v3) != {"diff_in_diff": ["my own query"]}
 
 
-def test_frozen_v2_retrieval_sql_matches_v2_code():
-    # v2's answer/retrieve.py (the other half, _NOT_EXCLUDED) was deleted in stage 2;
-    # parity.V2_NOT_EXCLUDED is now the only copy, frozen on purpose.
-    from seedgraph.semantic.current import CURRENT_CLAIMS_CTE
-    assert parity.V2_CURRENT_CLAIMS_CTE == CURRENT_CLAIMS_CTE
-
-
 def test_a_superseded_lens_run_on_a_merged_paper_is_classified_merged(fx, tmp_path):
     """Two lens runs on the double import's two works (one paper in v3): v2 counts both
     lens claims current, v3 only the newer run's; the older one is a 'merged' miss."""

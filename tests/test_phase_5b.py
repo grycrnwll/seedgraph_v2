@@ -9,58 +9,14 @@ whole-phase import-cleanliness check.
 from __future__ import annotations
 
 import asyncio
-import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
 
 # Import the full phase surface so collection validates import-cleanliness.
-from seedgraph.acquisition import (  # noqa: F401
-    acquire_corpus,
-    manual_upload,
-    resolve_corpus,
-    resolve_work_markdown,
-    run_corpus,
-    walk_corpus,
-)
-from seedgraph.acquisition.bridge import (  # noqa: F401
-    WorkSourceFile,
-    backfill_markdown,
-    derive_acquisition_state,
-    write_bridge,
-)
-from seedgraph.acquisition.doctor_reconcile import (  # noqa: F401
-    ReconcileFinding,
-    cross_db_bridge_reconcile,
-    current_markdown_for_source,
-    foreign_key_check_all,
-    open_cache_ro,
-    reconcile_bridge,
-)
 from seedgraph.acquisition.fetch import FetchResult, OACandidate, fetch_oa  # noqa: F401
-from seedgraph.acquisition.resolve import (  # noqa: F401
-    SIM_RESOLVE,
-    SIM_REVIEW,
-    ResolutionOutcome,
-    ResolveReport,
-    resolve_record,
-    score_title_match,
-)
-from seedgraph.acquisition.service import (  # noqa: F401
-    AcquireReport,
-    IngestFolderReport,
-    ingest_folder,
-    ingest_one_pdf,
-)
-from seedgraph.acquisition.walk import WalkReport, expand_references  # noqa: F401
 from seedgraph.cache.db import init_cache_db
-from seedgraph.cache.marker_backend import FakeMarkerBackend
 from seedgraph.cache.provider_cache import (  # noqa: F401
     DEFAULT_TTL_SECONDS,
     ProviderCache,
@@ -73,14 +29,9 @@ from seedgraph.cache.provider_cache import (  # noqa: F401
     key_oa_candidates,
     key_referenced_works,
 )
-from seedgraph.db import engine as db_engine
 from seedgraph.db.connection import open_cache_db
-from seedgraph.db.project_models import Identifier, ProjectDocument, ReviewQueueItem, Work
-from seedgraph.project import review, service
 from seedgraph.providers import build_default_providers  # noqa: F401
 from seedgraph.providers.base import CircuitBreaker, CitationProvider, ProviderChain  # noqa: F401
-
-_SCHEMA_DIR = Path(db_engine.__file__).resolve().parent / "schema"
 
 
 # --------------------------------------------------------------------------
@@ -174,37 +125,6 @@ def test_provider_cache():
 # --------------------------------------------------------------------------
 # test_request_key_contract (must-fix #2)
 # --------------------------------------------------------------------------
-def test_request_key_contract():
-    # Stable, id-preference (openalex > doi) lowercased grammar.
-    assert canonical_request_id({"openalex_id": "W123", "doi": "10.1/X"}) == "openalex=w123"
-    assert canonical_request_id({"doi": "10.1/X"}) == "doi=10.1/x"
-    assert key_referenced_works({"openalex_id": "W123"}) == "referenced_works:src=openalex=w123"
-
-    # Build A ch2 — deliberate key move for the 10.48550 family (grammar note in
-    # provider_cache §6.5 block): the arXiv-DOI alias keys as arxiv=<id>, agreeing
-    # with the identity/fetch fold; the arXiv normalizer applies to the captured id.
-    assert canonical_request_id({"doi": "10.48550/arXiv.2401.01234"}) == "arxiv=2401.01234"
-    assert canonical_request_id({"doi": "10.48550/arxiv.2401.01234v2"}) == "arxiv=2401.01234"
-    assert canonical_request_id({"arxiv_id": "2401.01234"}) == "arxiv=2401.01234"
-
-    # phase_2's reconstruction over a stored Work row computes the SAME key.
-    h = service.create_project("keycontract")
-    service.add_work(h, ids={"doi": "10.1/x", "openalex": "W123"}, title="Paper")
-    with Session(h.engine) as s:
-        work = s.exec(select(Work)).one()
-        key_from_work = key_referenced_works(work)
-    key_from_dict = key_referenced_works({"openalex_id": "W123", "doi": "10.1/x"})
-    assert key_from_work == key_from_dict == "referenced_works:src=openalex=w123"
-
-    # Round-trip: cache a reference list under the work's key; reconstruct + read it.
-    init_cache_db(None)
-    conn = open_cache_db(None)
-    try:
-        cache_put(conn, provider="openalex", request_key=key_from_work, response=[{"openalex_id": "W9"}])
-        reconstructed = key_referenced_works(work)
-        assert cache_get(conn, provider="openalex", request_key=reconstructed) == [{"openalex_id": "W9"}]
-    finally:
-        conn.close()
 
 
 # --------------------------------------------------------------------------
@@ -246,50 +166,6 @@ def test_provider_chain():
 # --------------------------------------------------------------------------
 # test_resolve_rubric
 # --------------------------------------------------------------------------
-def test_resolve_rubric():
-    h = service.create_project("rubric")
-    service.add_work(h, ids={"doi": "10.1/strong"}, title="Strong Id Paper")
-    service.add_work(h, title="alpha beta gamma delta", year=2020)         # title resolve
-    service.add_work(h, title="alpha beta gamma midband", year=2019)       # mid-band
-    service.add_work(h, title="alpha lonely token here", year=2021)        # sub-threshold
-
-    by_title = {
-        "alpha beta gamma delta": {"title": "alpha beta gamma delta", "year": 2020, "doi": "10.9/resolved"},
-        "alpha beta gamma midband": {"title": "alpha beta gamma midband extra", "year": 2019},
-        "alpha lonely token here": {"title": "zeta eta theta iota", "year": 2021},
-    }
-    chain = _chain([MockProvider("openalex", by_title=by_title)], use_cache=False)
-
-    def resolve(title_or_doi):
-        with Session(h.engine, expire_on_commit=False) as s:
-            work = s.exec(select(Work).where(Work.canonical_title == title_or_doi)).one()
-            outcome = asyncio.run(resolve_record(chain, s, work=work))
-            s.commit()
-        return outcome
-
-    # (a) strong-id DOI -> confidence 1.0, resolved, resolution_source='doi'.
-    strong = resolve("Strong Id Paper")
-    assert strong.status == "resolved" and strong.confidence == 1.0 and strong.resolution_source == "doi"
-    with Session(h.engine) as s:
-        idrow = s.exec(select(Identifier).where(Identifier.id_value == "10.1/strong")).one()
-        assert idrow.resolution_source == "doi" and idrow.confidence == 1.0
-
-    # (b) title+year sim >= 0.90 & year ok -> resolved (confidence == sim == 1.0 here).
-    titled = resolve("alpha beta gamma delta")
-    assert titled.status == "resolved" and titled.confidence >= SIM_RESOLVE
-
-    # (c) sim in [0.65, 0.90) -> review_queue (title_year_ambiguous), ambiguous, NO merge.
-    mid = resolve("alpha beta gamma midband")
-    assert mid.status == "ambiguous" and mid.review_kind == "title_year_ambiguous"
-    assert SIM_REVIEW <= mid.confidence < SIM_RESOLVE
-    assert len(review.list_open(h)) == 1
-
-    # (d) sim < 0.65 -> unresolved, no work mutation (no identifiers attached).
-    low = resolve("alpha lonely token here")
-    assert low.status == "unresolved"
-    with Session(h.engine) as s:
-        low_work = s.exec(select(Work).where(Work.canonical_title == "alpha lonely token here")).one()
-        assert s.exec(select(Identifier).where(Identifier.work_id == low_work.work_id)).all() == []
 
 
 # --------------------------------------------------------------------------
@@ -317,106 +193,16 @@ def _walk_chain():
 # --------------------------------------------------------------------------
 # test_walk_corpus_growth
 # --------------------------------------------------------------------------
-def test_walk_corpus_growth(tmp_path):
-    h = service.create_project("walkgrowth")
-    service.add_work(h, ids={"doi": "10.s/seed", "openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _walk_chain()
-    frontier_dir = tmp_path / "frontier"
-
-    report = asyncio.run(
-        walk_corpus(h, chain, run_id="run-walk", depth=2, per_gen_cap=2, frontier_dir=frontier_dir)
-    )
-
-    with Session(h.engine) as s:
-        works = s.exec(select(Work)).all()
-        docs = s.exec(
-            select(ProjectDocument).where(ProjectDocument.inclusion_reason == "citation_walk")
-        ).all()
-        e_work = s.exec(select(Work).where(Work.openalex_id == "W_E")).one()
-    # EVERY discovered target is a works row (seed + A,B,C,D,E); membership is
-    # metadata_only / citation_walk. E materialized even though the cap pruned it.
-    assert len(works) == 6
-    assert len(docs) == 5
-    assert all(d.inclusion_status == "metadata_only" for d in docs)
-    assert report.discovered == 5
-
-    # gen0=1 seed; gen1=[A,B]; gen2 ranked [C,D,E] capped to per_gen_cap=2 -> [C,D].
-    assert report.frontier_sizes == [1, 2, 2]
-
-    # The cap kept the TOP-cited (count 2) and pruned the once-cited E from the frontier.
-    gen2 = json.loads((frontier_dir / "gen_2.json").read_text(encoding="utf-8"))
-    counts = [r["citation_count"] for r in gen2["ranked"]]
-    assert counts[:2] == [2, 2] and counts[-1] == 1
-    assert len(gen2["frontier"]) == 2
-    assert e_work.work_id not in gen2["frontier"]
-
-    # ZERO citation_edges rows (phase_2 owns those — binding r2-1 §4).
-    pconn = sqlite3.connect(str(h.db_path))
-    try:
-        assert pconn.execute("SELECT COUNT(*) FROM citation_edges").fetchone()[0] == 0
-    finally:
-        pconn.close()
-
-    # Reference lists are in provider_cache under referenced_works:src=<id>.
-    cconn = open_cache_db(None)
-    try:
-        n = cconn.execute(
-            "SELECT COUNT(*) FROM provider_cache WHERE request_key LIKE 'referenced_works:src=%'"
-        ).fetchone()[0]
-    finally:
-        cconn.close()
-    assert n >= 3  # S, A, B were expanded
 
 
 # --------------------------------------------------------------------------
 # test_doi_backfill
 # --------------------------------------------------------------------------
-def test_doi_backfill():
-    h = service.create_project("doibackfill")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    refs = {"openalex=w_s": [{"openalex_id": "W_A"}, {"openalex_id": "W_A"}]}  # duplicate ref
-    by_doi = {"W_A": {"openalex_id": "W_A", "doi": "10.a", "title": "Paper A", "year": 2018}}
-    chain = _chain([MockProvider("openalex", refs=refs, by_doi=by_doi)])
-
-    with Session(h.engine, expire_on_commit=False) as s:
-        seed = s.exec(select(Work).where(Work.openalex_id == "W_S")).one()
-        cited = asyncio.run(expand_references(chain, s, source_work_id=seed.work_id, run_id="r"))
-        s.commit()
-
-    assert len(cited) == 1  # the duplicate ref collapsed to one work
-    with Session(h.engine) as s:
-        a_rows = s.exec(select(Work).where(Work.openalex_id == "W_A")).all()
-        assert len(a_rows) == 1
-        assert a_rows[0].doi == "10.a"  # DOI backfilled from the OpenAlex record
 
 
 # --------------------------------------------------------------------------
 # test_walk_identity_collapse
 # --------------------------------------------------------------------------
-def test_walk_identity_collapse():
-    h = service.create_project("collapse")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    refs = {
-        "openalex=w_s": [
-            {"openalex_id": "W_X", "doi": "10.x"},
-            {"doi": "10.x"},               # same DOI -> collapses to one work
-            {"title": "Shared Title"},
-            {"title": "Shared Title"},     # title-only collision -> duplicate_candidate
-        ]
-    }
-    chain = _chain([MockProvider("openalex", refs=refs)])
-
-    with Session(h.engine, expire_on_commit=False) as s:
-        seed = s.exec(select(Work).where(Work.openalex_id == "W_S")).one()
-        asyncio.run(expand_references(chain, s, source_work_id=seed.work_id, run_id="r"))
-        s.commit()
-
-    with Session(h.engine) as s:
-        doi_works = s.exec(select(Work).where(Work.doi == "10.x")).all()
-        assert len(doi_works) == 1  # DOI collapse via upsert_work
-        items = s.exec(select(ReviewQueueItem)).all()
-        reasons = {json.loads(i.payload)["reason"] for i in items if i.payload}
-        assert "title_collision" in reasons  # title hash NEVER auto-merges
 
 
 # --------------------------------------------------------------------------
@@ -495,364 +281,36 @@ def test_fetch_oa():
 # --------------------------------------------------------------------------
 # test_acquire_bridge_single_primary (must-fix #3)
 # --------------------------------------------------------------------------
-def test_acquire_bridge_single_primary():
-    h = service.create_project("acqbridge")
-    work = service.add_work(h, ids={"arxiv": "2101.00001"}, title="Arxiv Paper", is_seed=True)
-    wid = work.work_id
-
-    pdf = b"%PDF-1.4 arxiv body one"
-    requested: list = []
-    client = _mock_client({"https://arxiv.org/pdf/2101.00001": pdf}, requested)
-    backend = FakeMarkerBackend()
-    chain = _chain([MockProvider("openalex")])  # no provider OA; arXiv-direct is used
-
-    report = acquire_corpus(
-        h, chain, run_id="run-acq", statuses=("included",),
-        cache_root=None, http_client=client, backend=backend,
-    )
-    assert report.acquired == 1
-    assert backend.call_count == 1  # convert ran once
-
-    with Session(h.engine) as s:
-        rows = s.exec(select(WorkSourceFile).where(WorkSourceFile.work_id == wid)).all()
-        assert len(rows) == 1
-        assert rows[0].markdown_id is not None and rows[0].markdown_hash is not None
-        doc = s.get(ProjectDocument, wid)
-        assert doc.access_status == "open_access"
-
-    # Re-run is idempotent: bridge reconciles ok -> no second download/convert.
-    client2 = _mock_client({"https://arxiv.org/pdf/2101.00001": pdf}, [])
-    report2 = acquire_corpus(
-        h, chain, run_id="run-acq2", statuses=("included",),
-        cache_root=None, http_client=client2, backend=backend,
-    )
-    assert report2.already_cached == 1 and report2.acquired == 0
-    assert backend.call_count == 1  # convert did NOT run again
-    with Session(h.engine) as s:
-        assert len(s.exec(select(WorkSourceFile).where(WorkSourceFile.work_id == wid)).all()) == 1
-
-    # A replacement acquisition (different file, same work) upserts in place: still 1 row.
-    with Session(h.engine, expire_on_commit=False) as s:
-        write_bridge(
-            s, work_id=wid, source_file_id="sf_replacement", file_hash="replacement",
-            markdown_id="md_repl", markdown_hash="repl", acquisition_method="manual_upload",
-        )
-        s.commit()
-    with Session(h.engine) as s:
-        rows = s.exec(select(WorkSourceFile).where(WorkSourceFile.work_id == wid)).all()
-        assert len(rows) == 1 and rows[0].file_hash == "replacement"  # newest wins
-
-    # A SECOND bridge row for the same work_id hits UNIQUE(work_id) -> IntegrityError.
-    now = datetime.now(timezone.utc).isoformat()
-    with Session(h.engine) as s:
-        s.add(WorkSourceFile(
-            work_id=wid, source_file_id="sf_dup", file_hash="dup",
-            acquisition_method="manual_upload", created_at=now, updated_at=now,
-        ))
-        with pytest.raises(IntegrityError):
-            s.commit()
 
 
 # --------------------------------------------------------------------------
 # test_manual_upload
 # --------------------------------------------------------------------------
-def test_manual_upload(tmp_path):
-    h = service.create_project("manual")
-    work = service.add_work(h, title="Private Paper", inclusion_status="metadata_only")
-    pdf_path = tmp_path / "upload.pdf"
-    pdf_path.write_bytes(b"%PDF-1.4 user supplied private body text here")
-
-    row = manual_upload(h, work_id=work.work_id, pdf_path=pdf_path, backend=FakeMarkerBackend())
-    assert row.acquisition_method == "manual_upload"
-    assert row.markdown_id is not None
-
-    with Session(h.engine) as s:
-        bridges = s.exec(select(WorkSourceFile).where(WorkSourceFile.work_id == work.work_id)).all()
-        assert len(bridges) == 1
-        doc = s.get(ProjectDocument, work.work_id)
-        assert doc.access_status == "user_supplied_private"
-        # Provided => included: a converted+bridged upload joins the local corpus by
-        # default (metadata_only -> included, inclusion_reason='provided_pdf').
-        assert doc.inclusion_status == "included"
-        assert doc.inclusion_reason == "provided_pdf"
-
-    # Opt-out: promote=False preserves the prior (metadata_only) membership.
-    work2 = service.add_work(h, title="Kept Meta Paper", inclusion_status="metadata_only")
-    pdf2 = tmp_path / "upload2.pdf"
-    pdf2.write_bytes(b"%PDF-1.4 another user supplied private body of words here")
-    manual_upload(
-        h, work_id=work2.work_id, pdf_path=pdf2, backend=FakeMarkerBackend(), promote=False
-    )
-    with Session(h.engine) as s:
-        doc2 = s.get(ProjectDocument, work2.work_id)
-        assert doc2.inclusion_status == "metadata_only"
-        assert doc2.access_status == "user_supplied_private"
-
-    # The cache source_files row carries the private access class (authority of record).
-    cconn = open_cache_db(None)
-    try:
-        ac = cconn.execute(
-            "SELECT access_class FROM source_files WHERE source_file_id = ?", (row.source_file_id,)
-        ).fetchone()[0]
-    finally:
-        cconn.close()
-    assert ac == "user_supplied_private"
 
 
 # --------------------------------------------------------------------------
 # test_import_markdown_and_bridge
 # --------------------------------------------------------------------------
-def test_import_markdown_and_bridge(tmp_path):
-    """GPU-free import of externally-converted markdown: no Marker, a
-    markdown_documents row indistinguishable from a converted one, bridged +
-    promoted, and retrievable via the same resolve path a converted doc uses."""
-    from seedgraph import cache_access
-    from seedgraph.acquisition.bridge import resolve_work_markdown
-    from seedgraph.acquisition.service import import_markdown_and_bridge
-
-    h = service.create_project("importmd")
-    work = service.add_work(h, title="Externally Converted Paper",
-                            inclusion_status="metadata_only")
-    pdf_path = tmp_path / "provided.pdf"
-    pdf_path.write_bytes(b"%PDF-1.4 provided pdf provenance only, never converted")
-    markdown_text = "# Externally Converted Paper\n\n## Intro\n\nBody words here already.\n"
-    md_path = tmp_path / "provided.md"
-    md_path.write_text(markdown_text, encoding="utf-8")
-
-    # No Marker backend is passed anywhere; a spy backend would never be called.
-    row = import_markdown_and_bridge(
-        h, work_id=work.work_id, pdf_path=pdf_path, markdown_path=md_path
-    )
-    assert row.acquisition_method == "manual_upload"
-    assert row.markdown_id is not None
-
-    # The stored markdown_documents row equals the provided markdown, and its
-    # conversion_runs provenance is HONEST that Marker never ran.
-    cconn = open_cache_db(None)
-    try:
-        mrow = cconn.execute(
-            "SELECT storage_uri, conversion_status, conversion_run_id "
-            "FROM markdown_documents WHERE markdown_id = ?", (row.markdown_id,)
-        ).fetchone()
-        assert mrow is not None
-        assert mrow[1] == "success"
-        conv = cconn.execute(
-            "SELECT converter_name, run_status FROM conversion_runs "
-            "WHERE conversion_run_id = ?", (mrow[2],)
-        ).fetchone()
-        assert (conv[0], conv[1]) == ("external_import", "success")
-    finally:
-        cconn.close()
-
-    # Bridge links the work; work promoted metadata_only -> included.
-    with Session(h.engine) as s:
-        bridges = s.exec(
-            select(WorkSourceFile).where(WorkSourceFile.work_id == work.work_id)
-        ).all()
-        assert len(bridges) == 1
-        assert resolve_work_markdown(s, work_id=work.work_id) == (
-            row.markdown_id, row.markdown_hash
-        )
-        doc = s.get(ProjectDocument, work.work_id)
-        assert doc.inclusion_status == "included"
-        assert doc.inclusion_reason == "provided_pdf"
-        assert doc.access_status == "user_supplied_private"
-
-    # Retrievable via the SAME resolve path a converted doc uses (sections build /
-    # cite parse read markdown this way) — content equals what we provided.
-    cconn = cache_access.open_cache_ro(None)
-    try:
-        mdrow = cache_access.read_markdown(cconn, None, row.markdown_id)
-    finally:
-        cconn.close()
-    assert mdrow is not None
-    assert mdrow.text == markdown_text
-    assert mdrow.access_class == "user_supplied_private"
-
-    # Idempotent: a second import for the same (already-bridged) work is a no-op.
-    row2 = import_markdown_and_bridge(
-        h, work_id=work.work_id, pdf_path=pdf_path, markdown_path=md_path
-    )
-    assert row2.markdown_id == row.markdown_id
 
 
 # --------------------------------------------------------------------------
 # test_bridge_reconcile
 # --------------------------------------------------------------------------
-def test_bridge_reconcile(tmp_path):
-    from seedgraph.cache.convert import convert_source_file
-    from seedgraph.cache.ingest import ingest_file
-    from seedgraph.vocab import AccessClass, AcquisitionMethod
-
-    h = service.create_project("reconcile")
-    w_ok = service.add_work(h, ids={"doi": "10.1/ok"}, title="OK Work")
-    w_stale = service.add_work(h, ids={"doi": "10.1/stale"}, title="Stale Work")
-    w_missing = service.add_work(h, ids={"doi": "10.1/missing"}, title="Missing Work")
-
-    def _ingest(content: bytes):
-        p = tmp_path / f"{abs(hash(content))}.pdf"
-        p.write_bytes(content)
-        return ingest_file(p, access_class=AccessClass.open_access,
-                           acquisition_method=AcquisitionMethod.open_access_fetch, root=None)
-
-    # ok: ingest + convert, bridge to the current markdown.
-    src_ok = _ingest(b"%PDF-1.4 ok body content here words")
-    md_ok = convert_source_file(src_ok.source_file_id, backend=FakeMarkerBackend(), root=None)
-
-    # stale: bridge to an OLDER markdown, then a reconversion mints a newer one.
-    src_st = _ingest(b"%PDF-1.4 stale body content here words")
-    md_a = convert_source_file(
-        src_st.source_file_id,
-        backend=FakeMarkerBackend(markdown="# Alpha\n\n## Sec\n\nalpha body words here.\n"),
-        root=None,
-    )
-    md_b = convert_source_file(
-        src_st.source_file_id,
-        backend=FakeMarkerBackend(markdown="# Beta\n\n## Sec\n\nbeta body words here now.\n"),
-        force=True, root=None,
-    )
-    assert md_a.markdown_hash != md_b.markdown_hash
-
-    with Session(h.engine, expire_on_commit=False) as s:
-        write_bridge(s, work_id=w_ok.work_id, source_file_id=src_ok.source_file_id,
-                     file_hash=src_ok.file_hash, markdown_id=md_ok.markdown_id,
-                     markdown_hash=md_ok.markdown_hash, acquisition_method="open_access_fetch")
-        write_bridge(s, work_id=w_stale.work_id, source_file_id=src_st.source_file_id,
-                     file_hash=src_st.file_hash, markdown_id=md_a.markdown_id,
-                     markdown_hash=md_a.markdown_hash, acquisition_method="open_access_fetch")
-        write_bridge(s, work_id=w_missing.work_id, source_file_id="sf_deadbeef",
-                     file_hash="deadbeef", markdown_id="md_nope", markdown_hash="nope",
-                     acquisition_method="open_access_fetch")
-        s.commit()
-
-    findings = {f.work_id: f.status for f in reconcile_bridge(h.engine, None)}
-    assert findings[w_ok.work_id] == "ok"
-    assert findings[w_stale.work_id] == "stale"
-    assert findings[w_missing.work_id] == "missing"
-
-    # foreign_key_check_all reports clean on a healthy project.db (+ cache.db).
-    assert foreign_key_check_all(h.engine, None) == []
 
 
 # --------------------------------------------------------------------------
 # test_offline_resilience
 # --------------------------------------------------------------------------
-def test_offline_resilience():
-    h = service.create_project("offline")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-
-    # Pre-warm provider_cache with the seed's reference list (DOI already present so
-    # NO by_doi enrichment / network is needed).
-    seed_record = {"openalex_id": "W_S"}
-    init_cache_db(None)
-    conn = open_cache_db(None)
-    try:
-        cache_put(conn, provider="openalex", request_key=key_referenced_works(seed_record),
-                  response=[{"openalex_id": "W_A", "doi": "10.a"}])
-    finally:
-        conn.close()
-
-    # The provider RAISES on every call (network down) — the walk must build from cache.
-    chain = _chain([MockProvider("openalex", fail_on={"referenced_works", "by_doi", "by_title"})])
-    report = asyncio.run(walk_corpus(h, chain, run_id="run-offline", depth=1))
-    assert report.discovered >= 1
-    with Session(h.engine) as s:
-        assert s.exec(select(Work).where(Work.openalex_id == "W_A")).first() is not None
 
 
 # --------------------------------------------------------------------------
 # test_manifest_merge (D5)
 # --------------------------------------------------------------------------
-def test_manifest_merge(monkeypatch):
-    from seedgraph import run as run_mod
-    from seedgraph.errors import SeedgraphError
-    from seedgraph.paths import project_dir
-
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret-value")
-    rid = run_mod.ensure_run("manifestmerge")
-
-    # Two stages write DISJOINT top-level sections into one manifest.
-    run_mod.update_manifest("manifestmerge", rid, {"walk": {"discovered": 3, "frontier_sizes": [1, 2]}})
-    run_mod.update_manifest(
-        "manifestmerge", rid,
-        {"acquisition": {"acquired": 1, "access_class_summary": {"open_access": 1}}},
-    )
-
-    path = project_dir("manifestmerge") / "runs" / rid / "manifest.json"
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    sections = manifest["sections"]
-    assert sections["walk"]["discovered"] == 3
-    assert sections["acquisition"]["access_class_summary"] == {"open_access": 1}
-    assert "super-secret-value" not in path.read_text(encoding="utf-8")  # no secret leaked
-
-    # A second DIFFERENT-stage write to an already-written section is a contract
-    # violation (D5 — no deep-merge, no cross-stage accumulation).
-    with pytest.raises(SeedgraphError):
-        run_mod.update_manifest("manifestmerge", rid, {"walk": {"discovered": 99}})
 
 
 # --------------------------------------------------------------------------
 # test_acquisition_milestone (doc 01 §3 steps 3-6; no network, no LLM)
 # --------------------------------------------------------------------------
-def test_acquisition_milestone():
-    from seedgraph.providers.fake import FakeProvider, fake_http_client
-
-    h = service.create_project("acq_demo")
-    service.add_work(h, ids={"doi": "10.x/seed1"}, title="Seed DOI", is_seed=True)
-    service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed Arxiv", is_seed=True)
-
-    chain = _chain([FakeProvider()])
-    out = run_corpus(
-        h, chain, depth=1, per_gen_cap=25, root=None,
-        http_client=fake_http_client(), backend=FakeMarkerBackend(),
-    )
-
-    # Seeds resolved (confidence filled).
-    with Session(h.engine) as s:
-        seed_ids = s.exec(select(Identifier)).all()
-        assert any(i.confidence == 1.0 for i in seed_ids)
-
-        # >=1 metadata-only walked work with inclusion_reason='citation_walk'.
-        walked = s.exec(
-            select(ProjectDocument).where(
-                ProjectDocument.inclusion_status == "metadata_only",
-                ProjectDocument.inclusion_reason == "citation_walk",
-            )
-        ).all()
-        assert len(walked) >= 1
-
-        # >=1 OA paper acquired with a complete single-primary bridge (markdown filled).
-        bridged = s.exec(select(WorkSourceFile).where(WorkSourceFile.markdown_id.is_not(None))).all()
-        assert len(bridged) >= 1
-
-        # A no-OA seed reports requires_user_upload (included, no bridge).
-        doi_seed = s.exec(select(Work).where(Work.doi == "10.x/seed1")).one()
-        assert derive_acquisition_state(s, None, doi_seed.work_id) == "requires_user_upload"
-
-        # ZERO citation_edges rows (phase_2's job).
-        pconn = sqlite3.connect(str(h.db_path))
-        try:
-            assert pconn.execute("SELECT COUNT(*) FROM citation_edges").fetchone()[0] == 0
-        finally:
-            pconn.close()
-
-    assert out["acquisition"].acquired >= 1
-    assert out["acquisition"].requires_upload >= 1
-
-    # provider_cache populated under the §6.5 keys.
-    cconn = open_cache_db(None)
-    try:
-        refs = cconn.execute(
-            "SELECT COUNT(*) FROM provider_cache WHERE request_key LIKE 'referenced_works:src=%'"
-        ).fetchone()[0]
-    finally:
-        cconn.close()
-    assert refs >= 1
-
-    # doctor reports the bridge ok.
-    results = cross_db_bridge_reconcile(None, "acq_demo")
-    recon = next(r for r in results if r.name == "cross_db_bridge_reconcile")
-    assert recon.ok
 
 
 # --------------------------------------------------------------------------
@@ -888,36 +346,6 @@ def _assert_table_parity(insp, table_name, model):
     mig_ix = {tuple(ix["column_names"]) for ix in insp.get_indexes(table_name)}
     orm_ix = {tuple(c.name for c in ix.columns) for ix in model.__table__.indexes}
     assert mig_ix == orm_ix, f"{table_name}: index column-sets drift ({mig_ix} != {orm_ix})"
-
-
-def test_phase5b_schema_parity(tmp_path):
-    # provider_cache (cache scope) — apply only 0003 to a fresh db, then reflect.
-    cache_sql = (_SCHEMA_DIR / "cache" / "0003_provider_cache.sql").read_text(encoding="utf-8")
-    cdb = tmp_path / "cache_mig.db"
-    conn = sqlite3.connect(str(cdb))
-    conn.executescript(cache_sql)
-    conn.commit()
-    conn.close()
-    insp = inspect(create_engine(f"sqlite:///{cdb.as_posix()}"))
-    assert "provider_cache" in insp.get_table_names()
-    _assert_table_parity(insp, "provider_cache", ProviderCache)
-    uq = [set(u["column_names"]) for u in insp.get_unique_constraints("provider_cache")]
-    assert {"provider", "request_key"} in uq
-
-    # work_source_files (project scope) — needs works (0002) for its FK.
-    proj_db = tmp_path / "proj_mig.db"
-    conn = sqlite3.connect(str(proj_db))
-    conn.executescript((_SCHEMA_DIR / "project" / "0002_project_model.sql").read_text(encoding="utf-8"))
-    conn.executescript((_SCHEMA_DIR / "project" / "0003_acquisition.sql").read_text(encoding="utf-8"))
-    conn.commit()
-    conn.close()
-    insp = inspect(create_engine(f"sqlite:///{proj_db.as_posix()}"))
-    assert "work_source_files" in insp.get_table_names()
-    _assert_table_parity(insp, "work_source_files", WorkSourceFile)
-    uq = [set(u["column_names"]) for u in insp.get_unique_constraints("work_source_files")]
-    assert {"work_id"} in uq
-    fks = insp.get_foreign_keys("work_source_files")
-    assert any(fk["referred_table"] == "works" and fk["constrained_columns"] == ["work_id"] for fk in fks)
 
 
 # --------------------------------------------------------------------------
@@ -1180,102 +608,6 @@ def test_fetch_503_fall_through_and_all_503_failed():
     )
     res = asyncio.run(fetch_oa({"doi": "10.1/clean"}, chain=chain, client=client))
     assert res.status == "stub"
-
-
-def test_acquire_transient_failure_counts_failed_no_bridge():
-    """All-transport-error acquisition tallies ``AcquireReport.failed`` (the
-    previously-dead field) + ``state_summary['failed']``, converts nothing, and
-    writes NO bridge row — so a re-run naturally retries (D-4)."""
-    h = service.create_project("acqfailed")
-    work = service.add_work(h, ids={"arxiv": "2103.00003"}, title="Flaky Paper", is_seed=True)
-
-    requested: list = []
-    client = _status_client({"https://arxiv.org/pdf/2103.00003": (503, b"")}, requested)
-    backend = FakeMarkerBackend()
-    chain = _chain([MockProvider("openalex")])  # no provider OA; arXiv-direct only
-
-    report = acquire_corpus(
-        h, chain, run_id="run-acqfailed", statuses=("included",),
-        cache_root=None, http_client=client, backend=backend,
-    )
-    assert report.failed == 1
-    assert report.requires_upload == 0 and report.acquired == 0
-    assert report.state_summary.get("failed") == 1
-    assert report.to_section()["failed"] == 1  # honest run-state accounting
-    assert backend.call_count == 0  # nothing converted
-    with Session(h.engine) as s:
-        rows = s.exec(
-            select(WorkSourceFile).where(WorkSourceFile.work_id == work.work_id)
-        ).all()
-        assert rows == []  # no bridge row -> a re-run retries
-
-
-def test_acquire_conversion_error_counts_failed_and_continues():
-    """A single OA PDF that converts to garbage (the ``validate_markdown`` gate,
-    raising ``ConversionError``) is counted ``failed`` and the pass CONTINUES —
-    exactly like a transient fetch failure — instead of the ConversionError
-    propagating out of ``_acquire_async`` and aborting the whole corpus pass. A
-    subsequent good work in the same pass is still ``acquired``."""
-    from seedgraph.cache.marker_backend import MarkerResult
-
-    class _SelectiveBackend:
-        """Returns empty (garbage) markdown for the PDF whose bytes carry
-        ``bad_marker`` -> ``convert_source_file`` raises ``ConversionError`` for
-        that work only; good markdown (passes the gate) for every other PDF."""
-
-        version = "fake-0.0.0"
-
-        def __init__(self, bad_marker: bytes) -> None:
-            self.bad_marker = bad_marker
-            self.call_count = 0
-
-        def __call__(self, pdf_path, cfg):
-            self.call_count += 1
-            data = Path(pdf_path).read_bytes()
-            markdown = (
-                ""
-                if self.bad_marker in data
-                else "# Good\n\n## Section\n\nGood body words here now.\n"
-            )
-            return MarkerResult(markdown=markdown, block_json=None, warnings=[])
-
-    h = service.create_project("acqconvfail")
-    good = service.add_work(h, ids={"arxiv": "2201.00001"}, title="Good Paper", is_seed=True)
-    bad = service.add_work(h, ids={"arxiv": "2201.00002"}, title="Bad Paper", is_seed=True)
-
-    pdf_good = b"%PDF-1.4 good body GOODMARK"
-    pdf_bad = b"%PDF-1.4 bad body BADMARK"
-    requested: list = []
-    client = _mock_client(
-        {
-            "https://arxiv.org/pdf/2201.00001": pdf_good,
-            "https://arxiv.org/pdf/2201.00002": pdf_bad,
-        },
-        requested,
-    )
-    backend = _SelectiveBackend(bad_marker=b"BADMARK")
-    chain = _chain([MockProvider("openalex")])  # arXiv-direct only
-
-    # The pass must COMPLETE (no ConversionError propagates out).
-    report = acquire_corpus(
-        h, chain, run_id="run-acqconvfail", statuses=("included",),
-        cache_root=None, http_client=client, backend=backend,
-    )
-
-    assert report.failed == 1  # the garbage-converting work
-    assert report.acquired == 1  # the good work still lands
-    assert report.state_summary.get("failed") == 1
-    assert backend.call_count == 2  # both works reached the convert step
-
-    with Session(h.engine) as s:
-        good_rows = s.exec(
-            select(WorkSourceFile).where(WorkSourceFile.work_id == good.work_id)
-        ).all()
-        bad_rows = s.exec(
-            select(WorkSourceFile).where(WorkSourceFile.work_id == bad.work_id)
-        ).all()
-    assert len(good_rows) == 1 and good_rows[0].markdown_id is not None
-    assert bad_rows == []  # no bridge row for the failed convert -> a re-run retries
 
 
 def test_fetch_oversized_body_skips_candidate(monkeypatch):
@@ -1648,266 +980,9 @@ _BUDGET_BODIES = {
 }
 
 
-def _budget_project(name: str):
-    """Three works: one seed + two walk-cited ``metadata_only`` works, with
-    ``created_at`` pinned to DISTINCT values in a DIFFERENT order than insertion
-    (low < high < seed) — so a created_at-order assertion is unambiguous and any
-    seed-first / hint reorder is provably the sort, never accident."""
-    h = service.create_project(name)
-    seed = service.add_work(h, ids={"arxiv": "2101.00001"}, title="Seed", is_seed=True)
-    low = service.add_work(
-        h, ids={"arxiv": "2101.00002"}, title="Cited low", inclusion_status="metadata_only"
-    )
-    high = service.add_work(
-        h, ids={"arxiv": "2101.00003"}, title="Cited high", inclusion_status="metadata_only"
-    )
-    stamps = {
-        low.work_id: "2026-01-01T00:00:00+00:00",
-        high.work_id: "2026-01-02T00:00:00+00:00",
-        seed.work_id: "2026-01-03T00:00:00+00:00",
-    }
-    with Session(h.engine, expire_on_commit=False) as s:
-        for wid, ts in stamps.items():
-            w = s.get(Work, wid)
-            w.created_at = ts
-            s.add(w)
-        s.commit()
-    return h, seed.work_id, low.work_id, high.work_id
-
-
-def test_acquire_budget_value_ordered_max_papers():
-    """With an ``order_hint`` (the run_corpus path) targets sort seeds first, then
-    hint count desc, work_id tie-break (D-5); ``max_papers=2`` attempts exactly the
-    seed + the count-5 work and COUNTS the count-1 work ``skipped_budget`` (D-6) —
-    never silently skipped."""
-    from seedgraph.acquisition.service import _acquire_async
-
-    h, seed_id, low_id, high_id = _budget_project("budgetorder")
-    requested: list = []
-    client = _mock_client(dict(_BUDGET_BODIES), requested)
-    chain = _chain([MockProvider("openalex")])  # no provider OA; arXiv-direct URLs
-
-    report = asyncio.run(
-        _acquire_async(
-            h, chain, run_id="run-budget-order", cache_root=None,
-            http_client=client, backend=FakeMarkerBackend(),
-            max_papers=2, order_hint={high_id: 5, low_id: 1},
-        )
-    )
-    # Seed first (despite the LATEST created_at), then the count-5 work; the
-    # count-1 work was cut by the budget — accounted, not attempted.
-    assert requested == [_BUDGET_URLS["seed"], _BUDGET_URLS["high"]]
-    assert report.acquired == 2
-    assert report.skipped_budget == 1
-    assert report.to_section()["skipped_budget"] == 1  # additive section key
-
-
-def test_acquire_no_hint_created_at_order_preserved():
-    """Standalone ``corpus acquire`` (no ``order_hint``): today's ``created_at``
-    order is untouched — even the seed does not jump ahead (D-5: the hint-or-
-    created_at split; no in-degree fallback)."""
-    h, seed_id, low_id, high_id = _budget_project("budgetnohint")
-    requested: list = []
-    client = _mock_client(dict(_BUDGET_BODIES), requested)
-    chain = _chain([MockProvider("openalex")])
-
-    report = acquire_corpus(
-        h, chain, run_id="run-budget-nohint", cache_root=None,
-        http_client=client, backend=FakeMarkerBackend(),
-    )
-    # created_at order low < high < seed (insertion order was seed, low, high —
-    # this pins ORDER BY created_at specifically, not rowid/insertion order).
-    assert requested == [_BUDGET_URLS["low"], _BUDGET_URLS["high"], _BUDGET_URLS["seed"]]
-    assert report.acquired == 3
-    assert report.skipped_budget == 0
-
-
-def test_acquire_max_papers_zero_attempts_nothing():
-    """``max_papers=0`` attempts NOTHING (``is not None`` check — 0 is a real
-    budget, not "unbounded"; v1 semantics ported verbatim, D-6): every target is
-    counted ``skipped_budget``."""
-    h, *_ = _budget_project("budgetzero")
-    requested: list = []
-    client = _mock_client(dict(_BUDGET_BODIES), requested)
-    chain = _chain([MockProvider("openalex")])
-
-    report = acquire_corpus(
-        h, chain, run_id="run-budget-zero", cache_root=None,
-        http_client=client, backend=FakeMarkerBackend(), max_papers=0,
-    )
-    assert requested == []  # zero attempts
-    assert report.acquired == 0 and report.requires_upload == 0 and report.failed == 0
-    assert report.skipped_budget == 3
-
-
-def test_acquire_budget_seconds_zero_attempts_nothing():
-    """``budget_seconds=0.0`` likewise attempts nothing (``is not None``, not
-    truthiness): the whole pass is counted ``skipped_budget``."""
-    h, *_ = _budget_project("budgetsecszero")
-    requested: list = []
-    client = _mock_client(dict(_BUDGET_BODIES), requested)
-    chain = _chain([MockProvider("openalex")])
-
-    report = acquire_corpus(
-        h, chain, run_id="run-budget-secs", cache_root=None,
-        http_client=client, backend=FakeMarkerBackend(), budget_seconds=0.0,
-    )
-    assert requested == []
-    assert report.acquired == 0
-    assert report.skipped_budget == 3
-
-
-def test_acquire_default_budget_manifest_section_shape():
-    """Default ``max_papers=None`` / ``budget_seconds=None`` leave behavior
-    unchanged (every target attempted, created_at order) and the ``acquisition``
-    manifest section keeps today's shape plus ONLY the additive ``skipped_budget``
-    key (D5 — the section is solely owned by this stage)."""
-    from seedgraph import run as run_mod
-    from seedgraph.paths import project_dir
-
-    h, *_ = _budget_project("budgetdefault")
-    rid = run_mod.ensure_run("budgetdefault")
-    requested: list = []
-    client = _mock_client(dict(_BUDGET_BODIES), requested)
-    chain = _chain([MockProvider("openalex")])
-
-    report = acquire_corpus(
-        h, chain, run_id=rid, cache_root=None,
-        http_client=client, backend=FakeMarkerBackend(),
-    )
-    assert len(requested) == 3 and report.acquired == 3  # unbounded, as today
-
-    manifest_path = project_dir("budgetdefault") / "runs" / rid / "manifest.json"
-    section = json.loads(manifest_path.read_text(encoding="utf-8"))["sections"]["acquisition"]
-    assert set(section) == {
-        "acquired", "already_cached", "requires_upload", "failed",
-        "skipped_budget", "access_class_summary", "state_summary",
-    }
-    assert section["skipped_budget"] == 0
-    assert section["acquired"] == 3
-
-
-def test_walk_citation_counts_hint_in_memory_only():
-    """The walk accumulates the per-generation ``next_counts`` onto
-    ``WalkReport.citation_counts`` (the D-5 value-ordering hint) and does NOT
-    serialize it: the pinned ``walk`` manifest section shape is unchanged."""
-    h = service.create_project("walkcounts")
-    service.add_work(h, ids={"doi": "10.s/seed", "openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _walk_chain()
-
-    report = asyncio.run(walk_corpus(h, chain, run_id="run-walkcounts", depth=2, per_gen_cap=2))
-
-    with Session(h.engine) as s:
-        by_oa = {w.openalex_id: w.work_id for w in s.exec(select(Work)).all()}
-    # gen1: A,B cited once each by the seed; gen2: C,D cited twice (by A and B),
-    # E once (by B only) — the SAME counts that ranked each frontier, accumulated.
-    assert report.citation_counts == {
-        by_oa["W_A"]: 1,
-        by_oa["W_B"]: 1,
-        by_oa["W_C"]: 2,
-        by_oa["W_D"]: 2,
-        by_oa["W_E"]: 1,
-    }
-    # In-memory only: citation_counts never serializes; the walk section carries
-    # exactly today's keys plus the additive ch8 enrichment/residue counters (D5).
-    assert set(report.to_section()) == {
-        "depth", "discovered", "frontier_sizes", "per_provider_calls",
-        "enriched", "enrichment_failed", "untitled_after_walk",
-    }
-
-
-def test_run_corpus_threads_walk_hint_and_budgets(monkeypatch):
-    """``run_corpus`` threads ``walk_report.citation_counts`` into the acquire
-    pass as its ``order_hint`` and passes ``max_papers``/``budget_seconds``
-    through (the chunk-5 seam)."""
-    from seedgraph.acquisition import service as service_mod
-
-    h = service.create_project("runthreads")
-    service.add_work(h, ids={"doi": "10.s/seed", "openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _walk_chain()
-
-    captured: dict = {}
-
-    async def _fake_acquire(h2, chain2, **kw):
-        captured.update(kw)
-        return AcquireReport()
-
-    monkeypatch.setattr(service_mod, "_acquire_async", _fake_acquire)
-    out = service_mod.run_corpus(h, chain, depth=1, per_gen_cap=2, max_papers=7, budget_seconds=1.5)
-
-    assert captured["max_papers"] == 7
-    assert captured["budget_seconds"] == 1.5
-    assert captured["order_hint"] is out["walk"].citation_counts  # the SAME dict
-    assert captured["order_hint"]  # depth=1 walk counted A and B once each
-
-
 # --------------------------------------------------------------------------
 # Build D chunk 6 — per-paper acquisition progress events (D-7)
 # --------------------------------------------------------------------------
-def test_acquire_progress_steps_once_per_target():
-    """``_acquire_async`` steps its ``progress`` once per target with
-    ``detail=work_id`` and the running ``acquired/failed/requires_upload/
-    skipped_budget`` counters — budget-cut targets INCLUDED (accounted frames,
-    never silent). Emit-backed here (the job path), so the frames land in
-    events.jsonl in the exact ``append_event`` shape the run page polls."""
-    from seedgraph.acquisition.service import _acquire_async
-    from seedgraph.progress import Progress, make_emitter
-    from seedgraph.run import ensure_run, read_events
-
-    h, seed_id, low_id, high_id = _budget_project("progacq")
-    rid = ensure_run("progacq")
-    emit = make_emitter("progacq", rid, phase="conversion")
-    prog = Progress(0, "works", emit=emit, echo=False)
-
-    client = _mock_client(dict(_BUDGET_BODIES), [])
-    chain = _chain([MockProvider("openalex")])
-    report = asyncio.run(
-        _acquire_async(
-            h, chain, run_id=rid, cache_root=None,
-            http_client=client, backend=FakeMarkerBackend(),
-            max_papers=1, order_hint={high_id: 5, low_id: 1},
-            progress=prog,
-        )
-    )
-
-    frames = [e for e in read_events("progacq", rid) if e["event"] == "progress"]
-    assert len(frames) == 3  # one per target — the 2 budget-cut works still step
-    assert [f["data"]["done"] for f in frames] == [1, 2, 3]
-    # The pass reconciled the caller's placeholder total from its own select.
-    assert all(f["data"]["total"] == 3 for f in frames)
-    # detail=work_id rides the message; the hint sort put the seed first.
-    assert seed_id in frames[0]["message"]
-    assert high_id in frames[1]["message"] and low_id in frames[2]["message"]
-    # Running outcome counters: 1 acquired (the seed), then 2 skipped_budget.
-    assert frames[0]["data"]["acquired"] == 1 and frames[0]["data"]["skipped_budget"] == 0
-    assert frames[2]["data"]["skipped_budget"] == 2
-    assert frames[2]["data"]["failed"] == 0 and frames[2]["data"]["requires_upload"] == 0
-    assert report.acquired == 1 and report.skipped_budget == 2
-
-
-def test_walk_progress_steps_per_source_per_generation():
-    """``walk_corpus`` steps once per expanded source work per generation and
-    grows ``progress.total`` by each generation's frontier size (the walk's
-    universe is only known generation-by-generation)."""
-    from seedgraph.progress import Progress, make_emitter
-    from seedgraph.run import ensure_run, read_events
-
-    h = service.create_project("progwalk")
-    seed = service.add_work(h, ids={"doi": "10.s/seed", "openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _walk_chain()
-    rid = ensure_run("progwalk")
-    emit = make_emitter("progwalk", rid, phase="conversion")
-    prog = Progress(0, "works", emit=emit, echo=False)
-
-    asyncio.run(walk_corpus(h, chain, run_id=rid, depth=2, per_gen_cap=2, progress=prog))
-
-    frames = [e for e in read_events("progwalk", rid) if e["event"] == "progress"]
-    # gen1 expands the seed (frontier of 1); gen2 the capped frontier (A and B).
-    assert [f["data"]["done"] for f in frames] == [1, 2, 3]
-    assert [f["data"]["total"] for f in frames] == [1, 3, 3]
-    assert [f["data"]["generation"] for f in frames] == [1, 2, 2]
-    assert seed.work_id in frames[0]["message"] and frames[0]["data"]["cited"] == 2
-    assert sorted(f["data"]["cited"] for f in frames[1:]) == [2, 3]  # A cites 2, B cites 3
 
 
 # --------------------------------------------------------------------------
@@ -1917,64 +992,6 @@ def test_walk_progress_steps_per_source_per_generation():
 #  event-silent CLI invariant risk 7's crash-sweep + chunk 9's interrupted-sweep
 #  both rest on — never assume it.)
 # --------------------------------------------------------------------------
-def test_resolve_progress_steps_once_per_work():
-    """The resolve-loop rider steps its ``progress`` exactly once per work with
-    ``detail=work_id`` and the running rubric counters, reconciling the caller's
-    placeholder total from the worklist (mirrors ``_acquire_async`` / ``walk_corpus``,
-    D-7). Emit-backed here, so the N frames land in events.jsonl at ``done``/``total``
-    = 1/N..N/N — the exact ``append_event`` shape the run page polls (acceptance 10)."""
-    from seedgraph.acquisition.resolve import resolve_corpus
-    from seedgraph.progress import Progress, make_emitter
-    from seedgraph.run import ensure_run, read_events
-
-    # Three works (seed included + two metadata_only), all strong-id (arXiv) hits
-    # -> resolved deterministically with NO network (canonical_key short-circuit).
-    h, seed_id, low_id, high_id = _budget_project("progresolve")
-    rid = ensure_run("progresolve")
-    emit = make_emitter("progresolve", rid, phase="conversion")
-    prog = Progress(0, "works", emit=emit, echo=False)
-
-    chain = _chain([MockProvider("openalex")])  # no maps needed — strong-id path
-    report = asyncio.run(resolve_corpus(h, chain, run_id=rid, progress=prog))
-
-    frames = [e for e in read_events("progresolve", rid) if e["event"] == "progress"]
-    assert len(frames) == 3  # exactly one frame per work
-    assert [f["data"]["done"] for f in frames] == [1, 2, 3]
-    # The rider reconciled the caller's placeholder total (0) from its own select.
-    assert all(f["data"]["total"] == 3 for f in frames)
-    # Running rubric counter climbs as each strong-id work resolves.
-    assert [f["data"]["resolved"] for f in frames] == [1, 2, 3]
-    assert all(f["data"]["ambiguous"] == 0 and f["data"]["unresolved"] == 0 for f in frames)
-    # detail=work_id rides the message; created_at order is low < high < seed.
-    stepped = [f["message"].split(" — ")[1].split("  ")[0] for f in frames]
-    assert stepped == [low_id, high_id, seed_id]
-    assert report.resolved == 3
-
-
-def test_resolve_no_hook_emits_nothing():
-    """No hook (``progress=None``, the default) — and a stdout-only ``emit=None``
-    Progress — append ZERO events.jsonl events: the rider is opt-in and event-silent
-    unless an emit-backed Progress is passed."""
-    from seedgraph.acquisition.resolve import resolve_corpus
-    from seedgraph.progress import Progress
-    from seedgraph.run import ensure_run, read_events
-
-    h, *_ = _budget_project("progresolve_none")
-    chain = _chain([MockProvider("openalex")])
-
-    # (a) progress=None (default): the loop never steps.
-    rid_none = ensure_run("progresolve_none")
-    asyncio.run(resolve_corpus(h, chain, run_id=rid_none, progress=None))
-    assert read_events("progresolve_none", rid_none) == []
-
-    # (b) a stdout-only Progress (emit=None): steps, but nothing touches the fs.
-    rid_stdout = ensure_run("progresolve_none")
-    asyncio.run(
-        resolve_corpus(
-            h, chain, run_id=rid_stdout, progress=Progress(0, "works", echo=False)
-        )
-    )
-    assert read_events("progresolve_none", rid_stdout) == []
 
 
 # --------------------------------------------------------------------------
@@ -2219,112 +1236,6 @@ _ENRICH_RECS = {
 _ENRICH_REFS = [{"openalex_id": "W_A"}, {"openalex_id": "W_B"}, {"openalex_id": "W_C"}]
 
 
-def test_walk_enrichment_batches_per_source():
-    """3 DOI-less refs on one source -> exactly ONE ``by_openalex_ids`` call and
-    ZERO ``by_doi`` calls (the ch8 politeness fix), while every ref still folds
-    DOI+title — the r2-1 §6 backfill preserved through the batch path."""
-    h = service.create_project("enrichbatch")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _EnrichChain(_ENRICH_REFS, batch=list(_ENRICH_RECS.values()))
-    report = WalkReport()
-
-    with Session(h.engine, expire_on_commit=False) as s:
-        seed = s.exec(select(Work).where(Work.openalex_id == "W_S")).one()
-        cited = asyncio.run(
-            expand_references(chain, s, source_work_id=seed.work_id, run_id="r", report=report)
-        )
-        s.commit()
-
-    assert chain.batch_calls == [["W_A", "W_B", "W_C"]]  # ONE batched call per source
-    assert chain.by_doi_calls == []  # zero in-band single-record calls
-    assert len(cited) == 3
-    assert report.enriched == 3 and report.enrichment_failed == 0
-    with Session(h.engine) as s:
-        for oa, rec in _ENRICH_RECS.items():
-            w = s.exec(select(Work).where(Work.openalex_id == oa)).one()
-            assert w.doi == rec["doi"]  # r2-1 §6 DOI backfill through the batch
-            assert w.canonical_title == rec["title"]
-
-
-def test_walk_enrichment_batch_miss_falls_back_to_by_doi():
-    """A ref the batch did not return falls back to ``by_doi`` exactly ONCE —
-    multi-provider recovery (and the negative-cache semantics for genuinely
-    missing works) preserved for batch misses only."""
-    h = service.create_project("enrichmiss")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _EnrichChain(
-        _ENRICH_REFS,
-        batch=[_ENRICH_RECS["W_A"], _ENRICH_RECS["W_B"]],  # W_C absent from the batch
-        by_doi={"W_C": _ENRICH_RECS["W_C"]},
-    )
-    report = WalkReport()
-
-    with Session(h.engine, expire_on_commit=False) as s:
-        seed = s.exec(select(Work).where(Work.openalex_id == "W_S")).one()
-        asyncio.run(
-            expand_references(chain, s, source_work_id=seed.work_id, run_id="r", report=report)
-        )
-        s.commit()
-
-    assert chain.batch_calls == [["W_A", "W_B", "W_C"]]
-    assert chain.by_doi_calls == ["W_C"]  # ONLY the batch miss, exactly once
-    assert report.enriched == 3 and report.enrichment_failed == 0
-    with Session(h.engine) as s:
-        w = s.exec(select(Work).where(Work.openalex_id == "W_C")).one()
-        assert w.doi == "10.c" and w.canonical_title == "Paper C"
-
-
-def test_walk_enrichment_failure_counted_and_untitled_residue():
-    """Batch AND fallback both fail for one ref: ``enrichment_failed==1`` (a
-    measured number, not the old silent swallow), the stub still upserts
-    title-less (existing behavior preserved), and ``untitled_after_walk``
-    counts it — all three land as additive keys of the walk manifest section."""
-    from seedgraph import run as run_mod
-    from seedgraph.paths import project_dir
-
-    h = service.create_project("enrichfail")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _EnrichChain(
-        _ENRICH_REFS,
-        batch=[_ENRICH_RECS["W_A"], _ENRICH_RECS["W_B"]],  # W_C absent from the batch...
-        by_doi_raises=True,  # ...and its per-ref fallback raises
-    )
-    rid = run_mod.ensure_run("enrichfail")
-
-    report = asyncio.run(walk_corpus(h, chain, run_id=rid, depth=1))
-
-    assert report.enriched == 2
-    assert report.enrichment_failed == 1
-    assert report.untitled_after_walk == 1
-    with Session(h.engine) as s:
-        c = s.exec(select(Work).where(Work.openalex_id == "W_C")).one()
-        assert not c.canonical_title  # stub upserted title-less, as before
-
-    manifest_path = project_dir("enrichfail") / "runs" / rid / "manifest.json"
-    section = json.loads(manifest_path.read_text(encoding="utf-8"))["sections"]["walk"]
-    assert section["enriched"] == 2
-    assert section["enrichment_failed"] == 1
-    assert section["untitled_after_walk"] == 1
-
-
-def test_walk_enrichment_happy_path_counters():
-    """Happy path through ``walk_corpus``: every DOI-less ref enriches from the
-    batch (``enriched==N``), nothing fails, and the post-walk residue count is
-    zero — the manifest's fully-titled-corpus signal."""
-    h = service.create_project("enrichhappy")
-    service.add_work(h, ids={"openalex": "W_S"}, title="Seed", is_seed=True)
-    chain = _EnrichChain(_ENRICH_REFS, batch=list(_ENRICH_RECS.values()))
-
-    report = asyncio.run(walk_corpus(h, chain, run_id="run-enrichhappy", depth=1))
-
-    assert report.enriched == 3
-    assert report.enrichment_failed == 0
-    assert report.untitled_after_walk == 0
-    assert chain.by_doi_calls == []
-    section = report.to_section()
-    assert section["enriched"] == 3 and section["untitled_after_walk"] == 0
-
-
 # --------------------------------------------------------------------------
 # Build D chunk 10 — abstract + oa_status shaping, works columns, triage state
 # --------------------------------------------------------------------------
@@ -2343,23 +1254,6 @@ def test_abstract_inverted_index_reconstruction():
     assert rehydrate(["not", "a", "dict"]) is None
     assert rehydrate({"w": "positions-not-a-list"}) is None
     assert rehydrate({"w": [None, "x", 1.5]}) is None
-
-
-def test_walk_ref_to_incoming_passes_triage_metadata_through():
-    """The walk's ref->incoming mapping passes ``abstract``/``oa_status`` through
-    to the identity fold — walk-discovered stubs ARE the unfetched papers the
-    triage metadata exists for (a ``by_doi``-enriched ref carries both)."""
-    from seedgraph.acquisition.walk import _ref_to_incoming
-
-    incoming = _ref_to_incoming(
-        {"openalex_id": "W1", "doi": "10.9/x", "title": "T",
-         "abstract": "Ref abstract.", "oa_status": "green"}
-    )
-    assert incoming["abstract"] == "Ref abstract."
-    assert incoming["oa_status"] == "green"
-    # absent fields stay absent (empty-only downstream — nothing to fill).
-    bare = _ref_to_incoming({"openalex_id": "W2"})
-    assert "abstract" not in bare and "oa_status" not in bare
 
 
 def test_work_to_record_carries_abstract_and_oa_status():
@@ -2425,127 +1319,6 @@ def test_unpaywall_by_doi_carries_oa_status():
     )
 
     assert rec == {"doi": "10.4/up", "title": "Unpaywalled", "year": 2021, "oa_status": "bronze"}
-
-
-def test_abstract_oa_status_persist_empty_only_through_upsert():
-    """Both fields persist through ``upsert_work`` with EMPTY-ONLY semantics: a
-    second record never overwrites a present value; a later record fills a NULL."""
-    from seedgraph.project import identity
-
-    h = service.create_project("oaupsert")
-    with Session(h.engine, expire_on_commit=False) as s:
-        work, outcome = identity.upsert_work(
-            s,
-            {"doi": "10.3/abs", "title": "Abstracted",
-             "abstract": "First abstract.", "oa_status": "green"},
-        )
-        s.commit()
-        assert outcome == "created"
-        assert work.abstract == "First abstract."
-        assert work.oa_status == "green"
-
-        # A second record for the SAME work never overwrites (empty-only).
-        work2, outcome2 = identity.upsert_work(
-            s,
-            {"doi": "10.3/abs", "title": "Abstracted",
-             "abstract": "Different abstract.", "oa_status": "closed"},
-        )
-        s.commit()
-        assert outcome2 == "merged" and work2.work_id == work.work_id
-        assert work2.abstract == "First abstract."
-        assert work2.oa_status == "green"
-
-        # Empty-only FILL: a work created without the fields gains them on merge
-        # (the pre-ch10 cache-entry case: old shaped records lack the fields, the
-        # next fresh fetch backfills them).
-        bare, _ = identity.upsert_work(s, {"doi": "10.3/bare", "title": "Bare"})
-        s.commit()
-        assert bare.abstract is None and bare.oa_status is None
-        filled, _ = identity.upsert_work(
-            s, {"doi": "10.3/bare", "abstract": "Late abstract.", "oa_status": "bronze"}
-        )
-        s.commit()
-        assert filled.abstract == "Late abstract." and filled.oa_status == "bronze"
-
-
-def test_derive_acquisition_state_available_open_access_table():
-    """Table test for the ch10 triage state: an UN-bridged, non-excluded work with
-    an open OA color derives ``available_open_access`` (the previously dead vocab
-    state — "OA exists, re-run/budget will get it"); ``closed``/absent colors keep
-    the pre-ch10 states; excluded and bridged works never take the branch."""
-    init_cache_db(None)
-    h = service.create_project("oatriage")
-
-    def _mk(doi: str, inclusion: str, oa: "str | None") -> str:
-        work = service.add_work(h, ids={"doi": doi}, title=f"T {doi}", inclusion_status=inclusion)
-        if oa is not None:
-            with Session(h.engine, expire_on_commit=False) as s:
-                row = s.get(Work, work.work_id)
-                row.oa_status = oa
-                s.add(row)
-                s.commit()
-        return work.work_id
-
-    cases = [
-        # (doi, inclusion, oa_status, expected state)
-        ("10.1/gold", "included", "gold", "available_open_access"),
-        ("10.1/green", "metadata_only", "green", "available_open_access"),
-        ("10.1/hybrid", "metadata_only", "hybrid", "available_open_access"),
-        # diamond: the deliberate superset over §4.3's list (a real OpenAlex value).
-        ("10.1/diamond", "metadata_only", "diamond", "available_open_access"),
-        ("10.1/closedinc", "included", "closed", "requires_user_upload"),
-        ("10.1/closedmeta", "metadata_only", "closed", "metadata_only"),
-        ("10.1/noneinc", "included", None, "requires_user_upload"),
-        ("10.1/nonemeta", "metadata_only", None, "metadata_only"),
-        ("10.1/excl", "excluded", "gold", "excluded"),
-    ]
-    wids = {doi: _mk(doi, inclusion, oa) for doi, inclusion, oa, _expected in cases}
-
-    with Session(h.engine) as s:
-        for doi, _inclusion, _oa, expected in cases:
-            assert derive_acquisition_state(s, None, wids[doi]) == expected, doi
-
-        # Bridged works never derive available_open_access, whatever the color:
-        # a markdown-bearing bridge takes the reconcile path ('failed' against this
-        # empty cache.db); a pdf-only bridge keeps the pre-ch10 no-markdown states.
-        write_bridge(
-            s, work_id=wids["10.1/gold"], source_file_id="sf_1", file_hash="fh_1",
-            markdown_id="md_1", markdown_hash="mh_1",
-            acquisition_method="open_access_fetch",
-        )
-        write_bridge(
-            s, work_id=wids["10.1/green"], source_file_id="sf_2", file_hash="fh_2",
-            acquisition_method="open_access_fetch",
-        )
-        s.commit()
-        assert derive_acquisition_state(s, None, wids["10.1/gold"]) == "failed"
-        assert derive_acquisition_state(s, None, wids["10.1/green"]) == "metadata_only"
-
-
-def test_corpus_rows_emit_oa_status():
-    """``corpus_rows`` emits the OA color (additive key) and the derived state
-    reflects the ch10 triage split — the ch12 frontier pane's read-model."""
-    from seedgraph.acquisition.service import corpus_rows
-
-    h = service.create_project("oarows")
-    w_open = service.add_work(
-        h, ids={"doi": "10.2/open"}, title="OA row", inclusion_status="metadata_only"
-    )
-    service.add_work(
-        h, ids={"doi": "10.2/plain"}, title="Plain row", inclusion_status="metadata_only"
-    )
-    with Session(h.engine, expire_on_commit=False) as s:
-        row = s.get(Work, w_open.work_id)
-        row.oa_status = "hybrid"
-        s.add(row)
-        s.commit()
-
-    by_id = {r["work_id"]: r for r in corpus_rows(h)}
-    assert by_id[w_open.work_id]["oa_status"] == "hybrid"
-    assert by_id[w_open.work_id]["acquisition_state"] == "available_open_access"
-    plain = next(r for r in by_id.values() if r["work_id"] != w_open.work_id)
-    assert plain["oa_status"] is None
-    assert plain["acquisition_state"] == "metadata_only"
 
 
 # ---------------------------------------------------------------------------

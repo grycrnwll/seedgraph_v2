@@ -19,8 +19,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
 
-from seedgraph.citation.resolve import _OVERLAP_STOPWORDS
 from seedgraph.project.identity import normalize_id
+
+#: Stopwords removed before counting shared content tokens (this matcher, and the
+#: reference-resolution overlap gate in ``citation/resolve.py``).
+OVERLAP_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at",
+        "by", "with", "from", "as", "is", "are", "be", "this", "that", "into",
+        "über", "der", "die", "das", "und", "le", "la", "les", "de", "du",
+    }
+)
 
 Status = Literal["pass", "weak", "miss", "unknown"]
 Via = Literal["doi", "exact", "tolerant"]
@@ -134,7 +143,7 @@ def content_tokens(tokens: Sequence[str]) -> list[str]:
     dropped, length > 1, alphabetic-bearing; applied to the normalised stream)."""
     seen: dict[str, None] = {}
     for tok in tokens:
-        if len(tok) > 1 and tok not in _OVERLAP_STOPWORDS and not tok.isdigit():
+        if len(tok) > 1 and tok not in OVERLAP_STOPWORDS and not tok.isdigit():
             seen.setdefault(tok, None)
     return list(seen)
 

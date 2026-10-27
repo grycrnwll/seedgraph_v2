@@ -20,47 +20,21 @@ no_markdown / no_references skip paths.
 
 from __future__ import annotations
 
-import os
 import re
 import sqlite3
-from pathlib import Path
 
 import pytest
-from sqlmodel import Session
 from typer.testing import CliRunner
 
-from seedgraph import cache_access
-from seedgraph.acquisition.bridge import backfill_markdown, write_bridge
-from seedgraph.cache.convert import convert_source_file
-from seedgraph.cache.db import init_cache_db
-from seedgraph.cache.ingest import ingest_file
-from seedgraph.cache.marker_backend import FakeMarkerBackend
-from seedgraph.cache.provider_cache import cache_put, key_referenced_works
-from seedgraph.citation import bib_parser, parsed_bib, resolve  # noqa: F401 (import-clean)
 from seedgraph.citation.bib_parser import (
     BibEntry,
     _clean_entry_line,
     _is_discrete_sublist_label,
     parse_references,
 )
-from seedgraph.citation.edges import (
-    authoritative_edges,
-    edge_disagreements,
-    is_shareable_edge,
-    write_edge,
-)
-from seedgraph.citation.parsed_bib import build_parsed_edges
 from seedgraph.citation.resolve import resolve_references
-from seedgraph.db.adapter import raw_conn
-from seedgraph.db.connection import open_cache_db
-from seedgraph.graph.build import build_citation_graph
-from seedgraph.graph.export import export_graph, load_graph
 from seedgraph.project import identity as identity_mod
-from seedgraph.project import review as review_mod
-from seedgraph.project import service
 from seedgraph.sections.parser import parse_sections
-from seedgraph.sections.store import replace_sections
-from seedgraph.vocab import AccessClass, AcquisitionMethod
 
 runner = CliRunner()
 
@@ -106,53 +80,6 @@ def _project_conn(h) -> sqlite3.Connection:
     conn = sqlite3.connect(str(h.db_path))
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
-
-
-def _convert_bridge_sections(h, work_id, markdown, *, slug_file, pdf_bytes=None):
-    """Ingest a pdf, convert to ``markdown``, bridge work->markdown, build sections."""
-    p = Path(os.environ["SEEDGRAPH_HOME"]) / f"{slug_file}.pdf"
-    p.write_bytes(pdf_bytes or (b"%PDF-1.4 " + slug_file.encode() + b" body words here and more"))
-    src = ingest_file(
-        p, access_class=AccessClass.open_access,
-        acquisition_method=AcquisitionMethod.open_access_fetch, root=None,
-    )
-    md = convert_source_file(
-        src.source_file_id, backend=FakeMarkerBackend(markdown=markdown), root=None
-    )
-    with Session(h.engine) as s:
-        write_bridge(
-            s, work_id=work_id, source_file_id=src.source_file_id, file_hash=src.file_hash,
-            markdown_id=md.markdown_id, markdown_hash=md.markdown_hash,
-            acquisition_method="open_access_fetch",
-        )
-        s.commit()
-    _build_sections(h, work_id, md)
-    return md, src
-
-
-def _build_sections(h, work_id, md):
-    cache_conn = cache_access.open_cache_ro(None)
-    try:
-        with Session(h.engine) as s:
-            conn = raw_conn(s)
-            row = cache_access.read_markdown(cache_conn, None, md.markdown_id)
-            secs = parse_sections(
-                row.text, markdown_id=md.markdown_id, markdown_hash=row.markdown_hash,
-                source_file_id=row.source_file_id, source_file_hash=row.source_file_hash,
-                work_id=work_id,
-            )
-            replace_sections(conn, md.markdown_id, secs)
-            s.commit()
-    finally:
-        cache_conn.close()
-
-
-def _citing_paper(slug, markdown=REFS_MD, *, doi="10.1000/aaa", openalex="W_A"):
-    """A project + included citing work A with a bridged, sectioned references markdown."""
-    h = service.create_project(slug)
-    a = service.add_work(h, ids={"doi": doi, "openalex": openalex}, title="Paper A")
-    md, src = _convert_bridge_sections(h, a.work_id, markdown, slug_file="cit")
-    return h, a.work_id, md, src
 
 
 def _wid_by_doi(h, doi: str) -> str | None:
@@ -540,27 +467,6 @@ def test_doi_miss_unpinned_title_stays_ambiguous_with_doi_candidate():
     assert any(c.get("doi") == "10.9999/miss" for c in rr.candidates)
 
 
-def test_doi_miss_full_path_enqueues_review_no_edge_no_identity():
-    """Build A ch5 end-to-end: with an EMPTY chain the two REFS_MD DOI entries
-    route ``ambiguous`` — review items enqueued, ZERO edges, and no work is
-    self-minted from the unverified parsed DOIs."""
-    h, a, md, _src = _citing_paper("doimiss")
-    res = build_parsed_edges(h, None, _Providers(), identity_mod, work_id=a, run_id="R")
-    assert res.entries == 2 and res.ambiguous == 2 and res.resolved == 0
-    assert res.edges_written == 0
-    assert _wid_by_doi(h, "10.1111/blue") is None  # no self-minted identity
-    conn = _project_conn(h)
-    try:
-        assert conn.execute("SELECT COUNT(*) FROM citation_edges").fetchone()[0] == 0
-    finally:
-        conn.close()
-    items = [i for i in review_mod.list_open(h) if i.item_type == "citation_resolution"]
-    assert len(items) == 2
-    import json as _json
-    dois = {_json.loads(i.payload)["doi"] for i in items}
-    assert dois == {"10.1111/blue", "10.2222/green"}
-
-
 def test_title_only_entry_ambiguous_no_edge():
     """A title-only entry → ``status='ambiguous'`` and produces **no** edge; the
     entry is retained raw."""
@@ -644,496 +550,45 @@ def test_title_year_resolution_confidence_not_hardcoded_one():
 # reference_entries population
 # ===========================================================================
 
-def test_reference_entries_population_one_row_per_entry():
-    """Every parsed entry yields exactly one ``reference_entries`` row with
-    verbatim ``raw_reference_text``, correct ``markdown_id``/``markdown_hash``/
-    ``section_label``, and ``resolution_status`` per the §7 rubric."""
-    h, a, md, _src = _citing_paper("refpop")
-    # B exists (doi 10.1111/blue) -> Blue resolves; Green's target is auto-vivified.
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert res.entries == 2
-    conn = _project_conn(h)
-    try:
-        rows = conn.execute(
-            "SELECT raw_reference_text, markdown_id, markdown_hash, section_label, resolution_status "
-            "FROM reference_entries WHERE citing_work_id = ? ORDER BY created_at", (a,)
-        ).fetchall()
-    finally:
-        conn.close()
-    assert len(rows) == 2
-    for raw, mid, mhash, label, status in rows:
-        assert mid == md.markdown_id
-        assert mhash == md.markdown_hash
-        assert label == "References"
-        assert status == "resolved"  # both DOI-bearing -> resolved
-    raws = {r[0] for r in rows}
-    assert any("Blue, R. (2018)" in r for r in raws)  # verbatim raw text retained
-    assert any("Green, S. (2019)" in r for r in raws)
-
 
 # ===========================================================================
 # parsed edges + reference_id
 # ===========================================================================
-
-def test_parsed_edge_carries_reference_id_and_resolves_target():
-    """Each ``resolved`` entry yields one ``parsed_bibliography`` edge carrying its
-    ``reference_id``; ``target_work_id`` resolves (auto-vivified ``metadata_only``
-    when out-of-corpus); the FK guarantees no dangling edge (criterion 5)."""
-    # Reference Blue's DOI exists in corpus; Green's DOI does NOT -> auto-vivified.
-    h, a, md, _src = _citing_paper("refid")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert res.resolved == 2 and res.edges_written == 2
-
-    conn = _project_conn(h)
-    try:
-        edges = conn.execute(
-            "SELECT source_work_id, target_work_id, provenance, reference_id, confidence "
-            "FROM citation_edges WHERE provenance = 'parsed_bibliography'"
-        ).fetchall()
-        # Every edge carries a reference_id resolving to a real reference_entries row.
-        for _s, tgt, prov, ref_id, conf in edges:
-            assert prov == "parsed_bibliography"
-            assert ref_id is not None
-            assert conn.execute(
-                "SELECT 1 FROM reference_entries WHERE reference_id = ?", (ref_id,)
-            ).fetchone() is not None
-            assert conn.execute(
-                "SELECT 1 FROM works WHERE work_id = ?", (tgt,)
-            ).fetchone() is not None
-        # The out-of-corpus Green target was auto-vivified metadata_only.
-        green = _wid_by_doi(h, "10.2222/green")
-        assert green is not None
-        incl = conn.execute(
-            "SELECT inclusion_status FROM project_documents WHERE work_id = ?", (green,)
-        ).fetchone()[0]
-        assert incl == "metadata_only"
-        # No dangling edges / FK violations (foreign_keys=ON).
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    finally:
-        conn.close()
-    assert len(edges) == 2
 
 
 # ===========================================================================
 # union + authority + disagreement (confirm path)
 # ===========================================================================
 
-def test_union_authority_disagreement_confirm_path():
-    """Seed a ``provider_reference`` edge for pair (A,B) under run R; parsing a
-    ``parsed_bibliography`` edge for (A,B) under R → both rows persist;
-    ``authoritative_edges(R)`` returns the parsed edge; ``edge_disagreements(R)``
-    lists (A,B) with both provenances and winner ``parsed_bibliography``."""
-    h, a, md, _src = _citing_paper("confirm")
-    b = service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue").work_id
-
-    conn = _project_conn(h)
-    try:
-        # Provider tier already has A->B under R.
-        write_edge(conn, source=a, target=b, provenance="provider_reference", confidence=1.0, run_id="R")
-        conn.commit()
-    finally:
-        conn.close()
-
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    conn = _project_conn(h)
-    try:
-        rows = conn.execute(
-            "SELECT provenance FROM citation_edges WHERE source_work_id=? AND target_work_id=? AND run_id='R'",
-            (a, b),
-        ).fetchall()
-        provs = {r[0] for r in rows}
-        auth = authoritative_edges(conn, "R")
-        dis = edge_disagreements(conn, "R")
-    finally:
-        conn.close()
-
-    assert provs == {"provider_reference", "parsed_bibliography"}  # both rows persist
-    ab_auth = [e for e in auth if e["source_work_id"] == a and e["target_work_id"] == b]
-    assert len(ab_auth) == 1 and ab_auth[0]["provenance"] == "parsed_bibliography"  # parsed wins
-    ab_dis = [d for d in dis if d["source"] == a and d["target"] == b]
-    assert len(ab_dis) == 1
-    assert set(ab_dis[0]["provenances"]) == {"provider_reference", "parsed_bibliography"}
-    assert ab_dis[0]["authoritative_provenance"] == "parsed_bibliography"
-
-
-def test_single_provenance_pair_not_listed_in_disagreements():
-    """A pair carrying only one provenance is NOT listed by
-    ``edge_disagreements`` (criterion 4)."""
-    h = service.create_project("single")
-    a = service.add_work(h, ids={"openalex": "W_A"}, title="A").work_id
-    b = service.add_work(h, ids={"openalex": "W_B"}, title="B").work_id
-    conn = _project_conn(h)
-    try:
-        write_edge(conn, source=a, target=b, provenance="provider_reference", confidence=1.0, run_id="R")
-        conn.commit()
-        dis = edge_disagreements(conn, "R")
-    finally:
-        conn.close()
-    assert dis == []  # a single-provenance pair is not a disagreement
-
-
-def test_adds_coverage_single_provenance_absent_from_disagreements():
-    """A parsed edge for pair (A,C) with no provider counterpart appears in
-    ``authoritative_edges(R)`` / ``cite table`` but is **absent** from
-    ``edge_disagreements(R)`` (criterion 3 vs 4 split)."""
-    h, a, md, _src = _citing_paper("addscov")
-    # Both reference targets exist; NO provider edges are seeded.
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    c = service.add_work(h, ids={"doi": "10.2222/green", "openalex": "W_C"}, title="Green").work_id
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    conn = _project_conn(h)
-    try:
-        auth = authoritative_edges(conn, "R")
-        dis = edge_disagreements(conn, "R")
-    finally:
-        conn.close()
-
-    ac_auth = [e for e in auth if e["source_work_id"] == a and e["target_work_id"] == c]
-    assert len(ac_auth) == 1 and ac_auth[0]["provenance"] == "parsed_bibliography"
-    assert dis == []  # single-provenance adds-coverage edges are NOT disagreements
-
 
 # ===========================================================================
 # review routing
 # ===========================================================================
-
-def test_review_routing_enqueues_citation_resolution_payload():
-    """An ambiguous and a suspect entry each enqueue exactly one
-    ``citation_resolution`` ``review_queue`` item whose ``CitationResolutionPayload``
-    (discriminator ``kind``) passes the ``ReviewPayload`` union validation."""
-    md = (
-        "# Paper\n\nBody.\n\n## References\n\n"
-        "White, T. (2015). An ambiguous untraceable manuscript title here. Self Published.\n\n"
-        "Black, U. (2016). A handbook chapter on something else. Reference Compendium.\n"
-    )
-    h = service.create_project("review")
-    a = service.add_work(h, ids={"doi": "10.1000/aaa", "openalex": "W_A"}, title="Paper A").work_id
-    _convert_bridge_sections(h, a, md, slug_file="rev")
-    prov = _Providers(by_title={
-        # White -> not found -> ambiguous; Black -> refwork denylist -> suspect.
-        "A handbook chapter on something else": {"doi": "10.4135/refworkY", "title": "A handbook chapter on something else"},
-    })
-    res = build_parsed_edges(h, None, prov, identity_mod, work_id=a, run_id="R")
-    assert res.ambiguous == 1 and res.suspect == 1 and res.edges_written == 0
-
-    items = review_mod.list_open(h)
-    cr = [i for i in items if i.item_type == "citation_resolution"]
-    assert len(cr) == 2
-    statuses = set()
-    import json as _json
-
-    for item in cr:
-        # The stored payload round-trips through the union validator (discriminator kind).
-        payload = _json.loads(item.payload)
-        validated = review_mod._validate_payload(payload)
-        assert validated["kind"] == "citation_resolution"
-        assert item.target_type == "reference_entry"
-        statuses.add(validated["status"])
-    assert statuses == {"ambiguous", "suspect"}
-
-
-def test_invalid_review_payload_rejected():
-    """An invalid citation-resolution payload is rejected by ``enqueue``
-    (decision 80)."""
-    h = service.create_project("badpayload")
-    bad = {
-        "kind": "citation_resolution",
-        "status": "not_a_valid_status",  # not in Literal['ambiguous','suspect']
-        "citing_work_id": "W_A",
-        "reference_id": "ref_x",
-        "raw": "raw",
-        "run_id": "R",
-    }
-    with pytest.raises(Exception):
-        review_mod.enqueue(h, "citation_resolution", target_type="reference_entry",
-                           target_id="ref_x", payload=bad)
-    # Nothing was persisted.
-    assert review_mod.list_open(h) == []
 
 
 # ===========================================================================
 # Stage-A / Stage-B idempotency
 # ===========================================================================
 
-def test_same_run_unchanged_markdown_idempotent():
-    """Running ``cite parse`` twice on unchanged markdown under the same run →
-    identical ``reference_entries`` count and no duplicate parsed edges (Stage A
-    skipped, Stage B UNIQUE-dedups) (criterion 7a)."""
-    h, a, md, _src = _citing_paper("idem")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    r1 = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert r1.reparsed is True
-
-    def _counts():
-        conn = _project_conn(h)
-        try:
-            refs = conn.execute("SELECT COUNT(*) FROM reference_entries WHERE citing_work_id=?", (a,)).fetchone()[0]
-            edges = conn.execute(
-                "SELECT COUNT(*) FROM citation_edges WHERE source_work_id=? AND provenance='parsed_bibliography' AND run_id='R'", (a,)
-            ).fetchone()[0]
-            return refs, edges
-        finally:
-            conn.close()
-
-    before = _counts()
-    r2 = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert r2.reparsed is False  # Stage A skipped on unchanged markdown
-    after = _counts()
-    assert before == after  # no new refs, no duplicate edges
-
-
-def test_new_run_unchanged_markdown_projects_parsed_tier():
-    """Regression for must-fix #2: a NEW run R2 over unchanged markdown still gets
-    the full parsed tier projected (Stage A skipped, Stage B ALWAYS projects);
-    ``authoritative_edges(R2)`` sees it (criterion 7b)."""
-    h, a, md, _src = _citing_paper("newrun")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R1")
-
-    r2 = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R2")
-    assert r2.reparsed is False  # Stage A skipped (unchanged markdown)
-    assert r2.edges_written == 2  # ...but Stage B STILL projected into R2
-
-    conn = _project_conn(h)
-    try:
-        n_r2 = conn.execute(
-            "SELECT COUNT(*) FROM citation_edges WHERE source_work_id=? AND provenance='parsed_bibliography' AND run_id='R2'", (a,)
-        ).fetchone()[0]
-        auth_r2 = authoritative_edges(conn, "R2")
-    finally:
-        conn.close()
-    assert n_r2 == 2  # the silent-loss bug must NOT recur
-    assert any(e["provenance"] == "parsed_bibliography" for e in auth_r2)
-
 
 # ===========================================================================
 # cross-run FK-safe reparse (regression for must-fix #1)
 # ===========================================================================
-
-def test_cross_run_fk_safe_reparse():
-    """Seed parsed edges for work W under runs R1 AND R2 (both referencing W's
-    ``reference_entries``); reconvert (new ``markdown_hash``); reparse deletes W's
-    parsed edges in **both** runs before deleting ``reference_entries`` with
-    ``PRAGMA foreign_keys=ON`` and no FK violation; refs+edges reinserted; the
-    doctor reports the pre-reparse rows ``stale`` against cache (criterion 7c)."""
-    from seedgraph.doctor import reference_entries_findings
-
-    h, a, md, src = _citing_paper("fksafe")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    # Edges under R1 and R2 (Stage A once, Stage B into both runs) — both reference
-    # the same reference_entries rows.
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R1")
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R2")
-
-    conn = _project_conn(h)
-    try:
-        before = conn.execute(
-            "SELECT COUNT(*) FROM citation_edges WHERE source_work_id=? AND provenance='parsed_bibliography'", (a,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert before >= 4  # >=2 edges in each of R1 and R2
-
-    # Reconvert to NEW markdown (same lineage; new markdown_id/hash), update bridge
-    # + rebuild sections so resolve_work_markdown returns the new hash.
-    new_md = convert_source_file(
-        src.source_file_id,
-        backend=FakeMarkerBackend(markdown=REFS_MD + "\nGarvey, P. (2021). Extra appended reference. Press.\n"),
-        force=True, root=None,
-    )
-    assert new_md.markdown_hash != md.markdown_hash
-    with Session(h.engine) as s:
-        backfill_markdown(s, work_id=a, markdown_id=new_md.markdown_id, markdown_hash=new_md.markdown_hash)
-        s.commit()
-    _build_sections(h, a, new_md)
-
-    # Pre-reparse: the stored reference_entries (old hash) are STALE against cache.
-    pre = reference_entries_findings(h.engine, None)
-    assert any(s == "stale" for _w, s in pre)
-
-    # Reparse: Stage A deletes parsed edges across BOTH runs before refs (FK-safe).
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R1")
-    assert res.reparsed is True
-
-    conn = _project_conn(h)
-    try:
-        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []  # no FK violation
-        # Refs reinserted with the NEW hash.
-        hashes = {r[0] for r in conn.execute(
-            "SELECT DISTINCT markdown_hash FROM reference_entries WHERE citing_work_id=?", (a,)
-        ).fetchall()}
-        assert hashes == {new_md.markdown_hash}
-        # Edges re-projected into R1 (other runs' stale parsed edges were cleared).
-        n_r1 = conn.execute(
-            "SELECT COUNT(*) FROM citation_edges WHERE source_work_id=? AND provenance='parsed_bibliography' AND run_id='R1'", (a,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert n_r1 >= 1
-
-    # Post-reparse the soft-refs reconcile ok again.
-    post = reference_entries_findings(h.engine, None)
-    assert all(s == "ok" for _w, s in post)
 
 
 # ===========================================================================
 # atomicity (§6.4)
 # ===========================================================================
 
-def test_per_work_lifecycle_atomic_rollback(monkeypatch):
-    """Inject a failure during Stage A (the resolve step); the whole work rolls
-    back — no half-written ``reference_entries``, no orphan edges, no stray review
-    items (one connection, one transaction)."""
-    h, a, md, _src = _citing_paper("atomic")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-
-    def _boom(*args, **kwargs):
-        raise RuntimeError("injected mid-Stage-A failure")
-
-    # parsed_bib imports resolve_references lazily inside the body, so patching the
-    # module attribute takes effect at call time.
-    monkeypatch.setattr("seedgraph.citation.resolve.resolve_references", _boom)
-
-    with pytest.raises(RuntimeError):
-        build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    conn = _project_conn(h)
-    try:
-        refs = conn.execute("SELECT COUNT(*) FROM reference_entries WHERE citing_work_id=?", (a,)).fetchone()[0]
-        edges = conn.execute("SELECT COUNT(*) FROM citation_edges WHERE source_work_id=?", (a,)).fetchone()[0]
-        rq = conn.execute("SELECT COUNT(*) FROM review_queue").fetchone()[0]
-    finally:
-        conn.close()
-    assert refs == 0 and edges == 0 and rq == 0  # whole work rolled back
-
 
 # ===========================================================================
 # shareability boundary
 # ===========================================================================
 
-def test_parsed_bibliography_not_shareable_excluded_from_graph_json(tmp_path):
-    """``is_shareable_edge('parsed_bibliography') is False``; ``graph.json`` contains
-    no parsed edges (only provider_reference), while the full local
-    ``authoritative_edges`` view contains them (criterion 8)."""
-    assert is_shareable_edge("parsed_bibliography") is False
-
-    h, a, md, _src = _citing_paper("share")
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-    service.add_work(h, ids={"doi": "10.2222/green", "openalex": "W_C"}, title="Green")
-    build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    conn = _project_conn(h)
-    try:
-        auth = authoritative_edges(conn, "R")
-        g = build_citation_graph(conn, run_id="R", closed_world=True)
-    finally:
-        conn.close()
-
-    assert any(e["provenance"] == "parsed_bibliography" for e in auth)  # local view has them
-    out = tmp_path / "out"
-    export_graph(g, out, manifest={"citation": {"run_id": "R"}})
-    reloaded = load_graph(out / "graph.json")
-    assert reloaded.number_of_edges() == 0  # parsed edges filtered out of the share export
-    for _s, _t, data in reloaded.edges(data=True):
-        assert is_shareable_edge(data["provenance"])
-
 
 # ===========================================================================
 # skip paths
 # ===========================================================================
-
-def test_skip_no_markdown():
-    """A work with no ``work_source_files`` row → ``skipped_reason='no_markdown'``,
-    no crash."""
-    h = service.create_project("nomd")
-    a = service.add_work(h, ids={"doi": "10.1000/aaa"}, title="A").work_id
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert res.skipped_reason == "no_markdown"
-    assert res.entries == 0 and res.edges_written == 0
-
-
-def test_skip_no_references():
-    """A markdown with no ``references`` section → ``skipped_reason='no_references'``,
-    zero ``reference_entries`` rows."""
-    md = "# Paper\n\n## Introduction\n\nNo references section here at all.\n"
-    h = service.create_project("noref")
-    a = service.add_work(h, ids={"doi": "10.1000/aaa"}, title="A").work_id
-    _convert_bridge_sections(h, a, md, slug_file="noref")
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-    assert res.skipped_reason == "no_references"
-    assert res.entries == 0
-    conn = _project_conn(h)
-    try:
-        n = conn.execute("SELECT COUNT(*) FROM reference_entries WHERE citing_work_id=?", (a,)).fetchone()[0]
-    finally:
-        conn.close()
-    assert n == 0
-
-
-def test_parse_auto_builds_missing_sections():
-    """Regression: a work with a real ``## References`` section but whose
-    ``sections build`` was NEVER run must NOT be mis-skipped as ``no_references``.
-
-    ``cite parse`` locates references from phase_3 ``document_sections``; when that
-    prerequisite is absent, parse now builds the sections on demand (same
-    parse_sections/replace_sections the ``sections build`` CLI runs) before loading
-    the ranges. Set up bridge WITHOUT pre-building sections, then assert the
-    bibliography parses and the references section rows were auto-built."""
-    # Ingest + convert + bridge, but deliberately OMIT the sections pre-build step
-    # (no parse_sections / replace_sections in this setup).
-    h = service.create_project("autosections")
-    a = service.add_work(h, ids={"doi": "10.1000/aaa", "openalex": "W_A"}, title="Paper A").work_id
-    p = Path(os.environ["SEEDGRAPH_HOME"]) / "autosec.pdf"
-    p.write_bytes(b"%PDF-1.4 autosec body words here and more")
-    src = ingest_file(
-        p, access_class=AccessClass.open_access,
-        acquisition_method=AcquisitionMethod.open_access_fetch, root=None,
-    )
-    md = convert_source_file(
-        src.source_file_id, backend=FakeMarkerBackend(markdown=REFS_MD), root=None
-    )
-    with Session(h.engine) as s:
-        write_bridge(
-            s, work_id=a, source_file_id=src.source_file_id, file_hash=src.file_hash,
-            markdown_id=md.markdown_id, markdown_hash=md.markdown_hash,
-            acquisition_method="open_access_fetch",
-        )
-        s.commit()
-
-    # Sanity: no document_sections exist for this markdown yet (prerequisite absent).
-    conn = _project_conn(h)
-    try:
-        pre = conn.execute(
-            "SELECT COUNT(*) FROM document_sections WHERE markdown_id=?", (md.markdown_id,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert pre == 0
-
-    # B exists (doi 10.1111/blue) -> Blue resolves by DOI; Green auto-vivified.
-    service.add_work(h, ids={"doi": "10.1111/blue", "openalex": "W_B"}, title="Blue")
-
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    # NOT silently mis-skipped as no_references, and the bibliography WAS parsed.
-    assert res.skipped_reason != "no_references"
-    assert not res.skipped_reason
-    assert res.entries > 0
-
-    # The references section was auto-built (>=1 section_kind='references' row).
-    conn = _project_conn(h)
-    try:
-        n_refsec = conn.execute(
-            "SELECT COUNT(*) FROM document_sections "
-            "WHERE markdown_id=? AND section_kind='references'", (md.markdown_id,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert n_refsec >= 1
 
 
 #: A references section whose ONLY heading is a bold-only ``**References**`` line —
@@ -1147,72 +602,8 @@ BOLD_REFS_MD = (
 )
 
 
-def test_non_atx_bold_heading_parses_via_fallback():
-    """Build F chunk 3 (§5.8a): a bold-only ``**References**`` heading is recovered by
-    the ``parsed_bib`` non-ATX fallback.
-
-    The ATX-only sections parser produces NO ``section_kind='references'`` row for a
-    bold heading, so at HEAD ``build_parsed_edges`` skips the whole bibliography as
-    ``no_references``. The chunk-3 fallback synthesizes a range from the bold heading to
-    end-of-document, so the bibliography now parses to its two entries.
-    """
-    h = service.create_project("boldrefs")
-    a = service.add_work(
-        h, ids={"doi": "10.1000/aaa", "openalex": "W_A"}, title="Paper A"
-    ).work_id
-    md, _src = _convert_bridge_sections(h, a, BOLD_REFS_MD, slug_file="boldref")
-
-    # Sanity: the ATX-only sections parser created NO references-kind section — the
-    # exact condition (zero references-kind ranges) the parsed_bib fallback recovers.
-    conn = _project_conn(h)
-    try:
-        n_refsec = conn.execute(
-            "SELECT COUNT(*) FROM document_sections "
-            "WHERE markdown_id=? AND section_kind='references'", (md.markdown_id,)
-        ).fetchone()[0]
-    finally:
-        conn.close()
-    assert n_refsec == 0
-
-    res = build_parsed_edges(h, None, _refs_providers(), identity_mod, work_id=a, run_id="R")
-
-    # Recovered: NOT skipped as no_references, and both entries parsed.
-    assert res.skipped_reason != "no_references"
-    assert not res.skipped_reason
-    assert res.entries == 2
-
-
 # ===========================================================================
 # acceptance milestone (closes gap #2) — CLI, offline (FakeProvider + cache)
 # ===========================================================================
-
-def _milestone_setup(slug, monkeypatch):
-    """Project with A (bridged references), B, C all included; provider edge A->B
-    seeded so cite project links only A->B; A's references cite B + C by DOI.
-
-    B/C carry the SAME openalex ids the FakeProvider deterministically mints for
-    their DOIs — under Build A's ch3 blocker a disagreeing W id would (correctly)
-    refuse the merge and route to review instead of silently over-merging, which
-    is not what this milestone exercises."""
-    from seedgraph.providers.fake import _wid
-
-    monkeypatch.setenv("SEEDGRAPH_FAKE_PROVIDERS", "1")
-    h, a, md, _src = _citing_paper(slug)
-    w_blue, w_green = _wid("10.1111/blue"), _wid("10.2222/green")
-    b = service.add_work(h, ids={"doi": "10.1111/blue", "openalex": w_blue}, title="Paper B").work_id
-    c = service.add_work(h, ids={"doi": "10.2222/green", "openalex": w_green}, title="Paper C").work_id
-
-    # Provider tier: A references ONLY B (so A->C is parsed-only adds-coverage).
-    init_cache_db(None)
-    cache_conn = open_cache_db(None)
-    try:
-        cache_put(
-            cache_conn, provider="openalex",
-            request_key=key_referenced_works({"openalex_id": "W_A"}),
-            response=[{"openalex_id": w_blue}],
-        )
-    finally:
-        cache_conn.close()
-    return h, a, b, c
 
 

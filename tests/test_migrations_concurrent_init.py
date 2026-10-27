@@ -58,21 +58,3 @@ def test_concurrent_ensure_project_db_on_fresh_home(tmp_path):
         assert _version(project_db_path("proj", home)) == latest_version("project")
 
 
-def test_concurrent_init_project_db_engines_on_fresh_file(tmp_path):
-    """The ORM path (open_project / create_project) migrates through an engine."""
-    from seedgraph.db.engine import init_project_db, make_project_engine
-
-    for i in range(ROUNDS):
-        path = tmp_path / f"home{i}" / "project.db"
-        engines = []
-
-        def init():
-            engine = make_project_engine(path)
-            engines.append(engine)
-            init_project_db(engine)
-
-        errors = _race(init)
-        for engine in engines:
-            engine.dispose()
-        assert errors == []
-        assert _version(path) == latest_version("project")

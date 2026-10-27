@@ -252,7 +252,7 @@ def _new_paper(lib: Library, path: Path, sha: str, ids: list[tuple[str, str]], c
         item_ids.append(attention.raise_item(
             lib, METADATA_NEEDED, {"paper_id": pid}, paper_id=pid,
             detail="added from a PDF that matched no library paper; its title is not known yet").item_id)
-        identity = _identity_item(lib, pid, candidates, "the added PDF may be the same paper as") if candidates else None
+        identity = raise_identity_check(lib, pid, candidates, "the added PDF may be the same paper as") if candidates else None
         if identity:
             item_ids.append(identity)
         res = files.attach_pdf(lib, pid, path, access_class=AccessClass.user_supplied_private,
@@ -266,7 +266,7 @@ def _new_paper(lib: Library, path: Path, sha: str, ids: list[tuple[str, str]], c
                             f"; check whether it duplicates {', '.join(candidates)}" if candidates else ""))
 
 
-def _identity_item(lib: Library, paper_id: str, candidates: Sequence[str], why: str) -> str | None:
+def raise_identity_check(lib: Library, paper_id: str, candidates: Sequence[str], why: str) -> str | None:
     """Raise an ``identity_check`` for the candidates the researcher has not already judged
     different from ``paper_id`` (``duplicate_decisions``); ``None`` when none is left."""
     from .merge import decided_different
@@ -337,7 +337,7 @@ def _add_doi(lib: Library, raw: str, chain: Any, fetch: Callable[[dict], Any]) -
     if owner is not None:
         pid = owner[0]
         row = lib.conn.execute("SELECT title, title_source FROM papers WHERE paper_id = ?", (pid,)).fetchone()
-        oa, oa_source = ("already_held", None) if _held(lib, pid) else _fetch_oa(lib, pid, record, fetch)
+        oa, oa_source = ("already_held", None) if _held(lib, pid) else fetch_open_access(lib, pid, record, fetch)
         return DoiResult(doi, "existing", paper_id=pid, title=row[0], title_source=row[1], oa=oa,
                          oa_source=oa_source, detail=f"already in the library as {pid}")
     if not record:
@@ -375,11 +375,11 @@ def _add_doi(lib: Library, raw: str, chain: Any, fetch: Callable[[dict], Any]) -
         if not values["title"]:
             item_ids.append(attention.raise_item(lib, METADATA_NEEDED, {"paper_id": pid}, paper_id=pid,
                                                  detail=f"{provider} gave no usable title for {doi}").item_id)
-        similar = _similar_papers(lib, pid, values["title"], values["year"])
-        identity = _identity_item(lib, pid, similar, "the pasted DOI's paper may be the same paper as") if similar else None
+        similar = similar_papers(lib, pid, values["title"], values["year"])
+        identity = raise_identity_check(lib, pid, similar, "the pasted DOI's paper may be the same paper as") if similar else None
         if identity:
             item_ids.append(identity)
-    oa, oa_source = _fetch_oa(lib, pid, record, fetch)
+    oa, oa_source = fetch_open_access(lib, pid, record, fetch)
     return DoiResult(doi, "created", paper_id=pid, title=values["title"],
                      title_source=provider if values["title"] else None, oa=oa, oa_source=oa_source,
                      attention_item_ids=tuple(item_ids),
@@ -387,7 +387,7 @@ def _add_doi(lib: Library, raw: str, chain: Any, fetch: Callable[[dict], Any]) -
                          f"; open-access PDF from {oa_source}" if oa == "held" else ""))
 
 
-def _similar_papers(lib: Library, paper_id: str, title: str | None, year: int | None) -> list[str]:
+def similar_papers(lib: Library, paper_id: str, title: str | None, year: int | None) -> list[str]:
     if not title or year is None:
         return []
     return [pid for pid, other in lib.conn.execute(
@@ -395,7 +395,7 @@ def _similar_papers(lib: Library, paper_id: str, title: str | None, year: int | 
         "ORDER BY paper_id", (year, paper_id)) if title_similarity(title, other) >= SAME_TITLE]
 
 
-def _fetch_oa(lib: Library, paper_id: str, record: dict | None, fetch: Callable[[dict], Any]) -> tuple[OaStatus, str | None]:
+def fetch_open_access(lib: Library, paper_id: str, record: dict | None, fetch: Callable[[dict], Any]) -> tuple[OaStatus, str | None]:
     """Try an open-access copy; attach it when one is downloaded. Never raises."""
     if not record:
         return "none", None

@@ -16,28 +16,15 @@ lineage-based staleness + shadow-don't-delete reanchor.
 
 from __future__ import annotations
 
-import os
 import sqlite3
-from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
 from sqlalchemy.dialects import sqlite as sqlite_dialect
-from sqlmodel import Session
 from typer.testing import CliRunner
 
 # Import-clean check for the entire phase-3 surface (collection exercises these).
-from seedgraph import anchor, cache_access, ids, segment
-from seedgraph.acquisition.bridge import write_bridge
-from seedgraph.cache.convert import convert_source_file
-from seedgraph.cache.ingest import ingest_file
-from seedgraph.cache.marker_backend import FakeMarkerBackend
-from seedgraph.db.migrations import run_migrations
-from seedgraph.db.project_models import DocumentSection, EvidenceSpan
-from seedgraph.ids import sha256_hex
-from seedgraph.project import service
+from seedgraph import anchor, ids, segment
 from seedgraph.sections import parser as sections_parser
-from seedgraph.vocab import AccessClass, AcquisitionMethod
 
 runner = CliRunner()
 
@@ -65,31 +52,6 @@ MD = (
     "\n"
     "[1] Author, A. A Title. Journal.\n"
 )
-
-
-def _make_doc(slug, markdown=MD, *, access_class=AccessClass.open_access, doi="10.1/x", force=False):
-    """Create a project + one bridged converted markdown; return (handle, work_id, md_doc)."""
-    h = service.create_project(slug)
-    w = service.add_work(h, ids={"doi": doi}, title="W " + slug)
-    method = (
-        AcquisitionMethod.open_access_fetch
-        if access_class == AccessClass.open_access
-        else AcquisitionMethod.upload
-    )
-    p = Path(os.environ["SEEDGRAPH_HOME"]) / f"{slug}.pdf"
-    p.write_bytes(b"%PDF-1.4 " + slug.encode() + b" body content with several words here")
-    src = ingest_file(p, access_class=access_class, acquisition_method=method, root=None)
-    md = convert_source_file(
-        src.source_file_id, backend=FakeMarkerBackend(markdown=markdown), force=force, root=None
-    )
-    with Session(h.engine) as s:
-        write_bridge(
-            s, work_id=w.work_id, source_file_id=src.source_file_id, file_hash=src.file_hash,
-            markdown_id=md.markdown_id, markdown_hash=md.markdown_hash,
-            acquisition_method=method.value,
-        )
-        s.commit()
-    return h, w.work_id, md
 
 
 def _conn(h) -> sqlite3.Connection:
@@ -334,65 +296,9 @@ def _assert_table_parity(insp, table_name, model):
     assert mig_ix == orm_ix, f"{table_name}: index column-sets drift ({mig_ix} != {orm_ix})"
 
 
-def test_migration_orm_metadata_parity(tmp_path):
-    """Applying project/0005_evidence_spans.sql then reflecting the DB schema matches the
-    SQLModel ORM metadata (table/column/index parity); create_all is never invoked."""
-    db = tmp_path / "parity.db"
-    conn = sqlite3.connect(str(db))
-    run_migrations(conn, "project")  # the migrate step authors schema (D6)
-    conn.close()
-
-    insp = inspect(create_engine(f"sqlite:///{db.as_posix()}"))
-    assert "document_sections" in insp.get_table_names()
-    assert "evidence_spans" in insp.get_table_names()
-    # 0005 ships span_fts ONLY (claim_fts / note_fts are owned by phase_4's 0007).
-    assert "span_fts" in insp.get_table_names()
-
-    _assert_table_parity(insp, "document_sections", DocumentSection)
-    _assert_table_parity(insp, "evidence_spans", EvidenceSpan)
-
-    # document_sections UNIQUE(markdown_id, ordinal).
-    uq = [set(u["column_names"]) for u in insp.get_unique_constraints("document_sections")]
-    assert {"markdown_id", "ordinal"} in uq
-
-    # FKs: both tables -> works(work_id) (the only real, intra-project FK).
-    for table in ("document_sections", "evidence_spans"):
-        fks = insp.get_foreign_keys(table)
-        assert all(fk["referred_table"] == "works" for fk in fks)
-        assert any(fk["constrained_columns"] == ["work_id"] for fk in fks)
-
-
 # --- content-addressed anchor (decision D1) ---------------------------------
 
 # --- cache_access -----------------------------------------------------------
-
-def test_cache_ro_attach_cannot_write():
-    """A read-only ATTACH of cache.db cannot write (write attempt raises)."""
-    cache_conn = cache_access.open_cache_ro(None)  # migrates then opens mode=ro
-    try:
-        with pytest.raises(sqlite3.OperationalError):
-            cache_conn.execute(
-                "INSERT INTO source_files (source_file_id, file_hash, access_class, created_at) "
-                "VALUES ('sf_x', 'x', 'open_access', '2020')"
-            )
-    finally:
-        cache_conn.close()
-
-
-def test_read_markdown_rehash_matches_and_none_on_missing():
-    """read_markdown returns bytes whose re-hash equals the stored markdown_hash (and the
-    markdown_id minus the 'md_' prefix); returns None on a missing markdown_id."""
-    h, wid, md = _make_doc("readmd")
-    cache_conn = cache_access.open_cache_ro(None)
-    try:
-        row = cache_access.read_markdown(cache_conn, None, md.markdown_id)
-        assert row is not None
-        assert sha256_hex(row.text.encode("utf-8")) == row.markdown_hash
-        assert row.markdown_hash == md.markdown_id[len("md_"):]
-        assert row.access_class == "open_access"
-        assert cache_access.read_markdown(cache_conn, None, "md_does_not_exist") is None
-    finally:
-        cache_conn.close()
 
 
 # --- fts/search -------------------------------------------------------------

@@ -22,9 +22,8 @@ dependencies = [
     # still imports without a live network; promoted from [dev] to a runtime dep
     # because the network phase needs it at runtime.
     "httpx",
-    # phase_2: the citation-graph view + node-link export runtime dep (settled per
-    # the plan §5/§6). Lazy-imported inside graph/* function bodies so the package
-    # still imports without it; the offline edge projector itself needs no network.
+    # Seeded Louvain literatures, the 2D graph layout and BFS (library/literatures.py,
+    # stage 4; docs/V3_CONCEPTS_DESIGN.md §10 keeps it).
     "networkx",
     # MCP server surface (`seedgraph mcp serve`). v3 always serves MCP, so this is a
     # core dependency (it was the `[mcp]` extra in v2). Base `mcp` SDK only — NOT
