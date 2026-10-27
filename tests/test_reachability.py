@@ -39,6 +39,7 @@ STAGE4 = "reserved for stage 4 (concepts/graphs/growth)"
 RESERVED = {
     "seedgraph.concepts.*": STAGE4 + ": concept model (C1); wired to the CLI, MCP and web by C4/C5/C7",
     "seedgraph.library.literatures": STAGE4 + ": literatures (C2); wired to the CLI, MCP and web by C7/C8/C9",
+    "seedgraph.library.growth": STAGE4 + ": guided corpus growth (C6); wired to the growth wizard by C8",
     "seedgraph.semantic.*": STAGE4 + ": concept guardrails, closure, stoplist, type fence (ADR-0013)",
     "seedgraph.graph.*": STAGE4 + ": citation graph and communities (keeps networkx)",
     "seedgraph.citation.*": STAGE4 + ": reference parsing and resolution, citation edges",
