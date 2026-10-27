@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Concepts</h1>
+{% set staleness = view.staleness %}
+{% include "concepts/_nav.html" %}
+
+<form class="sg-add-form" method="get" action="/concepts" role="search">
+  <label>Search concepts <input type="search" name="q" value="{{ view.q }}"></label>
+  <label>Family
+    <select name="family">
+      <option value="">any family</option>
+      {% for f in view.families %}<option value="{{ f }}"{% if f == view.family %} selected{% endif %}>{{ f }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Graph
+    <select name="graph">
+      <option value="">whole library</option>
+      {% for g in view.graphs %}<option value="{{ g.slug }}"{% if g.slug == view.graph %} selected{% endif %}>{{ g.display_name }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Search</button>
+</form>
+<p class="sg-hint">Mode: <strong class="sg-search-mode">{{ view.mode }} search</strong>{% if view.mode == "keyword" %} (embeddings were not adopted; words must match){% endif %}{% if view.fallback %}, meaning search unavailable: {{ view.fallback }}{% endif %}.
+  Only concepts with live support are shown.</p>
+{% if view.error %}<p class="sg-warn">{{ view.error }}</p>{% endif %}
+
+{% if view.q %}
+  {% if view.hits %}
+  <ul class="sg-hits">
+    {% for h in view.hits %}
+    <li>
+      <a href="{{ h.url }}"><strong>{{ h.hit.name or h.hit.key.label_key }}</strong></a>
+      <span class="sg-hint">{{ h.hit.key.family }} · {{ h.hit.handle }}</span>
+      {% if h.hit.gloss %}<div>sense: {{ h.hit.gloss }}</div>{% endif %}
+      <div class="sg-hint">{{ h.hit.paper_count }} paper{{ "" if h.hit.paper_count == 1 else "s" }}, {{ h.hit.claim_count }} supporting claim{{ "" if h.hit.claim_count == 1 else "s" }}</div>
+      {% if h.hit.best_claim_text %}
+      <div>Best example: {{ h.hit.best_claim_text }}{% if h.best_quote %} <q>{{ h.best_quote }}</q>{% endif %}
+        {% if h.best_url %}<a href="{{ h.best_url }}">{{ h.paper_title }}</a>{% endif %}</div>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No supported concept matches.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set staleness = view.staleness %}
+<h1>Concept queue</h1>
+{% include "concepts/_nav.html" %}
+<p class="sg-hint">Only the agent proposals that were genuinely unclear wait here, largest reach first. Everything else was applied and can be split in Recent merges.</p>
+{% if view.rows %}
+{% for r in view.rows %}
+{% set it = r.item %}
+<section class="sg-section" aria-label="queue item">
+  <h2>{{ it.proposal.replace("_", " ") }}{% if it.kind == "sense" %} for “{{ it.a.label_key }}”{% endif %}</h2>
+  <p class="sg-hint">Why it is here: {{ (it.reason or "unclear").replace("_", " ") }} · proposed by {{ r.maker }}{% if it.confidence %} ({{ it.confidence }} confidence){% endif %}{% if it.batch_id %} · batch <a href="/batches/{{ it.batch_id }}">{{ it.batch_id }}</a>{% endif %}</p>
+  {% if it.note %}<p>{{ it.note }} <span class="sg-hint">({{ r.maker }})</span></p>{% endif %}
+  {% if it.glosses %}<p>Proposed senses: {% for gl in it.glosses %}{{ gl }}{% if not loop.last %}; {% endif %}{% endfor %} <span class="sg-hint">(agent inferred)</span></p>{% endif %}
+  <div class="sg-columns">
+    <div>{% set side = r.a %}{% include "concepts/_side.html" %}</div>
+    {% if r.b %}<div>{% set side = r.b %}{% include "concepts/_side.html" %}</div>{% endif %}
+  </div>
+  {% for action in it.actions %}
+  <form class="sg-inline-form" method="post" action="/concepts/queue/settle">
+    {{ csrf_input }}
+    <input type="hidden" name="item" value="{{ it.item_id }}">
+    <input type="hidden" name="action" value="{{ action }}">
+    {% if action == "link" %}<label>Your note <input type="text" name="note" maxlength="200" required></label>{% endif %}
+    <button type="submit">{{ {"accept": "Accept", "reject": "Reject", "merge": "Merge", "link": "Link instead" if it.proposal == "merge" else "Link", "unrelated": "Unrelated"}[action] }}</button>
+  </form>
+  {% endfor %}
+</section>
+{% endfor %}
+{% else %}
+<p>The queue is empty.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set staleness = view.staleness %}
+<h1>Concept lists</h1>
+{% include "concepts/_nav.html" %}
+
+<section class="sg-section" aria-labelledby="sg-l-amb">
+  <h2 id="sg-l-amb">Ambiguous labels (library-wide)</h2>
+  <p class="sg-hint">An ambiguous label is never rule-merged, and agents must compare claims before merging or linking it. A <em>head</em> pattern also matches the word plus generic words ("exogeneity assumption").</p>
+  <table class="sg-table sg-compact">
+    <thead><tr><th>Pattern</th><th>Match</th><th>Note</th><th>Origin</th><th></th></tr></thead>
+    <tbody>
+      {% for r in view.library_ambiguous %}
+      <tr><td>{{ r.pattern }}</td><td>{{ r.match }}</td><td>{{ r.note or "" }}</td><td>{{ r.origin }}</td>
+        <td>
+          <form class="sg-inline-form" method="post" action="/concepts/lists/ambiguous">
+            {{ csrf_input }}
+            <input type="hidden" name="action" value="remove">
+            <input type="hidden" name="pattern" value="{{ r.pattern }}">
+            <button type="submit">Remove</button>
+          </form>
+        </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form class="sg-add-form" method="post" action="/concepts/lists/ambiguous">
+    {{ csrf_input }}
+    <input type="hidden" name="action" value="add">
+    <label>Pattern <input type="text" name="pattern" required></label>
+    <label>Match <select name="match"><option value="label">exact label</option><option value="head">head word</option></select></label>
+    <label>Note <input type="text" name="note"></label>
+    <button type="submit">Add (library-wide)</button>
+  </form>
+</section>
+
+<section class="sg-section" aria-labelledby="sg-l-graph">
+  <h2 id="sg-l-graph">Ambiguous labels per graph</h2>
+  <p class="sg-hint">Within one graph you can add a label, or mark a library-ambiguous label as single-sense there.</p>
+  {% for g in view.graphs %}
+  <h3>{{ g.display_name }} <span class="sg-hint">{{ g.slug }}</span></h3>
+  {% set rows = view.graph_ambiguous.get(g.slug, ()) %}
+  {% if rows %}
+  <ul>
+    {% for r in rows %}
+    <li>{{ r.pattern }}: {{ "single-sense here" if r.effect == "single_sense" else "ambiguous here" }}{% if r.note %} ({{ r.note }}){% endif %}
+      <form class="sg-inline-form" method="post" action="/concepts/lists/ambiguous">
+        {{ csrf_input }}
+        <input type="hidden" name="action" value="remove">
+        <input type="hidden" name="pattern" value="{{ r.pattern }}">
+        <input type="hidden" name="graph" value="{{ g.slug }}">
+        <button type="submit">Remove</button>
+      </form></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <form class="sg-add-form" method="post" action="/concepts/lists/ambiguous">
+    {{ csrf_input }}
+    <input type="hidden" name="graph" value="{{ g.slug }}">
+    <label>Pattern <input type="text" name="pattern" required></label>
+    <label>Match <select name="match"><option value="label">exact label</option><option value="head">head word</option></select></label>
+    <button type="submit" name="action" value="add">Ambiguous in this graph</button>
+    <button type="submit" name="action" value="single_sense">Single-sense in this graph</button>
+  </form>
+  {% else %}
+  <p class="sg-hint">No context graphs yet.</p>
+  {% endfor %}
+</section>
+
+<section class="sg-section" aria-labelledby="sg-l-nm">
+  <h2 id="sg-l-nm">Never merge</h2>
+  <p class="sg-hint">Pairs that may be linked but never merged (checked through every member of a concept). Library-wide; optionally one family.</p>
+  <table class="sg-table sg-compact">
+    <thead><tr><th>Label</th><th>Label</th><th>Family</th><th>Note</th><th>Origin</th><th></th></tr></thead>
+    <tbody>
+      {% for r in view.never_merge %}
+      <tr><td>{{ r.label_a }}</td><td>{{ r.label_b }}</td><td>{{ r.family or "every family" }}</td><td>{{ r.note or "" }}</td><td>{{ r.origin }}</td>
+        <td>
+          <form class="sg-inline-form" method="post" action="/concepts/lists/never-merge/remove">
+            {{ csrf_input }}
+            <input type="hidden" name="decision" value="{{ r.decision_id }}">
+            <button type="submit">Remove</button>
+          </form>
+        </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form class="sg-add-form" method="post" action="/concepts/lists/never-merge">
+    {{ csrf_input }}
+    <label>Label <input type="text" name="label_a" required></label>
+    <label>Label <input type="text" name="label_b" required></label>
+    <label>Family <select name="family"><option value="">every family</option>{% for f in view.families %}<option value="{{ f }}">{{ f }}</option>{% endfor %}</select></label>
+    <label>Note <input type="text" name="note"></label>
+    <button type="submit">Add</button>
+  </form>
+</section>
+{% endblock %}

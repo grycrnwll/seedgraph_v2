@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set staleness = view.staleness %}
+<h1>“{{ view.label_key }}” has {{ view.senses | length }} senses</h1>
+{% include "concepts/_nav.html" %}
+<p>This label is used in more than one sense ({{ view.family }}). Choose one:</p>
+<ul>
+  {% for s in view.senses %}
+  <li><a href="{{ s.url }}">{{ s.sense_id }}</a>: {{ s.gloss or "no gloss" }}</li>
+  {% endfor %}
+</ul>
+{% endblock %}

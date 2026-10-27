@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+<h1>Concept review samples</h1>
+{% include "concepts/_nav.html" %}
+<p class="sg-hint">The acceptance check: a seeded, stratified sample of applied agent merges and links (rule and migrated decisions excluded; ambiguous labels over-sampled). Once drawn, a sample is frozen.
+  {{ view.population }} applied agent merge{{ "" if view.population == 1 else "s" }} and links to draw from.</p>
+<form class="sg-add-form" method="post" action="/concepts/review">
+  {{ csrf_input }}
+  <label>Size <input type="number" name="size" min="1" value="{{ view.default_size }}"></label>
+  <label>Seed <input type="number" name="seed" min="0" value="0"></label>
+  <button type="submit">Draw a sample</button>
+</form>
+{% if view.samples %}
+<table class="sg-table">
+  <thead><tr><th>Sample</th><th>Seed</th><th>Drawn</th><th>Marked</th><th>Wrong merges</th></tr></thead>
+  <tbody>
+    {% for s, summ in view.samples %}
+    <tr><td><a href="/concepts/review/{{ s.sample_id }}">{{ s.sample_id }}</a></td><td>{{ s.seed }}</td><td>{{ s.created_at[:16] }}</td>
+      <td>{{ summ.marked }} of {{ summ.size }}</td><td>{{ summ.wrong_merges | length }} of {{ summ.merges_sampled }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No sample drawn yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,15 @@
+<nav class="sg-tabs" aria-label="Concepts">
+  {% for href, text in [("/concepts", "Search"), ("/concepts/recent", "Recent merges"), ("/concepts/queue", "Queue"), ("/concepts/review", "Review sample"), ("/concepts/lists", "Ambiguous and never-merge lists"), ("/concepts/batches", "Concept batches")] %}
+  <a href="{{ href }}"{% if here == href %} aria-current="page"{% endif %}>{{ text }}</a>
+  {% endfor %}
+</nav>
+{% if staleness is defined and staleness and staleness.stale %}
+<div class="sg-section sg-warn" role="status">
+  {% if staleness.papers %}Concepts out of date ({{ staleness.papers }} paper{{ "" if staleness.papers == 1 else "s" }} changed).{% else %}Concepts have not been built yet.{% endif %}
+  <form class="sg-inline-form" method="post" action="/concepts/refresh">
+    {{ csrf_input }}
+    <input type="hidden" name="next" value="{{ here }}">
+    <button type="submit">Refresh concepts</button>
+  </form>
+</div>
+{% endif %}

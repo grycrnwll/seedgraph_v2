@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set staleness = view.staleness %}
+<h1>Recent merges</h1>
+{% include "concepts/_nav.html" %}
+<p class="sg-hint">Merges, closely related links and splits, newest first. Splitting a merge or removing a link records "never connect", so agents will not propose the pair again; Undo reverses it.</p>
+<form class="sg-add-form" method="get" action="/concepts/recent">
+  <label>Batch
+    <select name="batch">
+      <option value="">every batch</option>
+      {% for b in view.batches %}<option value="{{ b }}"{% if b == view.batch %} selected{% endif %}>{{ b }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+{% if view.rows %}
+<table class="sg-table">
+  <thead><tr><th>What</th><th>Note</th><th>Who</th><th>Batch</th><th>When</th><th>Actions</th></tr></thead>
+  <tbody>
+    {% for r in view.rows %}
+    <tr>
+      <td>{{ r.kind.replace("_", " ") }}:
+        {% if r.a_url %}<a href="{{ r.a_url }}">{{ r.a.label_key }}</a>{% endif %}{% if r.b_url %} / <a href="{{ r.b_url }}">{{ r.b.label_key }}</a>{% endif %}
+        {% if not r.a_url %}{{ r.text }}{% endif %}</td>
+      <td>{{ r.note or "" }}</td>
+      <td>{{ r.maker }}</td>
+      <td>{% if r.batch_id %}<a href="/batches/{{ r.batch_id }}">{{ r.batch_id }}</a>{% endif %}</td>
+      <td>{{ r.decided_at[:16] }}</td>
+      <td>
+        {% if r.can_split %}
+        <form class="sg-inline-form" method="post" action="/concepts/decisions/split">
+          {{ csrf_input }}
+          <input type="hidden" name="decision" value="{{ r.decision_id }}">
+          <button type="submit">{{ "Split" if r.kind == "merge" else "Remove" }}</button>
+        </form>
+        {% endif %}
+        {% if r.can_undo and r.kind == "label_split" %}
+        <form class="sg-inline-form" method="post" action="{{ r.a_url }}/undo-split">
+          {{ csrf_input }}
+          <input type="hidden" name="next" value="/concepts/recent">
+          <button type="submit">Undo split</button>
+        </form>
+        {% elif r.can_undo %}
+        <form class="sg-inline-form" method="post" action="/concepts/decisions/undo">
+          {{ csrf_input }}
+          <input type="hidden" name="decision" value="{{ r.decision_id }}">
+          <button type="submit">Undo</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No merges or links yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set v = view %}
+<h1>Concept batches</h1>
+{% include "concepts/_nav.html" %}
+<p class="sg-hint"><strong>Tidy labels</strong> (merge) judges spelling and wording variants; <strong>Find bridges</strong> (bridge) judges meaning-level pairs and sense checks. Candidates come from {{ v.search_mode }} search. The estimate below writes nothing.</p>
+
+<form class="sg-add-form" method="get" action="/concepts/batches">
+  <label>Task
+    <select name="task">
+      <option value="bridge"{% if v.task == "bridge" %} selected{% endif %}>Find bridges (bridge)</option>
+      <option value="merge"{% if v.task == "merge" %} selected{% endif %}>Tidy labels (merge)</option>
+    </select>
+  </label>
+  <fieldset><legend>Families</legend>
+    {% for f in v.all_families %}<label><input type="checkbox" name="family" value="{{ f }}"{% if f in v.families %} checked{% endif %}> {{ f }}</label> {% endfor %}
+  </fieldset>
+  <label>K (neighbours per sense, bridge) <input type="number" name="k" min="1" value="{{ v.k or 5 }}"></label>
+  <label>Token budget <input type="number" name="budget_tokens" min="1" value="{{ v.budget_tokens or '' }}"></label>
+  <label>Graph
+    <select name="graph">
+      <option value="">whole library</option>
+      {% for g in v.graphs %}<option value="{{ g.slug }}"{% if g.slug == v.graph %} selected{% endif %}>{{ g.display_name }}</option>{% endfor %}
+    </select>
+  </label>
+  <button type="submit">Estimate</button>
+</form>
+
+{% if v.error %}
+<p class="sg-warn">No estimate: {{ v.error }}</p>
+{% elif v.estimate %}
+{% set e = v.estimate %}
+<section class="sg-section" aria-labelledby="sg-b-est">
+  <h2 id="sg-b-est">Dry-run estimate</h2>
+  <dl class="sg-facts">
+    <dt>Task</dt><dd>{{ e.task }} · families {{ e.families | join(", ") }}</dd>
+    <dt>Items</dt><dd>{{ e.pairs }} pairs, {{ e.sense_checks }} sense checks, {{ e.groups }} label groups</dd>
+    <dt>Packages</dt><dd>{{ e.packages }}</dd>
+    <dt>Package text</dt><dd>{{ e.text_tokens }} tokens</dd>
+    <dt>Agent tokens</dt><dd>{{ e.agent_tokens_low }} to {{ e.agent_tokens_high }} (estimate)</dd>
+    {% if e.budget_tokens %}<dt>Budget</dt><dd>{% if e.cut_at %}the first {{ e.items_packaged }} of {{ e.items_total }} items by priority fit{% else %}all {{ e.items_total }} items fit{% endif %}</dd>{% endif %}
+    {% if e.distance_share %}<dt>Citation distance</dt><dd>{% for d, share in e.distance_share.items() %}{{ d }}: {{ (share * 100) | round(0) }}%{% if not loop.last %}, {% endif %}{% endfor %}</dd>{% endif %}
+  </dl>
+</section>
+{% endif %}
+
+<section class="sg-section sg-commands" aria-labelledby="sg-b-cmd">
+  <h2 id="sg-b-cmd">Command</h2>
+  <p class="sg-hint">Create the same batch from a terminal:</p>
+  <pre>{{ v.command }}</pre>
+  <form method="post" action="/concepts/batches">
+    {{ csrf_input }}
+    <input type="hidden" name="task" value="{{ v.task }}">
+    {% for f in v.families %}<input type="hidden" name="family" value="{{ f }}">{% endfor %}
+    {% if v.k %}<input type="hidden" name="k" value="{{ v.k }}">{% endif %}
+    {% if v.budget_tokens %}<input type="hidden" name="budget_tokens" value="{{ v.budget_tokens }}">{% endif %}
+    {% if v.graph %}<input type="hidden" name="graph" value="{{ v.graph }}">{% endif %}
+    <button type="submit"{% if v.error or not v.estimate or not v.estimate.packages %} disabled{% endif %}>Create this batch</button>
+  </form>
+</section>
+{% endblock %}

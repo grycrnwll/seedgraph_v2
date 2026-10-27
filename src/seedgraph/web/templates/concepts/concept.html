@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% macro quote_block(q) %}{% if q %}<blockquote><q>{{ q.text or "(quote text not found)" }}</q> <a href="{{ q.url }}">{{ q.paper_title }}{% if q.year %} ({{ q.year }}){% endif %}</a></blockquote>{% else %}<span class="sg-hint">no quote recorded</span>{% endif %}{% endmacro %}
+{% macro decision_buttons(c) %}
+  {% if c.can_split %}
+  <form class="sg-inline-form" method="post" action="/concepts/decisions/split">
+    {{ csrf_input }}
+    <input type="hidden" name="decision" value="{{ c.decision_id }}">
+    <input type="hidden" name="next" value="{{ here }}">
+    <button type="submit">{{ "Split" if c.kind == "merge" else "Remove link" }}</button>
+  </form>
+  {% endif %}
+  {% if c.can_undo %}
+  <form class="sg-inline-form" method="post" action="/concepts/decisions/undo">
+    {{ csrf_input }}
+    <input type="hidden" name="decision" value="{{ c.decision_id }}">
+    <input type="hidden" name="next" value="{{ here }}">
+    <button type="submit">Undo</button>
+  </form>
+  {% endif %}
+{% endmacro %}
+{% block content %}
+{% set v = view %}
+{% set staleness = v.staleness %}
+<h1>{{ v.name }}</h1>
+{% include "concepts/_nav.html" %}
+
+<dl class="sg-facts">
+  <dt>Family</dt><dd>{{ v.family }}</dd>
+  <dt>Handle</dt><dd><code>{{ v.handle }}</code></dd>
+  {% if v.gloss %}<dt>Sense</dt><dd>{{ v.gloss }} <span class="sg-hint">({{ "agent inferred" if v.gloss_by == "agent" else (v.gloss_by or "researcher") }})</span></dd>{% endif %}
+  <dt>Support</dt><dd>{{ v.paper_count }} paper{{ "" if v.paper_count == 1 else "s" }}, {{ v.claim_count }} claim{{ "" if v.claim_count == 1 else "s" }}, {{ v.quote_count }} anchored quote{{ "" if v.quote_count == 1 else "s" }}</dd>
+  {% if v.agent_text %}<dt>Agent text</dt><dd class="sg-hint">Text marked "agent inferred" was written by an agent from these {{ v.paper_count }} papers, {{ v.claim_count }} claims and {{ v.quote_count }} quotes.</dd>{% endif %}
+  {% if v.needs_sense_check %}<dt>Sense check</dt><dd class="sg-warn">same words, sense not checked (an ambiguous label): it counts for nothing across literatures until checked or split.</dd>{% elif v.ambiguous %}<dt>Sense check</dt><dd>ambiguous label, sense checked</dd>{% endif %}
+</dl>
+
+{% if v.senses | length > 1 or v.label_split %}
+<section class="sg-section" aria-labelledby="sg-c-senses">
+  <h2 id="sg-c-senses">Senses of “{{ v.key.label_key }}”</h2>
+  <ul>
+    {% for s in v.senses %}
+    <li>{% if s.current %}<strong>{{ s.sense_id }}</strong>{% else %}<a href="{{ s.url }}">{{ s.sense_id }}</a>{% endif %}: {{ s.gloss or "no gloss" }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="sg-section" aria-labelledby="sg-c-members">
+  <h2 id="sg-c-members">Members</h2>
+  <table class="sg-table sg-compact">
+    <thead><tr><th>Label</th><th>Sense</th><th>Claims</th><th>How it joined</th></tr></thead>
+    <tbody>
+      {% for m in v.members %}
+      <tr><td><a href="{{ m.url }}">{{ m.key.label_key }}</a></td>
+        <td>{{ m.key.sense_id }}{% if m.gloss %}: {{ m.gloss }} <span class="sg-hint">({{ "agent inferred" if m.gloss_by == "agent" else m.gloss_by }})</span>{% endif %}</td>
+        <td>{{ m.claims }}</td><td>{{ m.origin }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="sg-section" aria-labelledby="sg-c-claims">
+  <h2 id="sg-c-claims">Supporting claims ({{ v.claims_total }})</h2>
+  {% for p in v.papers %}
+  <h3><a href="/papers/{{ p.paper_id }}">{{ p.title }}</a>{% if p.year %} ({{ p.year }}){% endif %}</h3>
+  <ul>
+    {% for c in p.claims %}
+    <li><a href="{{ c.url }}">{{ c.text }}</a> <span class="sg-hint">{{ c.claim_type }} · {{ c.trust_label }}</span>
+      {% if c.quote %}<blockquote><q>{{ c.quote }}</q></blockquote>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+  <div class="sg-pager">
+    {% if v.prev_offset is not none %}<a href="{{ here }}?{% if v.key.sense_id != 's0' %}sense={{ v.key.sense_id }}&amp;{% endif %}offset={{ v.prev_offset }}">previous</a>{% endif %}
+    {% if v.next_offset is not none %}<a href="{{ here }}?{% if v.key.sense_id != 's0' %}sense={{ v.key.sense_id }}&amp;{% endif %}offset={{ v.next_offset }}">next</a>{% endif %}
+  </div>
+  {% if v.unsorted %}
+  <h3>Unsorted (needs a sense)</h3>
+  <ul>{% for c in v.unsorted %}<li><a href="{{ c.url }}">{{ c.text }}</a> <span class="sg-hint">{{ c.paper_title }}</span></li>{% endfor %}</ul>
+  {% endif %}
+</section>
+
+<section class="sg-section" aria-labelledby="sg-c-conn">
+  <h2 id="sg-c-conn">Merges and links</h2>
+  {% if not v.merges and not v.links %}<p class="sg-hint">No merges or closely related links.</p>{% endif %}
+  {% for c in v.merges %}
+  <div class="sg-section">
+    <strong>merge</strong> {{ c.other_label }} <span class="sg-hint">({{ c.maker }})</span>
+    {% if c.note %}<div>{{ c.note }}</div>{% endif %}
+    {% if c.quote_a or c.quote_b %}<div>{{ quote_block(c.quote_a) }}{{ quote_block(c.quote_b) }}</div>{% endif %}
+    {{ decision_buttons(c) }}
+  </div>
+  {% endfor %}
+  {% for c in v.links %}
+  <div class="sg-section">
+    <strong>closely related</strong>: {% if c.other %}<a href="{{ c.other.url }}">{{ c.other.name }}</a>{% if c.other.gloss %} <span class="sg-hint">({{ c.other.gloss }})</span>{% endif %}{% else %}{{ c.other_label }}{% endif %}
+    <span class="sg-hint">({{ c.maker }})</span>
+    <div>{{ c.note or "no note" }}</div>
+    <div>{{ quote_block(c.quote_a) }}{{ quote_block(c.quote_b) }}</div>
+    {{ decision_buttons(c) }}
+  </div>
+  {% endfor %}
+</section>
+
+<section class="sg-section" aria-labelledby="sg-c-often">
+  <h2 id="sg-c-often">Often appears with</h2>
+  <p class="sg-hint">Concepts supported in the same papers, ranked by lift (computed now, not stored).</p>
+  {% if v.often_with %}
+  <table class="sg-table sg-compact">
+    <thead><tr><th>Concept</th><th>Family</th><th>Shared papers</th><th>Lift</th></tr></thead>
+    <tbody>{% for o in v.often_with %}<tr><td><a href="{{ o.concept.url }}">{{ o.concept.name }}</a>{% if o.concept.gloss %} <span class="sg-hint">({{ o.concept.gloss }})</span>{% endif %}</td><td>{{ o.concept.family }}</td><td>{{ o.shared_papers }}</td><td>{{ o.lift }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p>None yet.</p>{% endif %}
+</section>
+
+<section class="sg-section" aria-labelledby="sg-c-lits">
+  <h2 id="sg-c-lits">Literatures in each graph</h2>
+  {% if v.literatures %}
+  <ul>
+    {% for gl in v.literatures %}
+    <li><a href="/graphs/{{ gl.slug }}">{{ gl.display_name }}</a>:
+      {% for name, source, n in gl.literatures %}{{ name }}{% if source == "agent" %} <span class="sg-hint">(agent inferred)</span>{% endif %} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}
+      {% if gl.outside %}<span class="sg-hint">{{ gl.outside }} paper{{ "" if gl.outside == 1 else "s" }} unplaced</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="sg-hint">The supporting papers are in no context graph.</p>{% endif %}
+</section>
+
+<section class="sg-section" aria-labelledby="sg-c-actions">
+  <h2 id="sg-c-actions">Your decisions</h2>
+  <p class="sg-hint">Your decisions always override agent ones. Name the other concept by its handle, e.g. <code>{{ v.family }}/some label</code> (add <code>~s2</code> for a sense).</p>
+  <form class="sg-add-form" method="post" action="{{ here }}/merge">
+    {{ csrf_input }}
+    <input type="hidden" name="sense" value="{{ v.key.sense_id }}">
+    <label>Merge with <input type="text" name="other" required></label>
+    <label>Name (optional, one of the labels) <input type="text" name="name"></label>
+    <button type="submit">Merge</button>
+  </form>
+  <form class="sg-add-form" method="post" action="{{ here }}/link">
+    {{ csrf_input }}
+    <input type="hidden" name="sense" value="{{ v.key.sense_id }}">
+    <label>Link to <input type="text" name="other" required></label>
+    <label>Your note: the difference, or the history <input type="text" name="note" maxlength="200" required></label>
+    <button type="submit">Link</button>
+  </form>
+  <form class="sg-add-form" method="post" action="{{ here }}/never-connect">
+    {{ csrf_input }}
+    <input type="hidden" name="sense" value="{{ v.key.sense_id }}">
+    <label>Never connect with <input type="text" name="other" required></label>
+    <button type="submit">Never connect</button>
+  </form>
+
+  {% if v.label_split %}
+  <form class="sg-add-form" method="post" action="{{ here }}/undo-split">
+    {{ csrf_input }}
+    <button type="submit">Undo the split of “{{ v.key.label_key }}” (back to one sense)</button>
+  </form>
+  {% elif v.label_claims | length > 1 %}
+  <details>
+    <summary>Split “{{ v.key.label_key }}” into senses</summary>
+    <form method="post" action="{{ here }}/split-senses">
+      {{ csrf_input }}
+      <p class="sg-hint">Give each sense a one-line gloss and assign each claim to one sense (unassigned claims show as "needs a sense").</p>
+      {% for i in range(1, 5) %}
+      <label>Sense {{ i }} gloss <input type="text" name="gloss_{{ i }}" maxlength="120"></label>
+      {% endfor %}
+      <table class="sg-table sg-compact">
+        <thead><tr><th>Claim</th><th>Sense</th></tr></thead>
+        <tbody>
+          {% for c in v.label_claims %}
+          <tr><td>{{ c.text }} <span class="sg-hint">{{ c.paper_title }}</span></td>
+            <td>
+              <select name="claim_{{ c.claim_id }}" aria-label="sense for this claim">
+                <option value="">unsorted</option>
+                {% for i in range(1, 5) %}<option value="{{ i }}">{{ i }}</option>{% endfor %}
+              </select>
+            </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit">Split into senses</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+{% endblock %}

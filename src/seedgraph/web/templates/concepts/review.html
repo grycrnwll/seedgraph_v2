@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% macro quote_block(q) %}{% if q %}<blockquote><q>{{ q.text or "(quote text not found)" }}</q> <a href="{{ q.url }}">{{ q.paper_title }}</a></blockquote>{% endif %}{% endmacro %}
+{% block content %}
+{% set s = view.summary %}
+<h1>Concept review {{ view.sample.sample_id }}</h1>
+{% include "concepts/_nav.html" %}
+
+<section class="sg-section" aria-labelledby="sg-r-summary">
+  <h2 id="sg-r-summary">Summary</h2>
+  <dl class="sg-facts">
+    <dt>Marked</dt><dd>{{ s.marked }} of {{ s.size }} (seed {{ view.sample.seed }})</dd>
+    <dt>By mark</dt><dd>{% for k, n in s.by_mark.items() %}{{ k.replace("_", " ") }}: {{ n }}{% if not loop.last %}, {% endif %}{% else %}none yet{% endfor %}</dd>
+    {% for verdict, counts in s.by_verdict.items() %}
+    <dt>{{ verdict }}s</dt><dd>{% for k, n in counts.items() %}{{ k.replace("_", " ") }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+    {% endfor %}
+    {% for fam, counts in s.by_family.items() %}
+    <dt>{{ fam }}</dt><dd>{% for k, n in counts.items() %}{{ k.replace("_", " ") }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</dd>
+    {% endfor %}
+    <dt>Wrong merges</dt><dd>{{ s.wrong_merges | length }} of {{ s.merges_sampled }} sampled merges (gate: at most {{ s.gate_limit | round(1) }})
+      {% if s.gate_passed is true %}<strong>gate passed</strong>{% elif s.gate_passed is false %}<strong class="sg-warn">gate missed</strong>{% else %}(finish marking for the gate){% endif %}</dd>
+  </dl>
+</section>
+
+{% for it in view.items %}
+<section class="sg-section" id="item-{{ it.decision_id }}" aria-label="review item">
+  <h2>{{ it.kind }}: {{ it.label_a }} {{ "+" if it.kind == "merge" else "~" }} {{ it.label_b }} <span class="sg-hint">{{ it.family or "any family" }}{% if it.state != "applied" %} · now {{ it.state }}{% endif %}</span></h2>
+  {% if it.note %}<p>{{ it.note }} <span class="sg-hint">(agent inferred)</span></p>{% endif %}
+  {% if it.quote_a or it.quote_b %}<div>{{ quote_block(it.quote_a) }}{{ quote_block(it.quote_b) }}</div>{% endif %}
+  <div class="sg-columns">
+    {% if it.a %}<div>{% set side = it.a %}{% include "concepts/_side.html" %}</div>{% endif %}
+    {% if it.b %}<div>{% set side = it.b %}{% include "concepts/_side.html" %}</div>{% endif %}
+  </div>
+  <p>{% if it.mark %}Marked <strong>{{ it.mark.replace("_", " ") }}</strong>{% if it.mark_note %}: {{ it.mark_note }}{% endif %}{% else %}Not marked yet.{% endif %}</p>
+  <form class="sg-add-form" method="post" action="/concepts/review/{{ view.sample.sample_id }}/mark">
+    {{ csrf_input }}
+    <input type="hidden" name="decision" value="{{ it.decision_id }}">
+    <label>Note <input type="text" name="note" maxlength="200"></label>
+    {% for m in it.marks %}
+    <button type="submit" name="mark" value="{{ m }}">{{ {"right": "Right", "wrong": "Wrong", "should_be_link": "Should have been a link", "should_be_split": "Should have been a split", "should_be_merge": "Should have been a merge"}[m] }}</button>
+    {% endfor %}
+  </form>
+</section>
+{% endfor %}
+{% endblock %}

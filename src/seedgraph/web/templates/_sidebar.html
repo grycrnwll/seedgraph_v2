@@ -11,5 +11,7 @@
       {% endif %}
     </li>
     {% endfor %}
+    {# Stage 4 concept pages; a NAV entry in web/app.py would place it after Context graphs. #}
+    <li><a class="sg-nav-link{% if nav_active == 'concepts' %} sg-nav-active{% endif %}" href="/concepts"{% if nav_active == 'concepts' %} aria-current="page"{% endif %}>Concepts</a></li>
   </ul>
 </nav>

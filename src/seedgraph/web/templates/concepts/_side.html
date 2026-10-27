@@ -1,0 +1,11 @@
+<div class="sg-section">
+  <strong><a href="{{ side.url }}">{{ side.name or side.key.label_key }}</a></strong>
+  <span class="sg-hint">{{ side.key.family }}/{{ side.key.label_key }}{% if side.key.sense_id != "s0" %}~{{ side.key.sense_id }}{% endif %} · {{ side.papers }} paper{{ "" if side.papers == 1 else "s" }}</span>
+  <ul>
+    {% for c in side.examples %}
+    <li>{{ c.text }}{% if c.quote %} <q>{{ c.quote }}</q>{% endif %} <a href="{{ c.url }}">{{ c.paper_title }}{% if c.year %} ({{ c.year }}){% endif %}</a></li>
+    {% else %}
+    <li class="sg-hint">no supporting claims now</li>
+    {% endfor %}
+  </ul>
+</div>
