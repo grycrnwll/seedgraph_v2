@@ -24,3 +24,4 @@ docs/*
 !docs/V3_LIBRARY_DESIGN.md
 !docs/V3_AGENT_PROTOCOL_DESIGN.md
 !docs/V3_UI_DESIGN.md
+!docs/V3_CONCEPTS_DESIGN.md
