@@ -54,7 +54,7 @@ def test_the_top_level_commands_are_exactly_the_v3_core():
 def test_the_library_maintenance_group_has_its_commands():
     library = _root().commands["library"]
     for name in ("status", "search", "show", "check", "attention", "remove", "delete", "textcheck",
-                 "reconvert", "pagecheck", "refetch-metadata", "prune-replaced", "graphs"):
+                 "reconvert", "pagecheck", "refetch-metadata", "prune-replaced", "graphs", "merge", "reassign-pdf"):
         assert name in library.commands, name
     assert "agents" in _root().commands["setup"].commands
     assert "serve" in _root().commands["mcp"].commands

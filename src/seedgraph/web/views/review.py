@@ -53,7 +53,8 @@ QUEUES: tuple[Queue, ...] = (
           "PDF, open the paper."),
     Queue("pdf", "PDF may not be this paper", ("pdf_title_miss", "shared_pdf"),
           (Action("confirmed", "It is this paper"),),
-          "To detach the PDF or attach the right one, open the paper."),
+          "Wrong PDF moves it, with the notes made on it, to the paper it belongs to (or to a new paper); "
+          "the paper left without it needs its own PDF."),
     Queue("identity", "Identity", ("identity_check", "identity_collision"),
           (Action("different", "Different papers"),),
           "Same paper opens a merge preview: which paper survives, what moves, and anything that blocks it. "
@@ -99,6 +100,7 @@ class ItemRow:
     origin: str
     candidates: tuple[PaperRef, ...]
     queue: Queue
+    wrong_pdf: tuple[tuple[PaperRef, str], ...] = ()  # (paper, source file) "This isn't the paper's PDF" links
 
     @property
     def actions(self) -> tuple[Action, ...]:
@@ -177,6 +179,8 @@ def _rows(lib: Library, raw: list) -> list[ItemRow]:
     ids = {r[2] for r in raw if r[2]}
     for r in raw:
         ids |= set(_candidates(r[3], r[4]))
+    sides = {r[0]: _pdf_sides(lib, r[1], r[2], r[3]) for r in raw if r[6] == "open"}
+    ids |= {pid for pairs in sides.values() for pid, _ in pairs}
     papers = _papers(lib, ids)
     out = []
     for item_id, kind, pid, subject_json, detail, hides, status, resolution, created_at, origin in raw:
@@ -186,8 +190,37 @@ def _rows(lib: Library, raw: list) -> list[ItemRow]:
             subject_json=subject_json, hides_notes=bool(hides), created_at=created_at, origin=origin,
             candidates=tuple(papers.get(c) or PaperRef(c, None, False)
                              for c in _candidates(subject_json, detail)),
-            queue=queue_for(kind)))
+            queue=queue_for(kind),
+            wrong_pdf=tuple((papers.get(p) or PaperRef(p, None, True), sf) for p, sf in sides.get(item_id, ()))))
     return out
+
+
+#: Attention kinds whose rows offer "This isn't the paper's PDF" (library.reassign).
+WRONG_PDF_KINDS: tuple[str, ...] = ("pdf_title_miss", "shared_pdf")
+
+
+def _pdf_sides(lib: Library, kind: str, paper_id: str | None, subject_json: str) -> tuple[tuple[str, str], ...]:
+    """``(paper, source file)`` pairs a wrong-PDF item can move: the item's paper and its PDF
+    (``pdf_title_miss``), or every paper holding the shared PDF (``shared_pdf``, no paper)."""
+    if kind not in WRONG_PDF_KINDS:
+        return ()
+    try:
+        subject = json.loads(subject_json)
+    except ValueError:
+        subject = {}
+    sf = subject.get("source_file_id") if isinstance(subject, dict) else None
+    if kind == "shared_pdf":
+        if not sf:
+            return ()
+        return tuple((r[0], sf) for r in lib.conn.execute(
+            "SELECT paper_id FROM paper_files WHERE source_file_id = ? ORDER BY paper_id", (sf,)))
+    if paper_id is None:
+        return ()
+    held = [r[0] for r in lib.conn.execute(
+        "SELECT source_file_id FROM paper_files WHERE paper_id = ? ORDER BY source_file_id", (paper_id,))]
+    if sf in held:
+        return ((paper_id, sf),)
+    return ((paper_id, held[0]),) if held and not sf else ()
 
 
 _COLS = ("item_id, kind, paper_id, subject_json, detail, hides_notes, status, resolution, created_at, origin")

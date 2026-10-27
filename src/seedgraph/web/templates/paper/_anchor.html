@@ -6,7 +6,7 @@
   <p class="sg-muted">The quote stored is this exact passage of the paper's text:</p>
   <blockquote class="sg-quote sg-anchor-quote" data-anchor-quote>{{ result.quote }}</blockquote>
   <form method="post" action="/papers/{{ paper_id }}/notes/add" hx-post="/papers/{{ paper_id }}/notes/add"
-        hx-target="#sg-notes" hx-swap="outerHTML" hx-include="#sg-notes-version" class="sg-form" data-anchor-form>
+        hx-target="#sg-notes" hx-swap="outerHTML" hx-include="#sg-notes-version" class="sg-form sg-claim-form" data-anchor-form>
     {{ csrf_input }}
     <input type="hidden" name="kind" value="quote">
     <input type="hidden" name="markdown_id" value="{{ result.markdown_id }}">
@@ -18,7 +18,7 @@
       </select>
     </label>
     <label>Label <input type="text" name="normalized_label" required></label>
-    <label>Claim text (yours) <textarea name="claim_text" rows="3" required></textarea></label>
+    <label>Claim text (yours) <textarea name="claim_text" rows="3" required data-autogrow></textarea></label>
     <button type="submit">Add claim</button>
     <button type="button" data-anchor-cancel>Cancel</button>
   </form>

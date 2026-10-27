@@ -37,6 +37,7 @@
   text-decoration: none;
 }
 .sg-estimate { font-size: 0.85em; }
+.sg-button-warn { border-color: var(--sg-warn); color: var(--sg-warn); }
 .sg-form { display: grid; gap: 0.4rem; max-width: 40rem; margin: 0.4rem 0; }
 .sg-form label { display: grid; gap: 0.15rem; }
 .sg-form input[type="text"], .sg-form input[type="number"], .sg-form textarea, .sg-form select { width: 100%; }
@@ -87,6 +88,28 @@
 .sg-page-chip { margin-left: 0.4rem; color: var(--sg-accent); font-size: 0.85em; }
 .sg-claim-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-start; margin-top: 0.2rem; }
 .sg-researcher-notes textarea { width: 100%; }
+
+/* claim edit / add / researcher-notes forms: full width of the notes pane in split and
+   Notes-only layouts. The edit <details> is a flex item of .sg-claim-controls; open, it
+   takes the whole row so its form is not shrunk to its content. */
+.sg-claim-edit[open] { flex: 1 1 100%; min-width: 0; }
+.sg-pane-notes .sg-form, .sg-add-claim .sg-form { max-width: none; width: 100%; }
+.sg-claim-form { grid-template-columns: minmax(0, 1fr); }
+.sg-claim-form label { min-width: 0; }
+.sg-claim-form input[type="text"], .sg-claim-form select, .sg-claim-form textarea {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+.sg-claim-form textarea, .sg-researcher-notes textarea {
+  resize: vertical;
+  min-height: 3.2em;
+  field-sizing: content; /* grows with its text where supported; select.js auto-grow elsewhere */
+}
+.sg-researcher-notes textarea { min-height: 6em; }
+.sg-claim-form button { justify-self: start; }
 .sg-history-list { padding-left: 1.2rem; }
 .sg-history-list li { margin: 0.2rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .sg-add-claim:empty { display: none; }

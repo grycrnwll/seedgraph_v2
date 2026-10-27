@@ -163,6 +163,11 @@ class Header:
     def display_title(self) -> str:
         return self.title or "(untitled paper)"
 
+    @property
+    def pdf_suspect(self) -> bool:
+        """The PDF may not be this paper's (a title miss, or an open PDF attention item)."""
+        return self.pdf_check == "miss" or any(a.kind in ("pdf_title_miss", "shared_pdf") for a in self.attention)
+
 
 def _paper_row(lib: Library, paper_id: str):
     return lib.conn.execute(

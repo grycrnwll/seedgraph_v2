@@ -79,13 +79,14 @@ method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#sg-notes" hx-
       <div class="sg-claim-controls">
         <details class="sg-claim-edit">
           <summary>Edit</summary>
-          <form {{ post_attrs(base ~ "/notes/edit") }} class="sg-form">
+          <form {{ post_attrs(base ~ "/notes/edit") }} class="sg-form sg-claim-form">
             {{ csrf_input }}
             {{ common() }}
             <input type="hidden" name="claim_id" value="{{ c.claim_id }}">
             <label>Type {{ type_select(c.claim_type) }}</label>
             <label>Label <input type="text" name="normalized_label" value="{{ c.normalized_label or '' }}"></label>
-            <label>Text <textarea name="claim_text" rows="3" required>{{ c.claim_text or '' }}</textarea></label>
+            <label>Text <textarea name="claim_text" rows="3" required data-autogrow>{{ c.claim_text or '' }}</textarea></label>
+            {% if c.kind == "agent" %}<label>Plain words <textarea name="plain_words" rows="2" data-autogrow>{{ c.plain_words or '' }}</textarea></label>{% endif %}
             <button type="submit">Save edit</button>
           </form>
         </details>
@@ -120,13 +121,13 @@ method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#sg-notes" hx-
   {% if pane.has_note %}
   <details class="sg-add-assertion">
     <summary>Add an assertion</summary>
-    <form {{ post_attrs(base ~ "/notes/add") }} class="sg-form">
+    <form {{ post_attrs(base ~ "/notes/add") }} class="sg-form sg-claim-form">
       {{ csrf_input }}
       {{ common() }}
       <input type="hidden" name="kind" value="assertion">
       <label>Type {{ type_select("limitation") }}</label>
       <label>Label <input type="text" name="normalized_label" required></label>
-      <label>Text <textarea name="claim_text" rows="3" required></textarea></label>
+      <label>Text <textarea name="claim_text" rows="3" required data-autogrow></textarea></label>
       <p class="sg-muted">Shown as a researcher assertion — not the paper's words.</p>
       <button type="submit">Add assertion</button>
     </form>
@@ -135,10 +136,10 @@ method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#sg-notes" hx-
 
   <section class="sg-researcher-notes">
     <h2 class="sg-claim-group-h">Researcher notes</h2>
-    <form {{ post_attrs(base ~ "/notes/researcher-notes") }} class="sg-form">
+    <form {{ post_attrs(base ~ "/notes/researcher-notes") }} class="sg-form sg-claim-form">
       {{ csrf_input }}
       {{ common() }}
-      <textarea name="text" rows="5" aria-label="Researcher notes">{{ pane.researcher_notes or '' }}</textarea>
+      <textarea name="text" rows="5" aria-label="Researcher notes" data-autogrow>{{ pane.researcher_notes or '' }}</textarea>
       <button type="submit">Save notes</button>
     </form>
   </section>

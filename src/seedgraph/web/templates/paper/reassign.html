@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/paper.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+<h1>Whose PDF is this?</h1>
+<p>The PDF on {{ paper_title(c.paper.paper_id, c.paper.display_title, c.paper.held) }} <code>{{ c.source_file_id[:15] }}…</code>
+  may not be this paper. Choose the paper it belongs to: the PDF moves there with the notes made on it, and
+  {{ c.paper.paper_id }} needs its own PDF.</p>
+
+<section class="sg-section" aria-label="Suggestions">
+  <h2>Titles on the PDF's cover</h2>
+  {% if c.suggestions %}
+  <table class="sg-table">
+    <thead><tr><th>Paper</th><th>Year</th><th>Match</th><th></th></tr></thead>
+    <tbody>
+    {% for ch in c.suggestions %}{% set s = ch.suggestion %}
+    <tr data-suggestion="{{ s.paper_id }}">
+      <td>{{ paper_title(s.paper_id, s.title, s.held) }}{% if not s.held %} <span class="sg-muted">(cited-only)</span>{% endif %}
+        <div class="sg-hint"><code>{{ s.paper_id }}</code></div></td>
+      <td>{{ s.year or "" }}</td>
+      <td>{{ "%.2f" | format(s.score) }} <span class="sg-muted">({{ s.status }}{% if s.evidence %}: {{ s.evidence }}{% endif %})</span></td>
+      <td><a class="sg-button" href="{{ ch.preview_url }}">It belongs to this paper</a></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="sg-muted">No library paper's title is on the PDF's cover. Search below, or make a new paper.</p>
+  {% endif %}
+</section>
+
+<section class="sg-section" aria-label="Search">
+  <h2>Search library titles</h2>
+  <form method="get" action="/papers/{{ c.paper.paper_id }}/reassign-pdf" class="sg-inline-form">
+    <input type="hidden" name="file" value="{{ c.source_file_id }}">
+    {% if c.next %}<input type="hidden" name="next" value="{{ c.next }}">{% endif %}
+    <input type="search" name="q" value="{{ c.query }}" placeholder="words of the title, or a paper id" aria-label="Search library titles">
+    <button type="submit">Search</button>
+  </form>
+  {% if c.query %}
+  {% if c.hits %}
+  <ul>
+    {% for ch in c.hits %}{% set s = ch.suggestion %}
+    <li data-search-hit="{{ s.paper_id }}">{{ paper_title(s.paper_id, s.title, s.held) }} {{ s.year or "" }}
+      {% if not s.held %}<span class="sg-muted">(cited-only)</span>{% endif %}
+      <a href="{{ ch.preview_url }}">It belongs to this paper</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="sg-muted">No library title has all of those words.</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="sg-section" aria-label="New paper">
+  <h2>A paper not in the library</h2>
+  <p><a class="sg-button" href="{{ c.new_paper_url }}">It's a paper not in my library</a>
+    <span class="sg-muted">A new paper is made for the PDF; its metadata is then needed.</span></p>
+</section>
+<p><a href="{{ c.next or ('/papers/' ~ c.paper.paper_id) }}">Back</a></p>
+{% endblock %}

@@ -184,10 +184,8 @@ def window_score(title_content: Sequence[str], page_tokens: Sequence[str]) -> tu
     return len(best) / len(targets), sorted(best)
 
 
-def _doi_in_text(doi: str, pages: Sequence[str]) -> bool:
-    # Whitespace is stripped (a DOI may wrap across lines), but a removed-whitespace
-    # position still counts as a boundary, so ``10.1/ab.12`` does not hit ``10.1/ab.123``
-    # while ``10.1/ab.12 Next`` does.
+def _flatten(pages: Sequence[str]) -> tuple[str, frozenset[int]]:
+    """The pages lower-cased with whitespace removed, and the positions where whitespace was."""
     chars: list[str] = []
     gaps: set[int] = set()
     for ch in "\n".join(pages).lower().replace("\\", ""):
@@ -195,7 +193,14 @@ def _doi_in_text(doi: str, pages: Sequence[str]) -> bool:
             gaps.add(len(chars))
         else:
             chars.append(ch)
-    flat = "".join(chars)
+    return "".join(chars), frozenset(gaps)
+
+
+def _doi_in_text(doi: str, pages: Sequence[str], flat_gaps: tuple[str, frozenset[int]] | None = None) -> bool:
+    # Whitespace is stripped (a DOI may wrap across lines), but a removed-whitespace
+    # position still counts as a boundary, so ``10.1/ab.12`` does not hit ``10.1/ab.123``
+    # while ``10.1/ab.12 Next`` does.
+    flat, gaps = flat_gaps if flat_gaps is not None else _flatten(pages)
     start = flat.find(doi)
     while start != -1:
         end = start + len(doi)
@@ -214,6 +219,43 @@ def _status_for(score: float, n_content: int) -> Status:
     return "weak" if score >= MISS_THRESHOLD else "miss"
 
 
+@dataclass(frozen=True)
+class PreparedPages:
+    """First pages normalised once (:func:`prepare_pages`), so many titles can be checked
+    against one PDF (the "which paper is this PDF?" suggestions) without re-normalising."""
+
+    pages: tuple[str, ...]
+    variants: tuple[tuple[str, tuple[str, ...]], ...]  # (variant label, page tokens)
+    tokens: frozenset[str]  # every token of every variant
+    flat: str = ""  # lower-cased, whitespace removed (the DOI search)
+    gaps: frozenset[int] = frozenset()
+
+    def may_pass(self, title: str | None, doi: str | None) -> bool:
+        """A cheap necessary condition for :func:`check_prepared` to reach ``weak`` or better:
+        the DOI's text is on the pages, or enough of the title's content tokens are (the
+        window score can never exceed the fraction found anywhere)."""
+        norm_doi = normalize_id("doi", doi) if doi else None
+        if norm_doi and norm_doi in self.flat:
+            return True
+        if not title:
+            return False
+        for v in variants(title):
+            content = set(content_tokens(normalize_tokens(v)))
+            if content and len(content & self.tokens) >= MISS_THRESHOLD * len(content):
+                return True
+        return False
+
+
+def prepare_pages(pages: Sequence[str]) -> PreparedPages | None:
+    """The normalised variants of ``pages``, or ``None`` when there is no text at all."""
+    if not pages or not any(p.strip() for p in pages):
+        return None
+    text = "\n".join(pages)
+    variants_ = tuple((label, tuple(normalize_tokens(v))) for label, v in _labelled_variants(text))
+    flat, gaps = _flatten(pages)
+    return PreparedPages(tuple(pages), variants_, frozenset(t for _, toks in variants_ for t in toks), flat, gaps)
+
+
 def check_pdf_text(title: str | None, doi: str | None, pages: Sequence[str]) -> PdfCheck:
     """Does the text of these first pages belong to the paper titled ``title``?
 
@@ -221,16 +263,22 @@ def check_pdf_text(title: str | None, doi: str | None, pages: Sequence[str]) -> 
     ``exact``; else window coverage of the title's content tokens (§7.2). No text at all,
     or no title, gives ``unknown`` (never a miss).
     """
-    if not pages or not any(p.strip() for p in pages):
+    prepared = prepare_pages(pages)
+    if prepared is None:
         return PdfCheck("unknown", 0.0, None, "no text")
+    return check_prepared(title, doi, prepared)
+
+
+def check_prepared(title: str | None, doi: str | None, prepared: PreparedPages) -> PdfCheck:
+    """:func:`check_pdf_text` on pages already normalised by :func:`prepare_pages`."""
+    pages = prepared.pages
     norm_doi = normalize_id("doi", doi) if doi else None
-    if norm_doi and _doi_in_text(norm_doi, pages):
+    if norm_doi and _doi_in_text(norm_doi, pages, (prepared.flat, prepared.gaps)):
         return PdfCheck("pass", 1.0, "doi", f"doi {norm_doi} in text")
     if not title or not normalize_tokens(title):
         return PdfCheck("unknown", 0.0, None, "no title")
 
-    text = "\n".join(pages)
-    page_variants = [(label, normalize_tokens(v)) for label, v in _labelled_variants(text)]
+    page_variants = prepared.variants
     title_variants = [(label, normalize_tokens(v)) for label, v in _labelled_variants(title)]
 
     for ti, ttoks in title_variants:

@@ -1,4 +1,4 @@
-"""`seedgraph library status|search|show|check|attention|remove|delete|merge|refetch-metadata|prune-replaced|textcheck|reconvert`
+"""`seedgraph library status|search|show|check|attention|remove|delete|merge|reassign-pdf|refetch-metadata|prune-replaced|textcheck|reconvert`
 and `seedgraph library graphs list|show|rename` (design §10).
 
 Thin adapters over :mod:`seedgraph.library` (``search``, ``files``, ``lifecycle``,
@@ -323,6 +323,60 @@ def merge_cmd(
         typer.echo("nothing merged; re-run with --yes to merge" if plan.ok else "nothing merged")
     else:
         typer.echo(f"merged {other_id} into {keep_id}")
+
+
+@library_app.command("reassign-pdf")
+def reassign_pdf_cmd(
+    paper_id: str = typer.Argument(..., help="The paper holding the PDF that is not its own."),
+    to: Optional[str] = typer.Option(None, "--to", help="The library paper the PDF belongs to."),
+    new_paper: bool = typer.Option(False, "--new-paper", help="The PDF is a paper not in the library: make one."),
+    source_file: Optional[str] = typer.Option(None, "--file", help="Source file id (default: the paper's PDF)."),
+    suggest: bool = typer.Option(False, "--suggest", help="List the papers whose title the PDF's cover shows."),
+    yes: bool = typer.Option(False, "--yes", help="Carry out the move shown in the plan."),
+    root: Optional[Path] = ROOT,
+    json_out: bool = JSON,
+) -> None:
+    """Move a wrong PDF (and the notes made on it) to the paper it belongs to. Shows the plan; --yes moves."""
+    from ..library import reassign
+
+    if suggest and to is None and not new_paper:
+        with _common.cli_errors(), _common.existing_library(root) as lib:
+            found = reassign.suggest_targets(lib, paper_id, source_file)
+        if json_out:
+            _common.echo_json({"suggestions": found})
+            return
+        if not found:
+            typer.echo("no library paper's title is on the PDF's cover; name one with --to, or use --new-paper")
+        for s in found:
+            typer.echo(f"  {s.score:.2f}  {s.paper_id}  {s.title}{'' if s.held else '  (cited-only)'}")
+        return
+    if (to is None) == (not new_paper):
+        _common.fail("give --to TARGET or --new-paper (one of them), or --suggest to list candidates")
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        plan = reassign.plan_reassign_pdf(lib, paper_id, source_file, target_paper_id=to, new_paper=new_paper)
+        if yes and plan.blockers:
+            _common.fail("moving the PDF is blocked: " + "; ".join(plan.blockers))
+        result = reassign.reassign_pdf(lib, plan, confirm=True) if yes else None
+    if json_out:
+        _common.echo_json({"plan": reassign.plan_as_dict(plan), "moved": result})
+        return
+    where = f"a new paper {plan.receiving_paper_id}" if new_paper else plan.receiving_paper_id
+    typer.echo(f"move the PDF of {paper_id} to {where}:")
+    typer.echo(f"  PDF: {plan.source_file_id}")
+    for name, n in sorted(plan.counts.items()):
+        typer.echo(f"  {name}: {n}")
+    for c in plan.graphs:
+        typer.echo(f"  graph {c.slug}: {paper_id} {c.status} -> {c.new_status}")
+    for b in plan.blockers:
+        typer.echo(f"  blocked: {b}")
+    for w in plan.warnings:
+        typer.echo(f"  warning: {w}")
+    if result is None:
+        typer.echo("nothing moved; re-run with --yes to move" if plan.ok else "nothing moved")
+    else:
+        target = "a new paper " if new_paper else ""
+        typer.echo(f"moved the PDF of {paper_id} to {target}{result.receiving_paper_id}"
+                   f" (title check there: {result.check or 'none'})")
 
 
 # --- refetch-metadata, prune-replaced -------------------------------------------------------------

@@ -17,6 +17,9 @@
       {% for c in row.merge_candidates %}
       <a href="/review/merge?item={{ row.item_id }}&amp;with={{ c.paper_id }}">Same paper{% if row.merge_candidates | length > 1 %} as {{ c.title or c.paper_id }}{% endif %}</a>
       {% endfor %}
+      {% for side, sf in row.wrong_pdf %}
+      <a href="/papers/{{ side.paper_id }}/reassign-pdf?file={{ sf }}{% if back %}&amp;next={{ back | urlencode }}{% endif %}" data-reassign-pdf>Wrong PDF{% if row.wrong_pdf | length > 1 %} for {{ side.title or side.paper_id }}{% endif %}: it belongs to another paper…</a>
+      {% endfor %}
       {% for a in row.actions %}
       <form method="post" action="/review/attention/{{ row.item_id }}/resolve" hx-post="/review/attention/{{ row.item_id }}/resolve" hx-target="closest tr" hx-swap="outerHTML" class="sg-inline-form">
         {{ csrf_input }}

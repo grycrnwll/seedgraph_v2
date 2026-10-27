@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/paper.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+{% set plan = p.plan %}
+<h1>Move the PDF</h1>
+{% if stale %}
+<p class="sg-warn">These papers changed since you looked at this move, so nothing was moved. Review the plan below
+  again.</p>
+{% endif %}
+<section class="sg-section">
+  <h2>From and to</h2>
+  <p>The PDF <code>{{ plan.source_file_id[:15] }}…</code> leaves
+    {{ paper_title(p.paper.paper_id, p.paper.display_title, p.paper.held) }} <code>{{ p.paper.paper_id }}</code>{% if plan.source_becomes_cited_only %},
+    which becomes cited-only (it needs its own PDF){% endif %}.</p>
+  {% if plan.new_paper %}
+  <p>It goes to a new paper <code>{{ plan.receiving_paper_id }}</code>. Its title is not known yet: a
+    "metadata needed" item asks you to fill it in.{% if plan.cover_identifiers %} Identifiers found on its cover:
+    {% for t, v in plan.cover_identifiers %}{{ t }} <code>{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
+  {% elif p.target %}
+  <p>It goes to {{ paper_title(p.target.paper_id, p.target.display_title, p.target.held) }} <code>{{ p.target.paper_id }}</code>{% if plan.target_was_cited_only %},
+    which becomes held{% elif plan.target_has_same_pdf %}, which already holds this PDF (only the other link goes){% endif %}.
+    Its title is checked against the PDF again after the move.</p>
+  {% endif %}
+  <p><a href="{{ p.chooser_url }}">Choose another paper</a></p>
+</section>
+{% if plan.blockers %}
+<section class="sg-section">
+  <h2>This move is blocked</h2>
+  <ul>{% for b in plan.blockers %}<li class="sg-warn">{{ b }}</li>{% endfor %}</ul>
+  {% if plan.target_holds_other_pdf %}
+  <form method="post" action="/papers/{{ plan.paper_id }}/reassign-pdf/merge" class="sg-inline-form">
+    {{ csrf_input }}
+    <input type="hidden" name="to" value="{{ plan.target_paper_id }}">
+    <button type="submit">Merge these papers</button>
+    <span class="sg-muted">They are the same paper: open the merge preview.</span>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+<section class="sg-section">
+  <h2>What moves with the PDF</h2>
+  <ul>
+    <li>note versions made on this PDF: {{ plan.counts.notes }} (renumbered by date on the receiving paper)</li>
+    <li>extraction runs: {{ plan.counts.runs }}, claims: {{ plan.counts.claims }} (quotes: {{ plan.counts.anchors }}),
+      lens outputs: {{ plan.counts.lens_outputs }}</li>
+    <li>attention items resolved: {{ plan.counts.attention_resolved }}</li>
+    {% for g in plan.graphs %}<li>graph <code>{{ g.slug }}</code>: {{ plan.paper_id }} goes from {{ g.status }} to {{ g.new_status }}{% if g.is_seed %} (still a seed){% endif %}</li>{% endfor %}
+  </ul>
+  {% if plan.source_graphs %}<p class="sg-muted">The receiving paper is not added to any graph: use Add to graph on its page.</p>{% endif %}
+  {% if plan.warnings %}<ul>{% for w in plan.warnings %}<li class="sg-warn">{{ w }}</li>{% endfor %}</ul>{% endif %}
+</section>
+{% if not plan.blockers %}
+<form method="post" action="/papers/{{ plan.paper_id }}/reassign-pdf">
+  {{ csrf_input }}
+  <input type="hidden" name="file" value="{{ plan.source_file_id }}">
+  <input type="hidden" name="to" value="{{ plan.target_paper_id or '' }}">
+  <input type="hidden" name="new" value="{{ '1' if plan.new_paper else '' }}">
+  <input type="hidden" name="fingerprint" value="{{ plan.fingerprint }}">
+  <input type="hidden" name="next" value="{{ p.next }}">
+  <button type="submit">Confirm move</button>
+</form>
+{% endif %}
+<p><a href="{{ p.next or ('/papers/' ~ p.paper.paper_id) }}">Back</a></p>
+{% endblock %}

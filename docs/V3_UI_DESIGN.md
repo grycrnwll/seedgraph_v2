@@ -230,7 +230,7 @@ calls `library.attention.resolve_item` (or a duplicate or citation function) wit
 | queue | source | actions (resolution) |
 |---|---|---|
 | Held back: text | `text_garbled`, `text_missing` | **Note anyway** (`accept_text`), **Re-convert with OCR** (`library.reconvert`), Replace PDF |
-| PDF may not be this paper | `pdf_title_miss`, `shared_pdf` | **It is this paper** (`confirmed`), Detach PDF, Attach the right PDF |
+| PDF may not be this paper | `pdf_title_miss`, `shared_pdf` | **It is this paper** (`confirmed`), **Wrong PDF**: it belongs to another library paper (`wrong_pdf_moved`) or to a paper not in the library (`wrong_pdf_new_paper`), via `library.reassign` plan → confirm; the notes made on the PDF follow it |
 | Identity | `identity_check`, `identity_collision` | **Same paper** (merge, `duplicate_decisions` `same`), **Different** (`different`) |
 | Titles and metadata | `malformed_title`, `metadata_needed`, `metadata_generic_title`, `metadata_doi_mismatch` | Edit metadata, Re-fetch by DOI, Run Ollama metadata |
 | Re-note offers | `renote_offered` | Write notes (one-paper batch), Dismiss |
@@ -378,7 +378,7 @@ normally and becomes `note_latest`, while `note_current` stays pinned. Papers wi
 in stage 2.
 
 Ops in `ops_json` (validated by `notes/overlay.py`):
-- `{op: "edit", target: ClaimRef, set: {claim_text?, normalized_label?, claim_type?}}`
+- `{op: "edit", target: ClaimRef, set: {claim_text?, normalized_label?, claim_type?, plain_words?}}` (`plain_words` may be empty: cleared)
 - `{op: "hide", target: ClaimRef}`
 - `{op: "add", add_id: "rc_…", claim_type, normalized_label, claim_text, kind: "quote" | "assertion",
   quote?: {markdown_id, markdown_hash, start_char, end_char, quote_hash, span_id}}`

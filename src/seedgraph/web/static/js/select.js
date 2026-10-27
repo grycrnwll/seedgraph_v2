@@ -119,3 +119,35 @@
     }
   });
 })();
+
+// Auto-grow for the notes pane's long fields (textarea[data-autogrow]): where CSS
+// `field-sizing: content` is not supported, the height follows the text. Delegated on the
+// document so it survives htmx swaps of #sg-notes; also sized when a <details> opens (a
+// closed one has no layout) and after each htmx settle. The height is set through the
+// CSSOM (el.style), which the CSP allows; no style attribute is written as markup.
+(function () {
+  "use strict";
+
+  const native = typeof CSS !== "undefined" && CSS.supports && CSS.supports("field-sizing", "content");
+
+  function grow(el) {
+    if (native || !el || !el.matches || !el.matches("textarea[data-autogrow]")) return;
+    if (!el.offsetParent) return; // hidden (closed details): sized when shown
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + 2 + "px";
+  }
+
+  function growWithin(root) {
+    if (native || !root || !root.querySelectorAll) return;
+    root.querySelectorAll("textarea[data-autogrow]").forEach(grow);
+  }
+
+  document.addEventListener("input", (evt) => grow(evt.target));
+  document.addEventListener("toggle", (evt) => growWithin(evt.target), true);
+  document.addEventListener("htmx:afterSettle", (evt) => growWithin(evt.target));
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => growWithin(document));
+  } else {
+    growWithin(document);
+  }
+})();

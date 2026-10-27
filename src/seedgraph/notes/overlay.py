@@ -56,7 +56,7 @@ NOTE_CLAIM_TYPES: frozenset[str] = frozenset(
     {t for _, t in SCALAR_FIELDS} | {t for _, t in ARRAY_FIELDS}
     | set(_ASSUMPTION_CLAIM_TYPE.values()) | {"model"}
 )
-EDITABLE_FIELDS: tuple[str, ...] = ("claim_text", "normalized_label", "claim_type")
+EDITABLE_FIELDS: tuple[str, ...] = ("claim_text", "normalized_label", "claim_type", "plain_words")
 ACTIONS: tuple[str, ...] = ("edit", "hide", "unhide", "add", "remove_added", "notes", "revert",
                             "accept_extraction")
 ADD_KINDS: tuple[str, ...] = ("quote", "assertion")
@@ -205,6 +205,10 @@ def _check_set(set_: Any) -> dict[str, str]:
             out[key] = set_[key]
         elif key == "normalized_label":
             out[key] = _check_text(set_[key], "a label")
+        elif key == "plain_words":
+            if not isinstance(set_[key], str):
+                raise OverlayError("plain words must be text")
+            out[key] = set_[key]  # may be empty: the researcher cleared them
         else:
             out[key] = _check_text(set_[key], "claim text")
     return out
@@ -511,7 +515,8 @@ def _interpretation_rows(conn: sqlite3.Connection, h: OverlayVersion) -> list[di
             claim_id=c["claim_id"], claim_type=(set_ or {}).get("claim_type", c["claim_type"]),
             claim_subtype=c["claim_subtype"], field_key=c["field_key"],
             normalized_label=(set_ or {}).get("normalized_label", c["normalized_label"]),
-            claim_text=(set_ or {}).get("claim_text", c["claim_text"]), plain_words=c["plain_words"],
+            claim_text=(set_ or {}).get("claim_text", c["claim_text"]),
+            plain_words=(set_ or {}).get("plain_words", c["plain_words"]) or None,
             status=c["status"], trust=trust, edited=int(set_ is not None),
             hidden=int(c["claim_id"] in hides), kind="agent", span_id=span[0] if span else None))
     adds = [o for o in h.ops if o["op"] == "add"]

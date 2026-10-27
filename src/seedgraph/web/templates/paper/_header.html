@@ -36,6 +36,7 @@
   {% endif %}
   <div class="sg-paper-actions">
     {% if h.held %}<a class="sg-button" href="/papers/{{ h.paper_id }}/pdf" target="_blank" rel="noopener">Open PDF</a>{% endif %}
+    {% if h.held %}<a class="sg-button{% if h.pdf_suspect %} sg-button-warn{% endif %}" href="/papers/{{ h.paper_id }}/reassign-pdf" data-reassign-pdf>This isn't the paper's PDF…</a>{% endif %}
     {% if h.held %}
     <form method="post" action="/papers/{{ h.paper_id }}/write-notes" class="sg-inline-form">
       {{ csrf_input }}
