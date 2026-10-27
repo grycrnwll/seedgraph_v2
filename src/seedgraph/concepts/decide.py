@@ -139,6 +139,31 @@ class Guard:
     def link_veto(self, a: SenseKey, b: SenseKey) -> str | None:
         return g.link_veto(self.group(a), self.group(b), self.vetoes)
 
+    def veto_text(self, why: str, a: SenseKey, b: SenseKey, label_a: str, label_b: str, *,
+                  verdict: str = "merge") -> str:
+        """The refusal naming what triggered a veto: the stoplist word on each side, both
+        families, or the never-merge / never-connect pair (through other members, if so)."""
+        if why == "type_fence":
+            return (f"different families: {label_a!r} is {_article(a.family)} {a.family}, {label_b!r} is "
+                    f"{_article(b.family)} {b.family}, and merges stay within one family")
+        ga, gb = self.group(a), self.group(b)
+        if why in ("never_merge", "never_connect"):
+            v = self.vetoes.between(ga, gb, kinds=(why,))
+            if v is None:
+                return _reason(why, a, b)
+            text = f"{v.label_a!r} and {v.label_b!r} are a {why.replace('_', '-')} pair"
+            if {v.label_a, v.label_b} != {a.label_key, b.label_key}:
+                text += (", and this merge would put them in one concept" if verdict == "merge"
+                         else ", and this link would connect their concepts")
+            return text
+        if why == "stoplist":
+            wa, wb = g.stoplist_triggers([k.label_key for k in ga], [k.label_key for k in gb])
+            if wa or wb:
+                kind = g.stoplist_kind(wa + wb)
+                return (f"the labels differ in {_article(kind)} {kind} word: {_has(label_a, a, wa)}, "
+                        f"{_has(label_b, b, wb)}")
+        return _reason(why, a, b)
+
     def is_ambiguous(self, key: SenseKey) -> bool:
         return self.ambiguous.is_ambiguous(key.label_key)
 
@@ -169,6 +194,19 @@ class Guard:
 
 def _reason(why: str, a: SenseKey, b: SenseKey) -> str:
     return REASON_TEXT.get(why, why).format(fa=a.family, fb=b.family)
+
+
+def _article(word: str) -> str:
+    return "an" if word[:1].lower() in "aeiou" else "a"
+
+
+def _has(label: str, key: SenseKey, words: list[str]) -> str:
+    if not words:
+        return f"{label!r} has none"
+    text = f"{label!r} has " + " and ".join(repr(w) for w in words)
+    if not set(words) & set(g.normalize(key.label_key).split()):
+        text += " (through another label of its concept)"
+    return text
 
 
 def _refs(side: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -261,11 +299,13 @@ def _check_item(n: int, item: Mapping[str, Any], ans: Mapping[str, Any], guard: 
     if verdict == "merge":
         why_v = guard.merge_veto(a, b)
         if why_v:
-            errs.append(f"item {n}: merge vetoed: {_reason(why_v, a, b)}; answer link, unrelated or unsure")
+            text = guard.veto_text(why_v, a, b, item["a"]["label"], item["b"]["label"])
+            errs.append(f"item {n}: merge vetoed: {text}; answer link, unrelated or unsure")
     else:
         why_v = guard.link_veto(a, b)
         if why_v:
-            errs.append(f"item {n}: link vetoed: {_reason(why_v, a, b)}; answer unrelated or unsure")
+            text = guard.veto_text(why_v, a, b, item["a"]["label"], item["b"]["label"], verdict="link")
+            errs.append(f"item {n}: link vetoed: {text}; answer unrelated or unsure")
     return errs
 
 

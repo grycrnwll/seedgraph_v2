@@ -70,6 +70,51 @@ def agent_rows(lib):
         "SELECT kind, state, veto_reason, name FROM concept_decisions WHERE decided_by = 'agent' ORDER BY kind")]
 
 
+def merge_errors(lib, manifest, guard=None):
+    guard = guard or decide.Guard.load(lib.conn, None)
+    item = manifest["items"][0]
+    return decide.validate(manifest, {"items": [
+        {"item": item["item"], "verdict": "merge", "confidence": "high", "name": item["a"]["label"]}]}, guard)
+
+
+def test_a_stoplist_veto_names_the_size_word_on_each_side(lib, w):
+    view, msg, manifest = merge_batch(lib, w, left="large sprocket panel", right="sprocket panel")
+    (item,) = manifest["items"]
+    la, lb = item["a"]["label"], item["b"]["label"]
+    big, other = (la, lb) if "large" in la else (lb, la)
+    assert merge_errors(lib, manifest) == [
+        f"item 1: merge vetoed: the labels differ in a size word: {big!r} has 'large', {other!r} has none; "
+        "answer link, unrelated or unsure"]
+
+
+def test_a_type_fence_veto_names_both_families(lib, w):
+    view, msg, manifest = merge_batch(lib, w)
+    manifest["items"][0]["b"]["family"] = "method"
+    la, lb = manifest["items"][0]["a"]["label"], manifest["items"][0]["b"]["label"]
+    assert merge_errors(lib, manifest) == [
+        f"item 1: merge vetoed: different families: {la!r} is an assumption, {lb!r} is a method, and merges "
+        "stay within one family; answer link, unrelated or unsure"]
+
+
+def test_a_never_merge_veto_names_the_pair(lib, w):
+    view, msg, manifest = merge_batch(lib, w)
+    w.decide("never_merge", "sprocket balance", "sprocket balance rule", by="researcher")
+    assert merge_errors(lib, manifest) == [
+        "item 1: merge vetoed: 'sprocket balance' and 'sprocket balance rule' are a never-merge pair; "
+        "answer link, unrelated or unsure"]
+
+
+def test_a_never_merge_veto_through_another_member_says_so(lib, w):
+    view, msg, manifest = merge_batch(lib, w)
+    w.note("lp_p5", [a("sprocket parity", "Invented: sprocket parity.")])
+    w.decide("merge", "sprocket balance rule", "sprocket parity", by="researcher", family="assumption")
+    w.decide("never_merge", "sprocket balance", "sprocket parity", by="researcher")
+    rf.refresh(lib)
+    assert merge_errors(lib, manifest) == [
+        "item 1: merge vetoed: 'sprocket balance' and 'sprocket parity' are a never-merge pair, and this merge "
+        "would put them in one concept; answer link, unrelated or unsure"]
+
+
 def test_an_unsure_answer_is_stored_queued_so_the_pair_is_not_judged_again(lib, w):
     view, msg, manifest = merge_batch(lib, w)
     res = routine.submit(lib, msg["packet_id"], msg["claim_id"], note={"items": [

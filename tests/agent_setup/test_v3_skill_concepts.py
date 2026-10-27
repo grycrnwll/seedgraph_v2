@@ -36,3 +36,16 @@ def test_work_skill_has_a_concept_packages_section():
     for verdict in ("merge", "link", "split", "unrelated"):
         assert f"`{verdict}`" in text, verdict
     assert "when unsure between merge and link" in lower
+
+
+def test_work_skill_usage_wording_matches_the_cli_flag_and_is_optional():
+    lower = _flat("seedgraph-v3-work").lower()
+    assert "if your client exposes token usage, write it to a json file and pass `--usage-file`" in lower
+    assert "`usage` (mcp); otherwise skip it" in lower
+    assert "pass `usage` (token counts) on submit when your client shows it" not in lower
+
+
+def test_work_skill_says_pair_packages_may_repeat_a_claim_and_unsure_links_are_unrelated():
+    lower = _flat("seedgraph-v3-work").lower()
+    assert "when unsure between link and unrelated, answer unrelated" in lower
+    assert "cite whichever ref the item lists" in lower

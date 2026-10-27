@@ -150,7 +150,7 @@ def test_every_item_answered_exactly_once_and_refs_belong_to_their_side(lib, w):
     assert any("quote_a" in e and "not a ref of side A" in e for e in res.errors), res.errors
 
 
-def test_a_vetoed_merge_gets_feedback_naming_the_reason_and_the_allowed_answers(lib, w):
+def test_a_vetoed_merge_gets_feedback_naming_the_trigger_and_the_allowed_answers(lib, w):
     w.note("lp_p1", [a("sprocket shift v1", "Invented: sprocket shift of the first kind.")])
     w.note("lp_p2", [a("sprocket shift v2", "Invented: sprocket shift of the second kind.")])
     view = routine.create_batch(lib, "concepts:merge", now=T0)
@@ -159,8 +159,8 @@ def test_a_vetoed_merge_gets_feedback_naming_the_reason_and_the_allowed_answers(
     res = routine.submit(lib, msg["packet_id"], msg["claim_id"], note={"items": [
         {"item": item, "verdict": "merge", "confidence": "high", "name": "sprocket shift v1"}]}, now=at(2))
     assert res.status == "invalid"
-    assert res.errors == [f"item {item}: merge vetoed: stoplist (the labels differ in a version or size word); "
-                          "answer link, unrelated or unsure"]
+    assert res.errors == [f"item {item}: merge vetoed: the labels differ in a version word: 'sprocket shift v1' "
+                          "has 'v1', 'sprocket shift v2' has 'v2'; answer link, unrelated or unsure"]
     res = routine.submit(lib, msg["packet_id"], msg["claim_id"], note={"items": [
         {"item": item, "verdict": "unrelated", "confidence": "high"}]}, now=at(3))
     assert res.status == "accepted"

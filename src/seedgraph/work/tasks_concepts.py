@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..concepts import decide
 from ..concepts import estimate as cest
-from ..concepts.instructions import BY_TASK
+from ..concepts.instructions import BY_TASK, INSTRUCTIONS_VERSION
 from ..concepts.packages import KIND_WORDS, Package
 from . import store, tasks
 from .store import WorkError
@@ -50,7 +50,10 @@ if TYPE_CHECKING:
     from ..library.store import Library
     from .store import BatchItem, WorkPackage
 
-TASK_VERSION = "1.0.0"
+TASK_VERSION = INSTRUCTIONS_VERSION
+#: Versions whose batches still load: the answer schema and checks are unchanged since 1.0.0,
+#: only the instructions text moved on (a batch keeps the instructions.md it was created with).
+ACCEPTED_VERSIONS = frozenset({"1.0.0", TASK_VERSION})
 SUBJECT_KIND = "concept_package"
 _SLUG_WORDS = {"pairs": "pair", "checks": "sense_check", "groups": "group"}
 
@@ -135,7 +138,7 @@ class ConceptTask:
         self.lib = lib
         self.arg = arg
         self.name = f"concepts:{arg}"
-        self.version = TASK_VERSION
+        self.version = version if version in ACCEPTED_VERSIONS else TASK_VERSION
         self.task_options = dict(cest.OPTIONS[arg])
         self._built: dict[str, Package] = {}
 

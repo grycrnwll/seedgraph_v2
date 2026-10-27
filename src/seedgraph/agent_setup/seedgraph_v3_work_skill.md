@@ -30,8 +30,9 @@ words; follow it. If the MCP tools are not available, the same steps exist as
 4. Write the result as JSON alone (no prose, no code fence) to `result_path`.
 5. Submit the result file: `work_submit(packet_id, claim_id, note_path=result_path)`
    (CLI: `seedgraph-v3 work submit PACKET --claim CLAIM --note-file result_path`). If you
-   cannot write files, pass the JSON as `note` instead. Pass `usage` (token counts) and
-   `model` if your client shows them.
+   cannot write files, pass the JSON as `note` instead. Pass `model` if your client shows
+   it. If your client exposes token usage, write it to a JSON file and pass `--usage-file`
+   (CLI) or `usage` (MCP); otherwise skip it.
 6. Read the reply:
    - `accepted` - claim the next package (step 1).
    - `invalid` - fix every listed error and submit the same `packet_id` again.
@@ -63,11 +64,18 @@ same loop, but each package is a numbered list of items, not a paper.
   Give `confidence` (high, medium or low).
 - Judge meaning from the claims, never from a shared word; an item marked "ambiguous
   label" needs a ref from each side for a merge or link.
-- When unsure between merge and link, answer link. `unsure` is an honest answer: the item
-  goes to the researcher, whose decisions always win.
+- A link is for near-equivalents whose difference matters, not for pairs that are merely
+  on related topics, used together, or where one is an input to the other (those are
+  `unrelated`); `instructions.md` gives the test.
+- When unsure between merge and link, answer link. When unsure between link and
+  unrelated, answer unrelated. `unsure` is an honest answer: the item goes to the
+  researcher, whose decisions always win.
+- A package may repeat a claim under different refs; cite whichever ref the item lists.
 - A refusal (`invalid`) names each failing item, for example a merge vetoed by a
-  guardrail: answer link, unrelated or unsure for it and resubmit.
-- Pass `usage` (token counts) on submit when your client shows it.
+  guardrail (it names the triggering word, families or pair): answer link, unrelated or
+  unsure for it and resubmit.
+- If your client exposes token usage, write it to a JSON file and pass `--usage-file`
+  (CLI) or `usage` (MCP); otherwise skip it.
 
 ## When something goes wrong
 

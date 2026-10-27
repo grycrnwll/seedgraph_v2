@@ -95,6 +95,29 @@ def discriminating_conflict(labels: Iterable[str]) -> bool:
     return any(tok in DISCRIMINATING_TOKENS for tok in differing)
 
 
+#: How a refusal names a stoplist token (the rest are "variant" words).
+VERSION_TOKENS: frozenset[str] = frozenset({"v1", "v2", "v3", "v4", "1", "2", "3", "4", "0", "11", "i", "ii", "iii"})
+SIZE_TOKENS: frozenset[str] = frozenset({"base", "large", "small", "xl", "xxl", "mini", "tiny"})
+
+
+def stoplist_triggers(labels_a: Iterable[str], labels_b: Iterable[str]) -> tuple[list[str], list[str]]:
+    """The stoplist tokens behind a :func:`discriminating_conflict` of the two groups'
+    labels together, as found on each side (sorted; a side can have none)."""
+    sides = [[set(normalize(m).split()) for m in set(side)] for side in (labels_a, labels_b)]
+    every = sides[0] + sides[1]
+    if len(every) < 2:
+        return [], []
+    differing = (set().union(*every) - set(every[0]).intersection(*every[1:])) & DISCRIMINATING_TOKENS
+    found_a, found_b = (sorted(differing & set().union(*side)) for side in sides)
+    return found_a, found_b
+
+
+def stoplist_kind(tokens: Iterable[str]) -> str:
+    """``version``, ``size`` or ``variant`` (or ``version or size`` for a mix)."""
+    kinds = {"version" if t in VERSION_TOKENS else "size" if t in SIZE_TOKENS else "variant" for t in tokens}
+    return kinds.pop() if len(kinds) == 1 else "version or size"
+
+
 def closure_ok(name: str, member_labels: Iterable[str]) -> bool:
     """A concept name must be one of its member labels (compared as label keys)."""
     return label_key(name) in {label_key(m) for m in member_labels}
