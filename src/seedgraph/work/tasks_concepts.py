@@ -18,10 +18,12 @@ write quotes: ``check`` declares no ``QuoteRef``, so no anchor preview runs.
 
 **Frozen packages.** ``select`` builds every package once (refreshing the concepts first
 when stale) and keeps them on the instance; ``plan`` returns a package's text and
-``instructions`` writes every package's manifest (refs -> paper, span, claim fingerprint)
-to a content-addressed file under ``<home>/work/_concept_manifests/``; the batch's small
-``labels.json`` names it by sha. ``check`` and ``save`` read the manifest back, so they
-judge exactly what the agent saw, and the agent's files stay small.
+``instructions`` writes each package's manifest (its own refs -> paper, span, claim
+fingerprint) to its own content-addressed file under ``<home>/work/_concept_manifests/``,
+plus a small content-addressed index ``{subject_id: sha}``; the batch's small
+``labels.json`` names the index by sha. ``check`` and ``save`` read the index and their
+own package's manifest only, so they judge exactly what the agent saw, their cost scales
+with the package (not the batch), and the agent's files stay small.
 
 **Feedback.** A guardrail failure at check time is an ``invalid`` reply with one error per
 item ("item 3: merge vetoed: ...; answer link, unrelated or unsure"); the protocol keeps
@@ -71,29 +73,52 @@ def subject_label(subject_id: str) -> str:
 
 
 MANIFEST_DIR = "_concept_manifests"
+INDEX_KEY = "manifest_index_sha256"
 
 
-def write_manifests(lib: Library, manifests: Mapping[str, Any]) -> str:
-    """Store the frozen package manifests in a content-addressed file under
-    ``<home>/work/_concept_manifests/`` (written before the batch id exists); returns its sha."""
-    data = json.dumps(manifests, ensure_ascii=False, sort_keys=True).encode("utf-8")
+def _put(folder: Path, value: Any) -> str:
+    """Write ``value`` as canonical JSON to ``<folder>/<sha256>.json`` (once); return the sha."""
+    data = json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
     sha = hashlib.sha256(data).hexdigest()
-    folder = _work_root(lib) / MANIFEST_DIR
-    folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{sha}.json"
     if not path.is_file():
         path.write_bytes(data)
     return sha
 
 
+def write_manifests(lib: Library, manifests: Mapping[str, Any]) -> str:
+    """Store each package's frozen manifest in its own content-addressed file under
+    ``<home>/work/_concept_manifests/`` (written before the batch id exists), plus a small
+    content-addressed index ``{subject_id: manifest sha}``; returns the index's sha.
+
+    ``check`` and ``save`` read the index and then only their own package's file, so their
+    cost scales with the package, not with the batch."""
+    folder = _work_root(lib) / MANIFEST_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    index = {sid: _put(folder, manifest) for sid, manifest in manifests.items()}
+    return _put(folder, index)
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_bytes().decode("utf-8"))
+
+
 def load_manifest(lib: Library, batch_id: str, subject_id: str) -> dict[str, Any]:
-    """The frozen manifest of one package: ``labels.json`` names the manifest file by sha."""
+    """The frozen manifest of one package: ``labels.json`` names the index by sha, and the
+    index names the package's own manifest file by sha. A batch made before per-package
+    manifests (``manifest_sha256`` only) is refused."""
+    folder = _work_root(lib) / MANIFEST_DIR
     try:
-        labels = json.loads((_work_root(lib) / batch_id / "labels.json").read_bytes().decode("utf-8"))
-        sha = labels["manifest_sha256"]
-        data = json.loads((_work_root(lib) / MANIFEST_DIR / f"{sha}.json").read_bytes().decode("utf-8"))
-        return data[subject_id]
-    except (OSError, ValueError, KeyError) as exc:
+        labels = _read_json(_work_root(lib) / batch_id / "labels.json")
+    except (OSError, ValueError) as exc:
+        raise WorkError(f"the frozen concept package {subject_id!r} of batch {batch_id} is missing ({exc})") from exc
+    if isinstance(labels, dict) and INDEX_KEY not in labels and "manifest_sha256" in labels:
+        raise WorkError(f"batch {batch_id} was made before per-package concept manifests; "
+                        "stop it and recreate the batch")
+    try:
+        index = _read_json(folder / f"{labels[INDEX_KEY]}.json")
+        return _read_json(folder / f"{index[subject_id]}.json")
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise WorkError(f"the frozen concept package {subject_id!r} of batch {batch_id} is missing ({exc})") from exc
 
 
@@ -154,7 +179,7 @@ class ConceptTask:
             raise WorkError("concept task instructions are written after select() and plan()")
         sha = write_manifests(lib, {sid: p.manifest() for sid, p in self._built.items()})
         labels = {"task": self.name, "version": self.version, "answer": "see instructions.md",
-                  "manifest_sha256": sha,
+                  INDEX_KEY: sha,
                   "note": "internal: the frozen package manifests are kept by seedgraph; nothing to read here"}
         return tasks.Instructions(BY_TASK[self.arg], json.dumps(labels, ensure_ascii=False, sort_keys=True))
 

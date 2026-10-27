@@ -35,11 +35,23 @@ def register_work_tools(server: FastMCP, ctx: V3Context) -> None:
     def batch_create(task: str, paper_ids: list[str] | None = None, query: str | None = None,
                      graph: str | None = None, options: dict[str, Any] | None = None,
                      mcp_ctx: Context | None = None) -> dict[str, Any]:
-        """Create a work batch. `task` is notes, metadata or lens:<lens_id>. Choose papers by
-        `paper_ids`, or a `query` such as "held in graph <slug> without current note", or a
-        `graph` (its held papers). `options`: claim_ttl_s, replace, split_threshold_tokens,
-        part_target_tokens. Held-back papers are listed with their reason. Only create a
-        batch when the researcher asks for one."""
+        """Create a work batch. Only create a batch when the researcher asks for one.
+
+        Paper tasks: `task` notes, metadata or lens:<lens_id>. Choose papers by `paper_ids`,
+        or a `query` such as "held in graph <slug> without current note", or a `graph` (its
+        held papers). `options`: claim_ttl_s, replace, split_threshold_tokens,
+        part_target_tokens. Held-back papers are listed with their reason.
+
+        Concept tasks choose their own subjects (concept packages); give `options` and
+        optionally a `graph`, never paper_ids or a query:
+        - concepts:merge (tidy look-alike labels): families (comma list), budget_tokens.
+        - concepts:bridge (sense checks, then sense pairs across literatures): families
+          (default assumption,estimand,method), k (neighbours per sense, default 5),
+          sense_checks (all, ambiguous or none), budget_tokens; `graph` adds literatures
+          and citation distance.
+        - concepts:name_literatures (name a graph's literatures; needs `graph`):
+          include_named.
+        Every task also takes claim_ttl_s."""
         from ..work import routine
 
         with ctx.library() as lib:

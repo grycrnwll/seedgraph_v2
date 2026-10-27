@@ -21,7 +21,9 @@ the subject label reads "assumption pairs 51-100".
 
 **Manifest.** Fingerprints and span ids stay out of the text the agent reads. Each
 package's manifest (items, sides' sense keys, ref -> ``{paper_id, claim_id, span_id,
-claim_fingerprint}``) goes into the batch's ``labels.json``, keyed by subject id.
+claim_fingerprint}``) is frozen in its own content-addressed file, named from the batch's
+``labels.json`` through a small index (:func:`seedgraph.work.tasks_concepts.write_manifests`),
+so checking or saving one package reads only that package's manifest.
 
 **Budget.** With ``budget_tokens`` the items are taken in priority order while the running
 **high** agent-token estimate (:func:`agent_tokens`) stays within the budget; the rest wait

@@ -8,10 +8,12 @@ from v3_mcp_support import call, err, list_tools, ok, home, server  # noqa: F401
 from seedgraph import __version__
 
 READ_TOOLS = {"version", "graph_list", "graph_show", "paper_list", "paper_show", "search", "paper_read",
-              "lens_results", "batch_status", "batch_list"}
+              "lens_results", "batch_status", "batch_list", "concept_search", "concept_show", "literatures",
+              "concept_hubs"}
 MUTATION_TOOLS = {"batch_create", "work_claim", "work_submit", "work_release", "batch_stop", "batch_continue",
                   "batch_report_limit"}
-GRAPH_SCOPED = {"graph_show", "paper_list", "search", "lens_results", "batch_create"}
+GRAPH_SCOPED = {"graph_show", "paper_list", "search", "lens_results", "batch_create", "concept_search",
+                "concept_show", "literatures", "concept_hubs"}
 
 
 def test_build_touches_no_disk(home):

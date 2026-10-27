@@ -19,6 +19,11 @@ Use the `seedgraph_v3` MCP tools. Every reply is JSON. An error reply carries `c
 - `graph_show(graph)` - seeds, chosen lenses, and members that still have no note.
 - `paper_list(graph?, status?, needs?, query?, offset, limit)` - papers by title text,
   graph membership (`status` member or frontier), or need (`needs` note or metadata).
+- For a question about ideas across a graph, start with `literatures(graph)` and
+  `concept_hubs(graph?, family?, limit)` (also the resource
+  `seedgraph://graphs/{slug}/hubs`): the graph's literatures, its most common concepts
+  and the bridges between literatures. Search concepts before spans when the question is
+  about an idea (see "Concepts" below).
 
 ## Ground a claim
 
@@ -65,6 +70,42 @@ Some papers have `notes_hidden: true` because an open attention item (for exampl
 possibly wrong PDF) is waiting for the researcher. Their notes and claims are left out
 of search and `paper_show` on purpose. Mention the item if it matters; do not try to
 work around it. The paper text itself stays readable.
+
+## Concepts, senses and literatures
+
+A **concept** groups claims from many papers that name the same idea. Concept identity is
+**label + sense**: one label can carry several meanings ("identification" as a source of
+exogenous variation, or as a unique solution of a system of equations). Handles read
+`family/label` or `family/label~s2` for one sense of a split label.
+
+- `concept_search(query, family?, graph?, k)` - sense-level hits: handle, name, gloss,
+  paper and claim counts, and the best example claim with its quote. `search_mode` says
+  whether the search ran by keyword or by meaning; with keyword search, try the words a
+  paper would use.
+- `concept_show(handle, graph?, claims_offset, claims_limit)` - the member senses, the
+  supporting claims with quotes, merges, closely related links, literatures (with
+  `graph`) and often-appears-with. A split label answers with a chooser: pick a sense.
+- `literatures(graph)` - each literature's name, size and top concepts; bridges; and
+  concepts marked "same words, sense not checked".
+
+How to read them:
+
+1. A **merge** joins true synonyms in one sense. A **closely related link** keeps two
+   concepts apart: its note states the difference that matters, or the history when two
+   terms drifted together. Do not describe linked concepts as the same thing; give the
+   note.
+2. An **ambiguous label** is used in several senses across the literature. Never treat an
+   ambiguous label, or a concept marked "same words, sense not checked", as one concept
+   across literatures or as evidence of a cross-literature connection. Compare the claims
+   themselves, and say the senses have not been checked.
+3. A **bridge** is a checked concept (or a closely related link) that spans literatures.
+   Only bridges show a connection between literatures.
+4. Researcher decisions win: a researcher's merge, link, split, gloss or literature name
+   overrides an agent's. Glosses, link notes and literature names carry `gloss_by`,
+   `note_by` or `name_source`. Say "agent inferred" when you use an agent's text, and
+   "researcher" for the researcher's.
+5. Counts and claims leave out hidden notes and claims with no quote; cite a concept's
+   claims as you cite any claim (title, year, page), after reading the passage.
 
 ## Lenses
 

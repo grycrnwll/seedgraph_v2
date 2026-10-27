@@ -9,6 +9,9 @@ library, its context graphs and the agent work protocol.
   ``batch_list``, ``work_claim``, ``work_submit``, ``work_release``, ``batch_stop``,
   ``batch_continue``, ``batch_report_limit``; thin adapters over
   :mod:`seedgraph.work.routine`.
+- Concepts (:mod:`.tools_concepts`): ``concept_search``, ``concept_show``,
+  ``literatures``, ``concept_hubs`` and the resource ``seedgraph://graphs/{slug}/hubs``;
+  agent audience (hidden claims support nothing).
 
 Every result is a JSON object. Errors are tool errors whose text is the JSON
 ``{code, message, detail, next_action}`` (FastMCP prefixes it with
@@ -154,6 +157,7 @@ def client_name(mcp_ctx: Any) -> str | None:
 def build_server(*, home: Path | str | None = None) -> FastMCP:
     """Construct the v3 ``seedgraph`` server. ``home`` defaults to ``$SEEDGRAPH_HOME``
     (resolved once, here); nothing is read or written until a tool is called."""
+    from .tools_concepts import register_concept_tools
     from .tools_library import register_library_tools
     from .tools_work import register_work_tools
 
@@ -171,6 +175,7 @@ def build_server(*, home: Path | str | None = None) -> FastMCP:
 
     register_library_tools(server, ctx)
     register_work_tools(server, ctx)
+    register_concept_tools(server, ctx)
     server.seedgraph_context = ctx  # type: ignore[attr-defined]
     return server
 

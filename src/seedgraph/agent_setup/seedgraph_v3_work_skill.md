@@ -45,6 +45,30 @@ words; follow it. If the MCP tools are not available, the same steps exist as
 Quotes are checked against the stored paper text, so copy them exactly and make each one
 long enough to be unique.
 
+## Concept packages
+
+Batches of `concepts:merge`, `concepts:bridge` and `concepts:name_literatures` have the
+same loop, but each package is a numbered list of items, not a paper.
+
+- Read `instructions.md` once: it holds the rules, the verdict table, the answer schema
+  and worked examples. For concept tasks `labels.json` only names the frozen manifest
+  Seedgraph keeps of each package (its claim refs, papers and spans); there is nothing in
+  it to answer, so you need not open it.
+- Answer every item exactly once, by number. Cite claim refs only (`c17`); never write
+  quotes - the refs already point at anchored quotes.
+- Verdicts: `merge` (true synonyms in one sense; `name` is one of the item's labels),
+  `link` (a difference that matters, or drift; needs `note`, `quote_a` from side A and
+  `quote_b` from side B), `split` (one label used in different senses; `senses` with a
+  gloss and claim refs each), `unrelated`, `same_sense` (sense checks only) and `unsure`.
+  Give `confidence` (high, medium or low).
+- Judge meaning from the claims, never from a shared word; an item marked "ambiguous
+  label" needs a ref from each side for a merge or link.
+- When unsure between merge and link, answer link. `unsure` is an honest answer: the item
+  goes to the researcher, whose decisions always win.
+- A refusal (`invalid`) names each failing item, for example a merge vetoed by a
+  guardrail: answer link, unrelated or unsure for it and resubmit.
+- Pass `usage` (token counts) on submit when your client shows it.
+
 ## When something goes wrong
 
 - The paper text is unreadable or is not the paper the title says:
