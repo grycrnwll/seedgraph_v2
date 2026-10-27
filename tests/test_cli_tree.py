@@ -21,8 +21,8 @@ REPO = Path(__file__).resolve().parents[1]
 AGENT_DOCS = sorted((REPO / "src" / "seedgraph" / "agent_setup").glob("*.md"))
 COMMAND_DOCS = [*AGENT_DOCS, REPO / "docs" / "DEPENDENCY_POLICY.md"]
 
-CORE = {"setup", "migrate", "serve", "mcp", "convert", "work", "golden", "library", "version"}
-REMOVED = {"corpus", "cite", "sections", "spans", "lens", "concepts", "graph", "cache", "project",
+CORE = {"setup", "migrate", "serve", "mcp", "convert", "work", "golden", "library", "concepts", "version"}
+REMOVED = {"corpus", "cite", "sections", "spans", "lens", "graph", "cache", "project",
            "review", "doctor", "work-read"}
 
 

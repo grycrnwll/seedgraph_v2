@@ -11,6 +11,8 @@ this module must not depend on the hosted layer, which P8 deletes).
   and returns an :class:`OllamaReply`; ``list_models()`` reads ``/api/tags``;
   ``check()`` is the reachability probe for ``setup --probe-ollama`` and Settings.
 - :func:`complete_json` - the design's module-level form, returning the text.
+- ``embed(model, texts)`` (client method and module function) - one batched
+  ``/api/embed`` call (stage 4 §5.1); HTTP 404 is ``model_missing``.
 
 Every transport or HTTP failure raises :class:`OllamaError` with a ``code``:
 ``unreachable`` (connection refused, DNS), ``timeout``, ``model_missing`` (HTTP 404
@@ -25,7 +27,7 @@ network dependency.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
@@ -145,7 +147,8 @@ class OllamaClient:
                     detail = f": {body['error']}"
             except ValueError:
                 pass
-            code = "model_missing" if response.status_code == 404 and path == "/api/chat" else "http_error"
+            code = ("model_missing" if response.status_code == 404 and path in ("/api/chat", "/api/embed")
+                    else "http_error")
             raise OllamaError(code, f"HTTP {response.status_code} from {url}{detail}",
                               status_code=response.status_code)
         try:
@@ -188,6 +191,22 @@ class OllamaClient:
                            output_tokens=_int_or_none(data.get("eval_count")),
                            done_reason=done if isinstance(done, str) else None)
 
+    def embed(self, model: str, texts: Sequence[str], *, truncate: bool = True) -> list[list[float]]:
+        """One batched ``/api/embed`` call: a vector per text, in order (stage 4 §5.1).
+        Task prefixes (``search_document:`` ...) are the caller's: each text is sent as is."""
+        if not model:
+            raise OllamaError("model_missing", "no Ollama embedding model given")
+        texts = list(texts)
+        if not texts:
+            return []
+        data = self._request("POST", "/api/embed", json_body={"model": model, "input": texts, "truncate": truncate})
+        vectors = data.get("embeddings")
+        if not isinstance(vectors, list) or len(vectors) != len(texts) or not all(
+                isinstance(v, list) and v for v in vectors):
+            got = len(vectors) if isinstance(vectors, list) else "no"
+            raise OllamaError("invalid_response", f"/api/embed returned {got} vectors for {len(texts)} texts")
+        return [[float(x) for x in v] for v in vectors]
+
     def list_models(self, *, timeout: float | None = None) -> list[str]:
         """The model names ``/api/tags`` lists."""
         data = self._request("GET", "/api/tags", timeout=timeout)
@@ -209,6 +228,12 @@ def complete_json(model: str, system: str, user: str, schema: Mapping[str, Any] 
                   base_url: str | None = None, timeout: float = DEFAULT_TIMEOUT_S) -> str:
     """The design's ``complete_json(model, system, user, schema) -> str``."""
     return OllamaClient(base_url, timeout=timeout).complete_json(model, system, user, schema).text
+
+
+def embed(model: str, texts: Sequence[str], *, base_url: str | None = None,
+          timeout: float = DEFAULT_TIMEOUT_S) -> list[list[float]]:
+    """The design's ``llm/ollama.embed(model, texts)``."""
+    return OllamaClient(base_url, timeout=timeout).embed(model, texts)
 
 
 def check_reachable(base_url: str | None = None, *, timeout: float = DEFAULT_PROBE_TIMEOUT_S) -> Reachability:
