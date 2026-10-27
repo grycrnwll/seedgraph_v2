@@ -37,6 +37,8 @@ STAGE4 = "reserved for stage 4 (concepts/graphs/growth)"
 # module or package (``.*`` = every module under it) -> reason. Reserved roots: kept and
 # followed (their imports stay reachable).
 RESERVED = {
+    "seedgraph.concepts.*": STAGE4 + ": concept model (C1); wired to the CLI, MCP and web by C4/C5/C7",
+    "seedgraph.library.literatures": STAGE4 + ": literatures (C2); wired to the CLI, MCP and web by C7/C8/C9",
     "seedgraph.semantic.*": STAGE4 + ": concept guardrails, closure, stoplist, type fence (ADR-0013)",
     "seedgraph.graph.*": STAGE4 + ": citation graph and communities (keeps networkx)",
     "seedgraph.citation.*": STAGE4 + ": reference parsing and resolution, citation edges",

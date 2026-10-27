@@ -38,8 +38,7 @@ def test_create_graph_lays_out_folder_and_meta(lib):
         assert info.origin == "library"
         tables = {r[0] for r in g.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"schema_migrations", "graph_meta", "graph_papers", "graph_lenses"} <= tables
-        assert not tables & {"literatures", "literature_members", "traversal_records",
-                             "traversal_events"}
+        assert not tables & {"traversal_records", "traversal_events"}
     finally:
         g.close()
     assert store.is_dirty(lib.conn)
