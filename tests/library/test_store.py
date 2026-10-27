@@ -22,7 +22,7 @@ STAGE1_TABLES = {
 STAGE1_FTS = {"span_fts", "claim_fts", "note_fts"}
 STAGE1_VIEWS = {"paper_status", "paper_converter", "note_current"}
 STAGE3_VIEWS = {"note_latest", "current_claims"}  # 0009 note overlays
-RESERVED = {"concepts", "concept_members", "concept_links", "claim_concepts"}
+STAGE4_TABLES = {"concepts", "concept_members", "concept_links", "claim_concepts"}  # 0010 concepts (stage 4)
 NOW = "2026-01-01T00:00:00+00:00"
 
 
@@ -107,7 +107,7 @@ def test_open_library_creates_full_stage1_schema(tmp_path):
         assert STAGE1_TABLES <= tables
         assert STAGE1_FTS <= tables
         assert STAGE1_VIEWS | STAGE3_VIEWS == _objects(conn, "view")
-        assert not (RESERVED & tables)
+        assert STAGE4_TABLES <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
