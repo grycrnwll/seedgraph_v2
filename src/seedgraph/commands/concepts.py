@@ -7,6 +7,8 @@ Thin adapters over :mod:`seedgraph.concepts`:
     concepts embed [--model M] [--family F]  embed claim contexts not yet cached (Ollama)
     concepts eval-search --cases PATH [--out DIR] [--model M] [--classifier-model M]
                          [--protocol PATH] [--protocol-only] [--keyword-only] [--record-verdict]
+    concepts review-sample [--n 50] [--seed S]   freeze the §11.2 review sample, list it in the home
+    concepts acceptance [--inputs PATH] [--sample ID] [--out DIR]   the stage 4 acceptance report
 
 ``eval-search`` writes ``protocol.json`` (the frozen claim sets, gloss assignments and
 rules) **before** ranking anything, then ``report.md`` and ``report.json``, by default
@@ -194,3 +196,75 @@ def eval_search_cmd(
     typer.echo(f"report: {out_dir / 'report.md'}")
     if result.verdict is not None:
         typer.echo("verdict: " + ("PASS (adopt embeddings)" if result.verdict.passed else "FAIL (keep keyword)"))
+
+
+@concepts_app.command("review-sample")
+def review_sample_cmd(
+    n: int = typer.Option(50, "--n", min=1, help="Sample size."),
+    seed: int = typer.Option(0, "--seed", help="The seeded draw (stored with the sample)."),
+    root: Optional[Path] = ROOT,
+    as_json: bool = JSON,
+) -> None:
+    """Freeze the stratified review sample (§11.2) and write its list under <home>/concepts/review/."""
+    from ..concepts import acceptance as acc
+    from ..concepts import refresh as rf
+    from ..concepts import researcher as rs
+
+    with _common.cli_errors(), _common.existing_library(root) as lib:
+        rf.refresh_if_stale(lib)
+        try:
+            draw = acc.draw_sample(lib, n=n, seed=seed)
+        except rs.ResearcherError as exc:
+            _common.fail(str(exc))
+        items = acc.sample_items(lib.conn, draw.sample)
+    out = _common.home(root) / "concepts" / "review" / f"{draw.sample.sample_id}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(acc.render_sample_list(draw, items), encoding="utf-8")
+    comp = acc.composition(items)
+    body = {"sample_id": draw.sample.sample_id, "path": draw.path, "seed": draw.sample.seed, "size": comp["size"],
+            "eligible": draw.eligible, "topped_up": draw.topped_up, "list": str(out), **comp}
+    if as_json:
+        _common.echo_json(body)
+        return
+    typer.echo(f"review sample: {draw.path}")
+    typer.echo(f"size {comp['size']} {comp['by_verdict']}; ambiguous-label items {comp['ambiguous']}; "
+               f"eligible {draw.eligible}")
+    if draw.topped_up:
+        typer.echo(f"top-up: {draw.topped_up} migrated agent merges (the batch had only {draw.eligible} eligible)")
+    typer.echo(f"list: {out}")
+
+
+@concepts_app.command("acceptance")
+def acceptance_cmd(
+    inputs: Optional[Path] = typer.Option(None, "--inputs", help="Hand-entered figures (JSON; default "
+                                          "<home>/concepts/acceptance/inputs.json)."),
+    sample: Optional[str] = typer.Option(None, "--sample", help="The review sample (default: the newest)."),
+    out: Optional[Path] = typer.Option(None, "--out", help="Report folder (default <home>/concepts/acceptance/<ts>)."),
+    root: Optional[Path] = ROOT,
+) -> None:
+    """Write the stage 4 acceptance report (§11), with the researcher review and the wrong-merge gate."""
+    from ..concepts import acceptance as acc
+    from .concepts_work import readonly_library
+
+    home = _common.home(root)
+    try:
+        data_in = acc.load_inputs(inputs or home / "concepts" / "acceptance" / "inputs.json")
+    except acc.InputsError as exc:
+        _common.fail(str(exc))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_dir = out or (home / "concepts" / "acceptance" / stamp)
+    with _common.cli_errors(), readonly_library(root) as lib:
+        try:
+            data = acc.gather(lib.conn, home, data_in, sample_id=sample)
+        except acc.InputsError as exc:
+            _common.fail(str(exc))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "report.md").write_text(acc.render(data), encoding="utf-8")
+    (out_dir / "report.json").write_text(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False),
+                                         encoding="utf-8")
+    typer.echo(f"report: {out_dir / 'report.md'}")
+    review = data["review"]
+    if review is not None:
+        gate = review["gate_passed"]
+        typer.echo("gate: " + ("pending" if gate is None else "PASS" if gate else "FAIL")
+                   + f" ({review['marked']} of {review['size']} marked)")
