@@ -132,7 +132,19 @@ def wait_for_worker(home: Path, batch_id: str, pid: str, timeout_s: float) -> di
         time.sleep(15)
 
 
-def _saved(page) -> str:
+def _version(page) -> int:
+    return int(page.get_attribute("#sg-notes", "data-expected-version"))
+
+
+def _saved(page, before: int | None = None) -> str:
+    """Wait for the notes pane swap that answers a save (its version moves past
+    ``before`` when given; otherwise the old pane's message could be read) and check the
+    success message."""
+    if before is not None:
+        page.wait_for_function(
+            "(v) => { const n = document.querySelector('#sg-notes');"
+            " return n && parseInt(n.getAttribute('data-expected-version'), 10) > v; }",
+            arg=before, timeout=30_000)
     page.wait_for_selector("#sg-notes [data-notes-message]", timeout=30_000)
     msg = page.inner_text("#sg-notes [data-notes-message]")
     cls = page.get_attribute("#sg-notes [data-notes-message]", "class") or ""
@@ -143,6 +155,7 @@ def _saved(page) -> str:
 def _select_in_pdf(page) -> bool:
     """Select a long text-layer span on a rendered page and ask for the anchor; True when
     the add form came back with an exact unique slice."""
+    page.wait_for_selector(".page[data-page-number] .textLayer span", timeout=30_000)
     spans = page.query_selector_all(".page[data-page-number] .textLayer span")
     tried = 0
     for span in spans:
@@ -154,9 +167,16 @@ def _select_in_pdf(page) -> bool:
                          const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
                          document.dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); }""")
         page.wait_for_selector("#sg-selection-bar:not([hidden])", timeout=5_000)
-        page.click("[data-add-from-selection]")
-        page.wait_for_selector("#sg-add-claim .sg-anchor", timeout=15_000)
-        if page.get_attribute("#sg-add-claim .sg-anchor", "data-anchor-status") == "ok":
+        # wait for this attempt's answer, not the previous attempt's box
+        with page.expect_response(lambda r: r.request.method == "POST" and r.url.endswith("/anchor")):
+            page.click("[data-add-from-selection]")
+        page.wait_for_function("() => { const a = document.querySelector('#sg-add-claim .sg-anchor');"
+                               " return a && !a.hasAttribute('data-sg-seen'); }", timeout=15_000)
+        status = page.get_attribute("#sg-add-claim .sg-anchor", "data-anchor-status")
+        page.eval_on_selector("#sg-add-claim .sg-anchor", "(a) => a.setAttribute('data-sg-seen', '')")
+        if status == "ok":
+            page.wait_for_selector("[data-anchor-form] input[name=normalized_label]", state="visible",
+                                   timeout=15_000)
             return True
     return False
 
@@ -171,9 +191,11 @@ def _drop_pdf(page, base: str, home: Path, inp: dict[str, Any], step) -> str:
     deadline = time.monotonic() + float(inp.get("convert_timeout_s", 3600))
     strip = ""
     seen_converting = False
+    own_line = None
     while time.monotonic() < deadline:
         strip = page.inner_text("#sg-jobs")
         seen_converting = seen_converting or "convert" in strip.lower()
+        own_line = own_line or _own_check_line(page, inp["pdf"].name)
         # the strip may stay active for other queued conversions: wait for this PDF's text
         if _paper_for_hash(home, inp["sha"], converted=True):
             break
@@ -181,13 +203,24 @@ def _drop_pdf(page, base: str, home: Path, inp: dict[str, Any], step) -> str:
     pid = _paper_for_hash(home, inp["sha"], converted=True)
     assert pid, strip
     page.goto(f"{base}/library")
-    strip = page.inner_text("#sg-jobs")
-    check_shown = any(t in strip for t in ("PDF matches the paper", "PDF probably matches", "may not be this paper",
-                                            "could not check"))
-    step("drop PDF", paper_id=pid, saw_converting=seen_converting, standing_check_shown=check_shown,
-         strip=strip[-1500:])
-    assert check_shown, strip
+    own_line = own_line or _own_check_line(page, inp["pdf"].name)
+    step("drop PDF", paper_id=pid, saw_converting=seen_converting, standing_check=own_line)
+    assert own_line, f"no job-strip line for {inp['pdf'].name} with its standing check: {strip[-1500:]}"
     return pid
+
+
+CHECK_PHRASES = ("PDF matches the paper", "PDF probably matches the paper", "this PDF may not be this paper",
+                 "could not check")
+
+
+def _own_check_line(page, filename: str) -> str | None:
+    """The job-strip line the ingest job wrote for this PDF (``<file>: new paper; <check>...``),
+    when it carries a standing-check result; else None."""
+    for li in page.query_selector_all("#sg-jobs .sg-job-lines li"):
+        text = (li.text_content() or "").strip()
+        if text.startswith(f"{filename}:") and any(p in text for p in CHECK_PHRASES):
+            return text
+    return None
 
 
 def _write_notes(page, base: str, pid: str, graph: str, step) -> str:
@@ -291,6 +324,9 @@ def test_walkthrough():
         # 5. edit (re-word, re-label, re-type), hide, add assertion, add quote-backed by PDF selection
         page.goto(f"{base}/papers/{pid}?layout=split")
         bs.wait_pdf_ready(page)
+        # Hidden claims are not listed, so on a resume after a partial run the first two listed
+        # claims are still visible ones; the step works from the current head version.
+        head_before = _version(page)
         articles = page.query_selector_all("article[data-claim-id]")
         edit_art, hide_art = articles[0], articles[1]
         edit_id, hide_id = edit_art.get_attribute("data-claim-id"), hide_art.get_attribute("data-claim-id")
@@ -301,21 +337,29 @@ def test_walkthrough():
         edit_art.query_selector("select[name=claim_type]").select_option(new_type)
         edit_art.query_selector("input[name=normalized_label]").fill(f"relabelled {EDIT_TOKEN}")
         edit_art.query_selector("textarea[name=claim_text]").fill(f"Researcher re-wording {EDIT_TOKEN}.")
-        edit_art.query_selector("button[type=submit]").click()
-        _saved(page)
+        v = _version(page)
+        edit_art.query_selector("details.sg-claim-edit button[type=submit]").click()
+        _saved(page, v)
+        v = _version(page)
         page.click(f"#claim-{hide_id} form[action$='/notes/hide'] button")
-        _saved(page)
-        hide_version = int(page.get_attribute("#sg-notes", "data-expected-version"))
-        page.fill("form[action$='/notes/add'] input[name=normalized_label]", f"assertion {EDIT_TOKEN}")
-        page.fill("form[action$='/notes/add'] textarea[name=claim_text]", f"An invented assertion {EDIT_TOKEN}.")
-        page.click("form[action$='/notes/add'] button[type=submit]")
-        _saved(page)
+        _saved(page, v)
+        hide_version = _version(page)
+        assert page.query_selector(f"#claim-{hide_id}") is None, "the hidden claim is still listed"
+        # the add-assertion form sits in a closed <details>: open it the way a person would
+        v = _version(page)
+        page.click("details.sg-add-assertion summary")
+        page.fill("details.sg-add-assertion input[name=normalized_label]", f"assertion {EDIT_TOKEN}")
+        page.fill("details.sg-add-assertion textarea[name=claim_text]", f"An invented assertion {EDIT_TOKEN}.")
+        page.click("details.sg-add-assertion button[type=submit]")
+        _saved(page, v)
         assert _select_in_pdf(page), "no PDF selection anchored uniquely"
         page.fill("[data-anchor-form] input[name=normalized_label]", f"selected {EDIT_TOKEN}")
         page.fill("[data-anchor-form] textarea[name=claim_text]", f"A claim from a PDF selection {EDIT_TOKEN}.")
+        v = _version(page)
         page.click("[data-anchor-form] button[type=submit]")
-        _saved(page)
-        step("edits", edit=edit_id, hide=hide_id, new_type=new_type, hide_version=hide_version)
+        _saved(page, v)
+        step("edits", head_before=head_before, edit=edit_id, hide=hide_id, new_type=new_type,
+             hide_version=hide_version, head_after=_version(page))
 
         # 6. search, hidden gone, MCP paper_show labels
         from seedgraph.library import search
@@ -332,8 +376,9 @@ def test_walkthrough():
 
         # 7. revert to the version before the hide; History lists every version
         page.click("details[data-history] summary")
+        v = _version(page)
         page.click(f"details[data-history] li[data-version='{hide_version - 1}'] form button")
-        _saved(page)
+        _saved(page, v)
         assert page.query_selector(f"#claim-{hide_id}") is not None
         page.click("details[data-history] summary")
         versions = [int(li.get_attribute("data-version")) for li in page.query_selector_all("details[data-history] li[data-version]")]
@@ -342,19 +387,28 @@ def test_walkthrough():
         assert sorted(versions) == list(range(1, head + 1)), versions
 
         # 8. the Library list's PDF button opens the PDF
-        page.goto(f"{base}/library?view=held&graph={graph}")
-        link = page.query_selector(f"tr[data-paper='{pid}'] a.sg-pdf-button")
-        if link is None:
-            page.goto(f"{base}/library?view=all")
+        # The list is paged (100 rows) and ordered by title, untitled papers last: page
+        # through the graph's held view the way a person would.
+        link = None
+        for page_no in range(1, 50):
+            page.goto(f"{base}/library?view=held&graph={graph}&page={page_no}")
             link = page.query_selector(f"tr[data-paper='{pid}'] a.sg-pdf-button")
-        assert link is not None
+            rows = page.query_selector_all("tr[data-paper]")
+            if link is not None or not rows or f"page={page_no + 1}" not in page.content():
+                break
+        assert link is not None, f"{pid} has no PDF button in the {graph} held list"
         href = link.get_attribute("href")
         resp = ctx.request.get(f"{base}{href}")
-        with ctx.expect_page() as new:
-            link.click()
+        # The headless shell has no PDF viewer: the new tab hands the PDF to a download instead
+        # of showing it (no "load", empty URL). So the check is: a new tab opens, it requests
+        # the PDF URL, and that URL answers 200 application/pdf.
+        with ctx.expect_event("response", predicate=lambda r: r.url.endswith(href)) as tab_resp:
+            with ctx.expect_page() as new:
+                link.click()
         pdf_page = new.value
-        pdf_page.wait_for_load_state()
         step("PDF button", href=href, status=resp.status, content_type=resp.headers.get("content-type"),
-             opened=pdf_page.url)
+             new_tab=True, tab_request=tab_resp.value.url, tab_status=tab_resp.value.status,
+             tab_url=pdf_page.url)
         assert resp.status == 200 and resp.headers.get("content-type", "").startswith("application/pdf")
-        assert pdf_page.url.endswith(href)
+        assert tab_resp.value.frame.page == pdf_page or pdf_page.url in ("", tab_resp.value.url)
+        assert tab_resp.value.status == 200
