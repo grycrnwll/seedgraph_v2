@@ -2,23 +2,109 @@
 {% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
 {% from "_pdf_button.html" import paper_title %}
 {% block content %}
-<h1>{{ view.display_name }}</h1>
-<p><code>{{ view.slug }}</code> · {{ view.members }} members · {{ view.seeds }} seeds · {{ view.frontier }} on the frontier
-  · <a href="/library?view=needs-notes&amp;graph={{ view.slug }}">papers needing notes</a>
-  · <a href="/library?view=needs-pdf&amp;graph={{ view.slug }}">frontier papers needing a PDF</a></p>
+{% set d = view.detail %}
+{% include "graphs/_tabs.html" %}
 <div class="sg-columns">
   <div class="sg-column-main">
+    <h2>Literatures</h2>
+    {% if not view.grouped %}
+    <p>No literatures yet. Grouping reads the citations between this graph's members.</p>
+    <form method="post" action="/graphs/{{ d.slug }}/literatures/regroup" class="sg-inline-form">
+      {{ csrf_input }}
+      <button type="submit">Group literatures</button>
+    </form>
+    {% else %}
+    {% if view.stale %}
+    <div class="sg-section sg-warn" role="status">Literatures are out of date: members or citations changed since they were grouped.
+      <form method="post" action="/graphs/{{ d.slug }}/literatures/regroup" class="sg-inline-form">
+        {{ csrf_input }}
+        <button type="submit">Regroup</button>
+      </form>
+    </div>
+    {% endif %}
+    {% if view.unstable %}<p class="sg-hint">Groupings are unstable (agreement across seeds {{ "%.2f"|format(view.ari_mean) }}); treat the literature boundaries loosely.</p>{% endif %}
+    <p class="sg-hint">Resolution {{ view.resolution }} (chosen by {{ view.chosen_by }}{% if not view.rule_met %}; the size rule was not met, best modularity used{% endif %}).
+      {% if view.unplaced %}{{ view.unplaced }} member{{ "" if view.unplaced == 1 else "s" }} unplaced (no in-graph citation, or a group under 5).{% endif %}</p>
+    <div class="sg-inline-form">
+      {% if view.can_fewer %}
+      <form method="post" action="/graphs/{{ d.slug }}/literatures/step" class="sg-inline-form">
+        {{ csrf_input }}
+        <input type="hidden" name="direction" value="fewer">
+        <button type="submit">Fewer literatures</button>
+      </form>
+      {% endif %}
+      {% if view.can_more %}
+      <form method="post" action="/graphs/{{ d.slug }}/literatures/step" class="sg-inline-form">
+        {{ csrf_input }}
+        <input type="hidden" name="direction" value="more">
+        <button type="submit">More literatures</button>
+      </form>
+      {% endif %}
+    </div>
     <table class="sg-table">
-      <thead><tr><th>Paper</th><th>Year</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+      <thead><tr><th>Literature</th><th>Papers</th><th>Top concepts</th><th>Rename</th></tr></thead>
       <tbody>
-        {% for m in view.rows %}
+        {% for lit in view.literatures %}
+        <tr>
+          <td>{{ lit.name }}{% if lit.name_source %} <span class="sg-badge">{{ lit.name_source }}</span>{% endif %}
+            {% if lit.description %}<br><span class="sg-hint">{{ lit.description }} (agent inferred)</span>{% endif %}</td>
+          <td>{{ lit.size }}</td>
+          <td>{% for c in lit.top_concepts %}<a href="{{ concept_href(c.handle) }}">{{ c.name }}</a> ({{ c.papers }}){% if not loop.last %}, {% endif %}{% endfor %}</td>
+          <td>
+            <form method="post" action="/graphs/{{ d.slug }}/literatures/rename" class="sg-inline-form">
+              {{ csrf_input }}
+              <input type="hidden" name="literature_id" value="{{ lit.literature_id }}">
+              <label>Name <input type="text" name="name" value="{{ lit.name if lit.name_source == 'researcher' else '' }}" maxlength="80"></label>
+              <button type="submit">Rename</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    <h2>Bridges</h2>
+    {% if view.bridges %}
+    <ul>
+      {% for b in view.bridges %}
+      {% if b.kind == "concept" %}
+      <li><a href="{{ concept_href(b.handle) }}">{{ b.name }}</a> <span class="sg-badge">{{ b.family }}</span>
+        spans {{ b.literature_count }} literatures ({{ b.literatures|join(", ") }}), {{ b.papers }} papers</li>
+      {% else %}
+      <li><a href="{{ concept_href(b.a.handle) }}">{{ b.a.name }}</a> ({{ b.a.literatures|join(", ") }})
+        closely related to <a href="{{ concept_href(b.b.handle) }}">{{ b.b.name }}</a> ({{ b.b.literatures|join(", ") }})
+        {% if b.note %}: {{ b.note }}{% if b.note_by %} <span class="sg-badge">{{ b.note_by }}</span>{% endif %}{% endif %}</li>
+      {% endif %}
+      {% endfor %}
+    </ul>
+    {% elif view.grouped %}<p>No bridges yet.</p>
+    {% else %}<p>Bridges appear once the literatures are grouped.</p>{% endif %}
+
+    {% if view.unchecked %}
+    <h2>Same words, sense not checked</h2>
+    <p class="sg-hint">These words appear in several literatures, but no one has checked they mean the same thing. They are not bridges; a sense check (a concepts:bridge batch) settles them.</p>
+    <ul>
+      {% for u in view.unchecked %}
+      <li><a href="{{ concept_href(u.handle) }}">{{ u.name }}</a> <span class="sg-badge">{{ u.reason }}</span>
+        in {{ u.literatures|join(", ") }} ({{ u.papers }} papers)</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <h2>Papers</h2>
+    <table class="sg-table">
+      <thead><tr><th>Paper</th><th>Year</th><th>Status</th><th>Literature</th><th>Notes</th><th></th></tr></thead>
+      <tbody>
+        {% for m in d.rows %}
         <tr>
           <td>{{ paper_title(m.paper_id, m.title, m.held) }}{% if not m.held %} <span class="sg-badge">cited-only</span>{% endif %}</td>
           <td>{{ m.year or "" }}</td>
           <td>{{ m.status }}{% if m.is_seed %} <span class="sg-badge">seed</span>{% endif %}</td>
+          <td>{{ m.literature or ("unplaced" if m.status == "member" and view.grouped else "") }}</td>
           <td>{{ m.note_state if m.held else "" }}</td>
           <td>
-            <form method="post" action="/graphs/{{ view.slug }}/remove">
+            <form method="post" action="/graphs/{{ d.slug }}/remove">
               {{ csrf_input }}
               <input type="hidden" name="paper_id" value="{{ m.paper_id }}">
               <button type="submit">Remove from graph</button>
@@ -26,13 +112,13 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5">No papers in this graph yet.</td></tr>
+        <tr><td colspan="6">No papers in this graph yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>
 
     <h2>Add a paper</h2>
-    <form method="post" action="/graphs/{{ view.slug }}/add" class="sg-inline-form">
+    <form method="post" action="/graphs/{{ d.slug }}/add" class="sg-inline-form">
       {{ csrf_input }}
       <label>Paper id <input type="text" name="paper_id" required placeholder="lp_..."></label>
       <label>As <select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></label>
@@ -42,10 +128,17 @@
     <p class="sg-hint">A cited-only paper can join the frontier; it becomes a member once its PDF is added.</p>
   </div>
   <aside class="sg-column-side">
+    <h2>Next steps</h2>
+    <ul>
+      {% if not view.grouped or view.stale %}<li>Group or regroup the literatures.</li>{% endif %}
+      {% for lit in view.literatures if not lit.name_source %}{% if loop.first %}<li>{{ loop.length }} unnamed literature{{ "" if loop.length == 1 else "s" }}: rename them, or run a concepts:name_literatures batch.</li>{% endif %}{% endfor %}
+      {% if view.unchecked %}<li>{{ view.unchecked|length }} same-words concept{{ "" if view.unchecked|length == 1 else "s" }} to sense-check.</li>{% endif %}
+      <li><a href="/graphs/{{ d.slug }}/grow">Grow this graph</a></li>
+    </ul>
     <h2>Lenses</h2>
-    {% if view.lenses %}<ul>{% for l in view.lenses %}<li><code>{{ l }}</code></li>{% endfor %}</ul>
+    {% if d.lenses %}<ul>{% for l in d.lenses %}<li><code>{{ l }}</code></li>{% endfor %}</ul>
     {% else %}<p>No lens chosen.</p>{% endif %}
-    <p class="sg-placeholder">The graph view, literatures and growth arrive in stage 4.</p>
+    <p><a href="/graphs/{{ d.slug }}/lenses">Choose lenses</a></p>
   </aside>
 </div>
 {% endblock %}

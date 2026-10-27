@@ -219,6 +219,8 @@ class ThreadLibraries:
 
 JobState = Literal["queued", "running", "done", "failed"]
 CONVERT = "convert"
+#: ``hook(lib, paper_ids)`` run after a successful conversion; a returned string joins the job message.
+AfterConvert = Callable[[Library, tuple[str, ...]], Any]
 
 
 @dataclass(frozen=True)
@@ -285,6 +287,7 @@ class JobRunner:
         self._idle = threading.Condition(self._lock)
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._active_convert: dict[str, str] = {}  # source_file_id -> job_id
+        self._then: dict[str, list[AfterConvert]] = {}  # source_file_id -> after-conversion hooks
         self._convert_q: queue.Queue = queue.Queue()
         self._general_q: queue.Queue = queue.Queue()
         self._threads: list[threading.Thread] = []
@@ -323,8 +326,9 @@ class JobRunner:
             self._spawn(f"sg-jobs-{i}", self._general_q)
         return self.resume_queue()
 
-    def resume_queue(self) -> list[str]:
-        """Submit every file waiting in ``conversion_queue`` that has no active job."""
+    def resume_queue(self, *, then: AfterConvert | None = None) -> list[str]:
+        """Submit every file waiting in ``conversion_queue`` that has no active job
+        (``then``: as for :meth:`convert`, for each of them)."""
         from ..library import files
 
         lib = open_library_at(self.lib_dir)
@@ -332,11 +336,18 @@ class JobRunner:
             waiting = files.queued_files(lib)
         finally:
             lib.close()
-        return [self.convert(sf) for sf in waiting]
+        return [self.convert(sf, then=then) for sf in waiting]
 
-    def convert(self, source_file_id: str, *, label: str | None = None) -> str:
-        """Queue one conversion; an already active one for the file is returned as is."""
+    def convert(self, source_file_id: str, *, label: str | None = None, then: AfterConvert | None = None) -> str:
+        """Queue one conversion; an already active one for the file is returned as is.
+
+        ``then(lib, paper_ids)`` runs on the conversion thread after a successful
+        conversion of this file (also when the job was already active), e.g. parsing the
+        new paper's references. Its failure is noted in the job message; the conversion
+        stays done."""
         with self._lock:
+            if then is not None:
+                self._then.setdefault(source_file_id, []).append(then)
             existing = self._active_convert.get(source_file_id)
             if existing is not None:
                 return existing
@@ -420,8 +431,17 @@ class JobRunner:
             outcome = files.convert_file(lib, source_file_id, backend=WarmMarkerBackend(self.pool))
             if outcome.status == "failed":
                 raise JobFailed(outcome.error or "conversion failed", paper_ids=outcome.paper_ids)
-            return JobResult(f"converted ({outcome.text_quality or 'text not assessed'})",
-                             paper_ids=outcome.paper_ids)
+            message = f"converted ({outcome.text_quality or 'text not assessed'})"
+            with self._lock:
+                hooks = self._then.pop(source_file_id, [])
+            for hook in hooks:
+                try:
+                    note = hook(lib, tuple(outcome.paper_ids))
+                except Exception as exc:  # noqa: BLE001 - a follow-up never undoes the conversion
+                    note = f"follow-up failed: {type(exc).__name__}: {exc}"
+                if note:
+                    message += f"; {note}"
+            return JobResult(message, paper_ids=outcome.paper_ids)
         return run
 
     def _spawn(self, name: str, q: queue.Queue) -> None:

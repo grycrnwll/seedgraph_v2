@@ -1,0 +1,11 @@
+{#- The graph page header and its tabs. Needs ``d`` (a GraphDetail), ``tabs`` and ``tab``. -#}
+<h1>{{ d.display_name }}</h1>
+<p><code>{{ d.slug }}</code> · {{ d.members }} member{{ "" if d.members == 1 else "s" }} · {{ d.seeds }} seed{{ "" if d.seeds == 1 else "s" }} · {{ d.frontier }} on the frontier
+  · <a href="/library?view=needs-notes&amp;graph={{ d.slug }}">papers needing notes</a>
+  · <a href="/library?view=needs-pdf&amp;graph={{ d.slug }}">frontier papers needing a PDF</a></p>
+<nav class="sg-tabs" aria-label="Graph">
+  {% for path, text in tabs %}
+  {% set href = "/graphs/" ~ d.slug ~ ("/" ~ path if path else "") %}
+  <a href="{{ href }}"{% if tab == path %} aria-current="page"{% endif %}>{{ text }}</a>
+  {% endfor %}
+</nav>

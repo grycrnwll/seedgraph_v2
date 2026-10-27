@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set d = detail %}
+{% include "graphs/_tabs.html" %}
+<nav class="sg-tabs" aria-label="Graph view">
+  {% for v, text in [("concept", "Concepts"), ("citation", "Citations")] %}
+  <a href="/graphs/{{ d.slug }}/graph?view={{ v }}" hx-get="/graphs/{{ d.slug }}/graph/svg?view={{ v }}" hx-target="#sg-graph-figure" hx-swap="outerHTML"{% if g.view == v %} aria-current="page"{% endif %}>{{ text }}</a>
+  {% endfor %}
+</nav>
+{% include "graphs/_svg.html" %}
+{% endblock %}

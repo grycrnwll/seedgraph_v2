@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+{% set d = view.detail %}
+{% include "graphs/_tabs.html" %}
+<h2>Add to this graph?</h2>
+<p>{{ paper_title(view.paper.paper_id, view.paper.title, view.paper.held) }}{% if view.paper.year %} ({{ view.paper.year }}){% endif %}
+  shares <strong>{{ view.paper.via }}</strong>{% if view.paper.via != view.concept_name %} (closely related to {{ view.concept_name }}){% endif %} with this graph.</p>
+<p>It will join <strong>as a {{ view.paper.joins_as }}</strong>{% if not view.paper.held %} (it is cited-only: it becomes a member once its PDF is added){% endif %}.</p>
+<form method="post" action="/graphs/{{ d.slug }}/suggestions/add" class="sg-inline-form">
+  {{ csrf_input }}
+  <input type="hidden" name="paper_id" value="{{ view.paper.paper_id }}">
+  <button type="submit">Add as {{ view.paper.joins_as }}</button>
+</form>
+<p><a href="/graphs/{{ d.slug }}/concepts">Back to the concepts</a></p>
+{% endblock %}

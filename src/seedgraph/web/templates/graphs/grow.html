@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+{% set d = view.detail %}
+{% include "graphs/_tabs.html" %}
+<p class="sg-hint">Growth is never automatic: the walk only finds papers, and nothing joins this graph until you approve it. Only open-access copies are fetched; a PDF you supply is always welcome.</p>
+
+<h2>1. Seeds, depth and cap</h2>
+<form method="get" action="/graphs/{{ d.slug }}/grow" class="sg-add-form">
+  <fieldset>
+    <legend>Seeds (the walk follows their references)</legend>
+    {% for s in view.seeds %}
+    <label><input type="checkbox" name="seed" value="{{ s.paper_id }}"{% if s.checked %} checked{% endif %}> {{ s.title or s.paper_id }}{% if s.year %} ({{ s.year }}){% endif %}</label><br>
+    {% else %}
+    <p>No members to start from.</p>
+    {% endfor %}
+  </fieldset>
+  <label>Depth <select name="depth">{% for n in range(1, view.max_depth + 1) %}<option value="{{ n }}"{% if n == view.depth %} selected{% endif %}>{{ n }}</option>{% endfor %}</select></label>
+  <label>At most <input type="number" name="cap" min="1" max="500" value="{{ view.cap }}"> new papers per generation</label>
+  <input type="hidden" name="estimate" value="1">
+  <button type="submit">Estimate</button>
+</form>
+{% if view.estimate %}
+<p>Estimate (no network): {{ view.estimate.expected_papers }} papers at most, about {{ view.estimate.api_calls }} provider calls, about {{ view.estimate.est_disk_mb }} MB if every paper had an open-access PDF.</p>
+{% endif %}
+
+<h2>2. Walk the references</h2>
+<form method="post" action="/graphs/{{ d.slug }}/grow/walk" class="sg-inline-form">
+  {{ csrf_input }}
+  {% for s in view.seeds if s.checked %}<input type="hidden" name="seed" value="{{ s.paper_id }}">{% endfor %}
+  <input type="hidden" name="depth" value="{{ view.depth }}">
+  <input type="hidden" name="cap" value="{{ view.cap }}">
+  <button type="submit">Run the walk ({{ view.seeds|selectattr("checked")|list|length }} seeds, depth {{ view.depth }}, cap {{ view.cap }})</button>
+</form>
+{% with slug = d.slug, jobs = view.jobs %}{% include "graphs/_growth_jobs.html" %}{% endwith %}
+
+<h2>3. Review found papers</h2>
+{% if view.found or view.suggestions %}
+<form method="post" action="/graphs/{{ d.slug }}/grow/approve">
+  {{ csrf_input }}
+  <table class="sg-table">
+    <thead><tr><th>Paper</th><th>Year</th><th>Cited by members</th><th>Open access</th><th>Why</th><th>Choose</th></tr></thead>
+    <tbody>
+      {% for r in (view.found|list) + (view.suggestions|list) %}
+      <tr>
+        <td>{{ paper_title(r.paper_id, r.title, r.held) }}{% if not r.held %} <span class="sg-badge">cited-only</span>{% endif %}{% if r.source == "concepts" %} <span class="sg-badge">from concepts</span>{% endif %}
+          {% if r.doi_url %}<a href="{{ r.doi_url }}" rel="noopener noreferrer" target="_blank">DOI</a>{% endif %}</td>
+        <td>{{ r.year or "" }}</td>
+        <td>{{ r.cited_by_members }}</td>
+        <td>{% if r.oa == "held" %}already held{% else %}<span>{{ r.oa }}</span>{% endif %}</td>
+        <td>{{ r.reasons|join("; ") }}</td>
+        <td>
+          {% for ch in r.choices %}<label><input type="radio" name="choice:{{ r.paper_id }}" value="{{ ch }}"> {{ ch }}</label> {% endfor %}
+          <label><input type="radio" name="choice:{{ r.paper_id }}" value="skip" checked> skip</label>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <button type="submit">Approve the chosen papers</button>
+</form>
+<p class="sg-hint">Held papers can join as members; cited-only ones join the frontier and get one open-access attempt. Approving never starts a notes batch.</p>
+{% else %}
+<p>Nothing to review yet: run the walk.</p>
+{% endif %}
+
+<h2>Needs a PDF</h2>
+{% if view.needs_pdf %}
+<p class="sg-hint">Frontier papers with no open-access copy. Add the PDF yourself (drop it on the paper page or the Library).</p>
+<ul>
+  {% for n in view.needs_pdf %}
+  <li>{{ paper_title(n.paper_id, n.title, False) }}{% if n.year %} ({{ n.year }}){% endif %}
+    {% if n.doi_url %}<a href="{{ n.doi_url }}" rel="noopener noreferrer" target="_blank">{{ n.doi }}</a>{% else %}<span class="sg-hint">no DOI</span>{% endif %}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>No frontier paper is waiting for a PDF.</p>
+{% endif %}
+{% endblock %}

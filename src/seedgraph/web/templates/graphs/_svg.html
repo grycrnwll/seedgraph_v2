@@ -1,0 +1,25 @@
+{#- The server-rendered graph (views/graph_svg.py). Presentation attributes and classes only. -#}
+<div id="sg-graph-figure">
+<p class="sg-hint">{% if g.view == "concept" %}Top concepts: size grows with papers; a line joins concepts that share at least two papers, dashed lines are closely related links; a ring marks a bridge.{% else %}Member papers coloured by literature; lines are citations between members.{% endif %}
+  {% if g.omitted %}{{ g.omitted }} unplaced paper{{ "" if g.omitted == 1 else "s" }} not drawn.{% endif %}</p>
+{% if g.note %}<p>{{ g.note }}</p>{% endif %}
+<svg xmlns="http://www.w3.org/2000/svg" class="sg-graph-svg sg-graph-{{ g.view }}" viewBox="0 0 {{ g.width }} {{ g.height }}" width="100%" role="img" aria-label="{{ 'Concept graph' if g.view == 'concept' else 'Citation graph' }}">
+<g class="sg-edges">
+{%- for e in g.edges %}
+<line class="sg-edge{{ ' sg-edge-link' if e.dashed else '' }}" data-a="{{ e.a }}" data-b="{{ e.b }}" x1="{{ '%.1f'|format(e.x1) }}" y1="{{ '%.1f'|format(e.y1) }}" x2="{{ '%.1f'|format(e.x2) }}" y2="{{ '%.1f'|format(e.y2) }}" stroke="#8c8c8c" stroke-opacity="0.6" stroke-width="{{ '%.1f'|format(e.width) }}"{% if e.dashed %} stroke-dasharray="5 3"{% endif %}/>
+{%- endfor %}
+</g>
+<g class="sg-nodes">
+{%- for n in g.nodes %}
+<a class="sg-node" href="{{ n.href }}" data-node="{{ n.node_id }}"><circle class="{{ n.css }}{{ ' sg-bridge' if n.ring else '' }}" cx="{{ '%.1f'|format(n.x) }}" cy="{{ '%.1f'|format(n.y) }}" r="{{ '%.1f'|format(n.r) }}" fill="{{ n.fill }}"{% if n.ring %} stroke="#222222" stroke-width="2.5"{% else %} stroke="#ffffff" stroke-width="1"{% endif %}><title>{{ n.title }}</title></circle>{% if n.label %}<text x="{{ '%.1f'|format(n.x + n.r + 2) }}" y="{{ '%.1f'|format(n.y + 3) }}" font-size="10" fill="#333333">{{ n.label }}</text>{% endif %}</a>
+{%- endfor %}
+</g>
+</svg>
+{% if g.legend %}
+<ul class="sg-legend">
+  {% for css, fill, name in g.legend %}
+  <li><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><circle class="{{ css }}" cx="6" cy="6" r="5" fill="{{ fill }}"/></svg> {{ name }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+</div>

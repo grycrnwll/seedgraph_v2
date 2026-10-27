@@ -33,10 +33,8 @@ Every view refreshes the derived concept tables first when they are stale.
 from __future__ import annotations
 
 import json
-import math
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .server import READ, tool_error
@@ -46,6 +44,7 @@ if TYPE_CHECKING:
 
     from mcp.server.fastmcp import FastMCP
 
+    from ..concepts.bridges import Checks, Concept, SenseMeta, Slice, Support
     from ..concepts.model import SenseKey
     from ..library.store import Library
     from .server import V3Context
@@ -74,9 +73,9 @@ AGENT_RULES = (
 
 
 def _by(decided_by: str | None) -> str | None:
-    if decided_by is None:
-        return None
-    return "researcher" if decided_by == "researcher" else ("rule" if decided_by == "rule" else "agent inferred")
+    from ..concepts.bridges import by
+
+    return by(decided_by)
 
 
 def _bounded(value: int, name: str, lower: int, upper: int) -> int:
@@ -106,44 +105,13 @@ def _members_of_graph(lib: Library, graph: str) -> set[str]:
         return {p.paper_id for p in graphs.membership(g, status="member")}
 
 
-# --- the agent-visible support ------------------------------------------------------------------
+# --- the agent-visible support (shared with the web graph pages: concepts/bridges.py) ---------------
 
-@dataclass(frozen=True)
-class _Claim:
-    claim_id: str
-    paper_id: str
-    key: SenseKey
-    concept_id: str | None
+def _Support(conn: sqlite3.Connection, papers: set[str] | None = None,  # was a class here
+             families: Iterable[str] | None = None) -> Support:
+    from ..concepts.bridges import Support
 
-
-class _Support:
-    """The supporting, agent-visible claims (optionally inside a set of papers), by sense and
-    by concept."""
-
-    def __init__(self, conn: sqlite3.Connection, papers: set[str] | None = None,
-                 families: Iterable[str] | None = None) -> None:
-        from ..concepts.model import SenseKey
-
-        fams = set(families) if families else None
-        self.claims: dict[str, _Claim] = {}
-        self.by_sense: dict[SenseKey, list[_Claim]] = defaultdict(list)
-        self.by_concept: dict[str, list[_Claim]] = defaultdict(list)
-        for r in conn.execute(
-                "SELECT claim_id, paper_id, family, label_key, sense_id, concept_id FROM claim_concepts "
-                "WHERE supports = 1 AND agent_visible = 1 AND sense_id IS NOT NULL ORDER BY paper_id, claim_id"):
-            if (papers is not None and r[1] not in papers) or (fams is not None and r[2] not in fams):
-                continue
-            c = _Claim(r[0], r[1], SenseKey(r[2], r[3], r[4]), r[5])
-            self.claims[c.claim_id] = c
-            self.by_sense[c.key].append(c)
-            if c.concept_id:
-                self.by_concept[c.concept_id].append(c)
-
-    def papers(self, claims: Iterable[_Claim]) -> set[str]:
-        return {c.paper_id for c in claims}
-
-    def concept_papers(self) -> dict[str, set[str]]:
-        return {cid: self.papers(cs) for cid, cs in self.by_concept.items()}
+    return Support(conn, papers, families, agent_only=True)
 
 
 # --- shared lookups -----------------------------------------------------------------------------
@@ -180,87 +148,23 @@ def _claim_view(conn: sqlite3.Connection, row: Any, key: SenseKey | None = None)
     return out
 
 
-@dataclass(frozen=True)
-class _SenseMeta:
-    gloss: str | None
-    gloss_by: str | None
-    state: str | None
+def _sense_meta(conn: sqlite3.Connection) -> dict[SenseKey, SenseMeta]:
+    from ..concepts.bridges import sense_meta
+
+    return sense_meta(conn)
 
 
-def _sense_meta(conn: sqlite3.Connection) -> dict[SenseKey, _SenseMeta]:
-    from ..concepts.model import SenseKey
+def _concepts(conn: sqlite3.Connection) -> dict[str, Concept]:
+    """The concepts as the agent audience sees them (agent-visible support only)."""
+    from ..concepts.bridges import concepts
 
-    return {SenseKey(r[0], r[1], r[2]): _SenseMeta(r[3], _by(r[4]) if r[3] else None, r[5]) for r in conn.execute(
-        "SELECT family, label_key, sense_id, gloss, decided_by, state FROM concept_senses")}
-
-
-@dataclass(frozen=True)
-class _Concept:
-    concept_id: str
-    family: str
-    name: str
-    needs_sense_check: bool
-    members: tuple[SenseKey, ...]
-
-    @property
-    def handle(self) -> str:
-        from ..concepts.model import handle, label_key
-
-        named = [m for m in self.members if m.label_key == label_key(self.name)]
-        return handle(min(named or self.members))
+    return concepts(conn, agent_only=True)
 
 
-def _concepts(conn: sqlite3.Connection) -> dict[str, _Concept]:
-    """The concepts as the agent audience sees them: only member senses with supporting,
-    agent-visible claims (anywhere in the library), so a label known only from hidden notes
-    never shows; a concept named by such a label is named by its best visible member."""
-    from ..concepts.model import SenseKey, label_key
+def _Checks(conn: sqlite3.Connection, meta: dict[SenseKey, SenseMeta]) -> Checks:
+    from ..concepts.bridges import Checks
 
-    papers: dict[SenseKey, int] = {SenseKey(r[0], r[1], r[2]): r[3] for r in conn.execute(
-        "SELECT family, label_key, sense_id, COUNT(DISTINCT paper_id) FROM claim_concepts WHERE supports = 1 "
-        "AND agent_visible = 1 AND sense_id IS NOT NULL GROUP BY family, label_key, sense_id")}
-    members: dict[str, list[SenseKey]] = defaultdict(list)
-    for r in conn.execute("SELECT concept_id, family, label_key, sense_id FROM concept_members"):
-        key = SenseKey(r[1], r[2], r[3])
-        if key in papers:
-            members[r[0]].append(key)
-    out = {}
-    for r in conn.execute("SELECT concept_id, family, name, needs_sense_check FROM concepts"):
-        visible = tuple(sorted(members.get(r[0], ())))
-        if not visible:
-            continue
-        name = r[2]
-        if label_key(name) not in {m.label_key for m in visible}:
-            name = min(visible, key=lambda m: (-papers[m], m)).label_key
-        out[r[0]] = _Concept(r[0], r[1], name, bool(r[3]), visible)
-    return out
-
-
-class _Checks:
-    """Which senses count across literatures: a confirmed sense (a sense check or a split)
-    counts; an unchecked default sense counts only inside one literature; an ambiguous
-    label's unchecked default sense counts for nothing across literatures."""
-
-    def __init__(self, conn: sqlite3.Connection, meta: dict[SenseKey, _SenseMeta]) -> None:
-        from ..concepts import guardrails as g
-
-        self.meta = meta
-        self.ambiguous = g.effective_ambiguous(conn)
-
-    def checked(self, key: SenseKey) -> bool:
-        m = self.meta.get(key)
-        return m is not None and m.state == "confirmed"
-
-    def is_ambiguous(self, key: SenseKey) -> bool:
-        return self.ambiguous.is_ambiguous(key.label_key)
-
-    def status(self, key: SenseKey, lit_count: int) -> str | None:
-        """``None`` when the sense counts, else why it does not (only matters across literatures)."""
-        if self.checked(key):
-            return None
-        if self.is_ambiguous(key):
-            return "ambiguous label"
-        return UNCHECKED if lit_count >= 2 else None
+    return Checks(conn, meta)
 
 
 # --- concept_search -----------------------------------------------------------------------------
@@ -335,13 +239,9 @@ def _search(lib: Library, query: str, family: str | None, graph: str | None, k: 
 
 def _literature_map(lib: Library, graph: str) -> tuple[Any, dict[str, Any], set[str]]:
     """``(run, {paper_id: Literature}, members)`` of the graph's latest grouping."""
-    from ..library import graphs, literatures
+    from ..concepts.bridges import literature_map
 
-    with graphs.open_graph(lib, graph) as g:
-        run = literatures.latest_run(g)
-        lits = literatures.literatures(g) if run else []
-        members = {p.paper_id for p in graphs.membership(g, status="member")}
-    return run, {pid: lit for lit in lits for pid in lit.members}, members
+    return literature_map(lib, graph)
 
 
 def _lit_brief(lit: Any) -> dict[str, Any]:
@@ -355,7 +255,7 @@ def _not_found(text: str, why: str) -> None:
                handle=text)
 
 
-def _decisions(conn: sqlite3.Connection, concept: _Concept, kinds: tuple[str, ...]) -> list[dict[str, Any]]:
+def _decisions(conn: sqlite3.Connection, concept: Concept, kinds: tuple[str, ...]) -> list[dict[str, Any]]:
     labels = sorted({m.label_key for m in concept.members})
     marks = ", ".join("?" * len(labels))
     kmarks = ", ".join("?" * len(kinds))
@@ -389,8 +289,8 @@ def _quote_ref(conn: sqlite3.Connection, raw: str | None, hidden: frozenset[str]
     return {"paper": _paper(conn, q.get("paper_id")), "span_id": q.get("span_id"), "text": text}
 
 
-def _links(conn: sqlite3.Connection, concept: _Concept, concepts: dict[str, _Concept],
-           support: _Support) -> list[dict[str, Any]]:
+def _links(conn: sqlite3.Connection, concept: Concept, concepts: dict[str, Concept],
+           support: Support) -> list[dict[str, Any]]:
     from ..library.attention import hidden_paper_ids
 
     hidden = hidden_paper_ids(conn)
@@ -411,7 +311,7 @@ def _links(conn: sqlite3.Connection, concept: _Concept, concepts: dict[str, _Con
     return out
 
 
-def _often_with(concept: _Concept, concepts: dict[str, _Concept], support: _Support) -> list[dict[str, Any]]:
+def _often_with(concept: Concept, concepts: dict[str, Concept], support: Support) -> list[dict[str, Any]]:
     by_concept = support.concept_papers()
     mine = by_concept.get(concept.concept_id, set())
     n = len(support.papers(support.claims.values())) or 1
@@ -514,96 +414,31 @@ def _show(lib: Library, text: str, graph: str | None, claims_offset: int, claims
     return body
 
 
-# --- literatures and bridges --------------------------------------------------------------------
+# --- literatures and bridges (computed in concepts/bridges.py) ---------------------------------------
 
-@dataclass
-class _Slice:
-    run: Any
-    lit_of: dict[str, Any]
-    literatures: list[Any]
-    support: _Support
-    concepts: dict[str, _Concept]
-    checks: _Checks
-    meta: dict[SenseKey, _SenseMeta]
+def _slice(lib: Library, graph: str) -> Slice:
+    from ..concepts.bridges import load_slice
 
-
-def _slice(lib: Library, graph: str) -> _Slice:
     _prepare(lib)
-    conn = lib.conn
-    run, lit_of, members = _literature_map(lib, graph)
-    meta = _sense_meta(conn)
-    lits = sorted({lit.literature_id: lit for lit in lit_of.values()}.values(), key=lambda x: x.ordinal)
-    return _Slice(run, lit_of, lits, _Support(conn, members), _concepts(conn), _Checks(conn, meta), meta)
+    return load_slice(lib, graph, agent_only=True)
 
 
-def _counted_lits(s: _Slice, concept: _Concept) -> tuple[set[str], list[tuple[SenseKey, set[str], str]]]:
-    """The literatures a concept counts in, and its senses that do not count (with why)."""
-    counted: set[str] = set()
-    excluded = []
-    for key in concept.members:
-        lits = {s.lit_of[c.paper_id].literature_id for c in s.support.by_sense.get(key, []) if c.paper_id in s.lit_of}
-        if not lits:
-            continue
-        why = s.checks.status(key, len(lits))
-        if why is None:
-            counted |= lits
-        elif len(lits) >= 2:
-            excluded.append((key, lits, why))
-        else:
-            counted |= lits
-    return counted, excluded
+def _counted_lits(s: Slice, concept: Concept) -> tuple[set[str], list[tuple[SenseKey, set[str], str]]]:
+    from ..concepts.bridges import counted_literatures
+
+    return counted_literatures(s, concept)
 
 
-def _lit_names(s: _Slice, ids: Iterable[str]) -> list[str]:
-    by_id = {lit.literature_id: lit for lit in s.literatures}
-    return [by_id[i].name for i in sorted(ids, key=lambda i: by_id[i].ordinal)]
+def _bridges(conn: sqlite3.Connection, s: Slice) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from ..concepts.bridges import bridges
+
+    return bridges(conn, s)
 
 
-def _bridges(conn: sqlite3.Connection, s: _Slice) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    from ..concepts.model import handle
+def _top_concepts(s: Slice, lit: Any) -> list[dict[str, Any]]:
+    from ..concepts.bridges import top_concepts
 
-    bridges: list[tuple[tuple, dict[str, Any]]] = []
-    unchecked: list[dict[str, Any]] = []
-    counted_of: dict[str, set[str]] = {}
-    for cid in s.support.by_concept:
-        concept = s.concepts.get(cid)
-        if concept is None:
-            continue
-        counted, excluded = _counted_lits(s, concept)
-        counted_of[cid] = counted
-        for key, lits, why in excluded:
-            unchecked.append({"handle": handle(key), "name": concept.name, "family": key.family, "reason": why,
-                              "literatures": _lit_names(s, lits),
-                              "papers": len(s.support.papers(s.support.by_sense[key]))})
-        if len(counted) >= 2:
-            papers = len(s.support.papers(s.support.by_concept[cid]))
-            bridges.append(((-len(counted), -papers, concept.name), {
-                "kind": "concept", "handle": concept.handle, "name": concept.name, "family": concept.family,
-                "literature_count": len(counted), "literatures": _lit_names(s, counted), "papers": papers}))
-    for r in conn.execute("SELECT concept_a, concept_b, note, decided_by FROM concept_links ORDER BY decision_id"):
-        la, lb = counted_of.get(r[0], set()), counted_of.get(r[1], set())
-        if not la or not lb or len(la | lb) < 2 or (la == lb and len(la) == 1):
-            continue
-        ca, cb = s.concepts[r[0]], s.concepts[r[1]]
-        bridges.append(((-len(la | lb), 0, ca.name), {
-            "kind": "link", "a": {"handle": ca.handle, "name": ca.name, "literatures": _lit_names(s, la)},
-            "b": {"handle": cb.handle, "name": cb.name, "literatures": _lit_names(s, lb)},
-            "note": r[2], "note_by": _by(r[3]) if r[2] else None, "literature_count": len(la | lb)}))
-    bridges.sort(key=lambda t: t[0])
-    unchecked.sort(key=lambda u: (-len(u["literatures"]), u["handle"]))
-    return [b for _, b in bridges], unchecked
-
-
-def _top_concepts(s: _Slice, lit: Any) -> list[dict[str, Any]]:
-    members = set(lit.members)
-    n = max(1, len({p for p in s.lit_of}))
-    scored = []
-    for cid, ps in s.support.concept_papers().items():
-        tf = len(ps & members)
-        if tf and cid in s.concepts:
-            scored.append((-(tf * math.log(1 + n / len(ps))), s.concepts[cid].name, cid, tf))
-    return [{"handle": s.concepts[cid].handle, "name": name, "papers": tf}
-            for _, name, cid, tf in sorted(scored)[:TOP_CONCEPTS]]
+    return top_concepts(s, lit, TOP_CONCEPTS)
 
 
 def _literatures(lib: Library, graph: str) -> dict[str, Any]:
@@ -628,7 +463,7 @@ def _literatures(lib: Library, graph: str) -> dict[str, Any]:
 def _hubs(lib: Library, graph: str | None, family: str | None, limit: int) -> dict[str, Any]:
     family = _family(family)
     _bounded(limit, "limit", 1, MAX_HUBS)
-    s: _Slice | None = None
+    s: Slice | None = None
     if graph is not None:
         s = _slice(lib, graph)
         support, concepts, meta = s.support, s.concepts, s.meta

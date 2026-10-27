@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% from "_pdf_button.html" import paper_title %}
+{% block content %}
+{% set d = view.detail %}
+{% include "graphs/_tabs.html" %}
+{% set staleness = view.staleness %}
+{% if staleness.stale %}
+<div class="sg-section sg-warn" role="status">
+  {% if staleness.papers %}Concepts out of date ({{ staleness.papers }} paper{{ "" if staleness.papers == 1 else "s" }} changed).{% else %}Concepts have not been built yet.{% endif %}
+  <form class="sg-inline-form" method="post" action="/concepts/refresh">
+    {{ csrf_input }}
+    <input type="hidden" name="next" value="/graphs/{{ d.slug }}/concepts">
+    <button type="submit">Refresh concepts</button>
+  </form>
+</div>
+{% endif %}
+<p>{{ view.total }} concept{{ "" if view.total == 1 else "s" }} supported in this graph's members.
+  Weight is log(members / papers): higher means rarer in this graph.
+  {% if view.suggestion_papers %}{{ view.suggestion_papers }} paper{{ "" if view.suggestion_papers == 1 else "s" }} outside the graph share a checked sense with these concepts.{% endif %}</p>
+<p class="sg-hint">Suggestions outside the graph come only from checked senses (or closely related concepts); unchecked or ambiguous words suggest nothing.</p>
+{% for family, rows in view.families %}
+<h2>{{ family }}</h2>
+<table class="sg-table">
+  <thead><tr><th>Concept</th><th>Papers</th><th>Claims</th><th>Weight</th><th>Literatures</th><th>Senses</th><th>Elsewhere</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    {% set c = r.concept %}
+    <tr>
+      <td><a href="{{ r.href }}">{{ c.name }}</a>{% if c.is_bridge %} <span class="sg-badge">bridge</span>{% endif %}</td>
+      <td>{{ c.papers }}</td>
+      <td>{{ c.claims }}</td>
+      <td>{{ "%.2f"|format(c.weight) }}</td>
+      <td>{{ c.literature_count }}</td>
+      <td>{% for h, gloss, gloss_by in c.glosses %}{% if gloss %}<span>{{ gloss }}{% if gloss_by %} <span class="sg-badge">{{ gloss_by }}</span>{% endif %}</span>{% if not loop.last %}; {% endif %}{% endif %}{% endfor %}</td>
+      <td>{% if r.suggestions %}
+        {% set n = r.suggestions|length %}
+        <details><summary>{{ n }} paper{{ "s" if n != 1 else "" }} elsewhere share{{ "" if n != 1 else "s" }} this</summary>
+          <ul>
+            {% for s in r.suggestions[:10] %}
+            <li>{{ paper_title(s.paper_id, s.title, s.held) }}{% if s.year %} ({{ s.year }}){% endif %}
+              {% if s.via != c.name %}<span class="sg-hint">via {{ s.via }}</span>{% endif %}
+              {% if s.graphs %}<span class="sg-hint">in {{ s.graphs|join(", ") }}</span>{% endif %}
+              <a href="/graphs/{{ d.slug }}/suggestions/confirm?paper={{ s.paper_id }}">Add to graph</a></li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No concepts in this graph yet: its members need notes, and concepts a refresh.</p>
+{% endfor %}
+{% endblock %}

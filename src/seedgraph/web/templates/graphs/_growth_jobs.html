@@ -1,0 +1,12 @@
+{#- This graph's growth jobs, polled by htmx while one is active. Needs ``slug`` and ``jobs``. -#}
+{% set active = jobs|selectattr("active")|list %}
+<div id="sg-growth-jobs" class="sg-job-strip"{% if active %} hx-get="/graphs/{{ slug }}/grow/jobs" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %} aria-live="polite">
+  {% if jobs %}
+  <ul>
+    {% for j in jobs %}
+    <li><strong>{{ j.label }}</strong>: {{ j.state }}{% if j.message %}<pre class="sg-job-message">{{ j.message }}</pre>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% if active %}<p class="sg-hint">Working; this list refreshes by itself.</p>{% else %}<p><a href="/graphs/{{ slug }}/grow">Reload the review list</a></p>{% endif %}
+  {% endif %}
+</div>

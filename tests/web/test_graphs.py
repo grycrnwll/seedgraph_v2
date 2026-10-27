@@ -82,3 +82,21 @@ def test_add_to_graph_refuses_a_cited_only_member_but_takes_it_on_the_frontier(f
     assert re.search(r"sg-flash-error[^>]*>[^<]*cited-only", c.get(r.headers["location"]).text)
     c.post(f"/graphs/{GRAPH}/add", data={"csrf_token": t, "paper_id": fx.cited_no_doi, "status": "frontier"})
     assert members(fx.home)[fx.cited_no_doi] == "frontier"
+
+
+@pytest.mark.parametrize("tab", ["", "/concepts", "/graph", "/graph?view=citation", "/graph/svg", "/grow",
+                                 "/grow?estimate=1", "/grow/jobs", "/lenses"])
+def test_every_graph_tab_keeps_the_csp_and_csrf_rules(fx, make_app, client_for, tab):
+    r = client_for(make_app()).get(f"/graphs/{GRAPH}{tab}")
+    assert r.status_code == 200
+    assert no_inline_script_or_style(r.text) and post_forms_lead_with_csrf(r.text)
+
+
+@pytest.mark.parametrize("tab", ["/concepts", "/graph", "/graph/svg", "/grow", "/lenses"])
+def test_every_graph_tab_is_404_for_an_unknown_graph(fx, make_app, client_for, tab):
+    assert client_for(make_app()).get(f"/graphs/nope{tab}").status_code == 404
+
+
+def test_the_graph_list_shows_literature_and_bridge_counts(fx, make_app, client_for):
+    html = client_for(make_app()).get("/graphs").text
+    assert "<th>Literatures</th>" in html and "not grouped" in html

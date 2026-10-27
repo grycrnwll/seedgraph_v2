@@ -252,6 +252,16 @@ def choose_lens(g: Graph, lens_id: str, *, origin: str = "library", chosen_at: s
         )
 
 
+def unchoose_lens(g: Graph, lens_id: str) -> bool:
+    """Remove a lens from this graph; ``False`` when it was not chosen. The lens and its
+    results stay in the library."""
+    if g.conn.execute("SELECT 1 FROM graph_lenses WHERE lens_id = ?", (lens_id,)).fetchone() is None:
+        return False
+    with _write(g) as conn:
+        conn.execute("DELETE FROM graph_lenses WHERE lens_id = ?", (lens_id,))
+    return True
+
+
 def chosen_lenses(g: Graph) -> list[str]:
     return [r[0] for r in g.conn.execute("SELECT lens_id FROM graph_lenses ORDER BY lens_id")]
 

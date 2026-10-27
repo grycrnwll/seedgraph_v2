@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css">{% endblock %}
+{% block content %}
+{% set d = view.detail %}
+{% include "graphs/_tabs.html" %}
+<p class="sg-hint">A lens reads papers for one question. Choosing it for this graph marks it as part of the graph's work; its results stay in the library either way.</p>
+{% if view.lenses %}
+<table class="sg-table">
+  <thead><tr><th>Lens</th><th>Status</th><th>Members missing it</th><th></th></tr></thead>
+  <tbody>
+    {% for l in view.lenses %}
+    <tr>
+      <td>{{ l.name }} <code>{{ l.lens_id }}</code>{% if not l.in_library %} <span class="sg-badge">not in the library</span>{% endif %}{% if l.chosen %} <span class="sg-badge">chosen</span>{% endif %}</td>
+      <td>{{ l.status }}</td>
+      <td>{{ l.missing }}{% if l.chosen and l.missing %}<br><span class="sg-hint">Run it on them:</span> <code>{{ l.command }} --graph {{ d.slug }}</code>{% endif %}</td>
+      <td>
+        {% if l.chosen %}
+        <form method="post" action="/graphs/{{ d.slug }}/lenses/unchoose" class="sg-inline-form">
+          {{ csrf_input }}
+          <input type="hidden" name="lens_id" value="{{ l.lens_id }}">
+          <button type="submit">Unchoose</button>
+        </form>
+        {% elif l.in_library %}
+        <form method="post" action="/graphs/{{ d.slug }}/lenses/choose" class="sg-inline-form">
+          {{ csrf_input }}
+          <input type="hidden" name="lens_id" value="{{ l.lens_id }}">
+          <button type="submit">Choose</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>The library has no lenses yet.</p>
+{% endif %}
+{% endblock %}
