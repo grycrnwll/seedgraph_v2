@@ -31,9 +31,12 @@ over each sense's label + claim texts + plain words (the keyword fallback of des
 
 **Dropped before packaging** (both tasks): pairs inside one concept already, pairs whose
 supporting papers are one and the same single paper, pairs with any stored decision
-(any kind, either maker; ``undone`` and ``needs_rejudge`` rows do not count), pairs
+(any kind, either maker; ``undone`` and ``needs_rejudge`` rows do not count), pairs whose
+two **concepts** already have a stored decision between any of their members, pairs
 across a ``never_connect`` veto, and unsupported senses. Only agent-visible support
-counts (design §1.3, agent audience).
+counts (design §1.3, agent audience). A concept pair yields one candidate per batch
+(the first in priority order), so two member labels of one concept never put the same
+question to two packages.
 """
 
 from __future__ import annotations
@@ -211,6 +214,31 @@ class ConceptState:
     def group_of(self, key: SenseKey) -> frozenset[SenseKey]:
         return self.groups.get(self.senses[key].concept_id, frozenset({key}))
 
+    def concept_of(self, key: SenseKey) -> str:
+        s = self.senses.get(key)
+        return s.concept_id if s else f"sense:{key}"
+
+    def concepts_decided(self, a: SenseKey, b: SenseKey) -> bool:
+        """True when a stored decision already joins the two senses' concepts through any
+        of their members (one link or unrelated between two concepts settles every member
+        pair; a merge inside the batch's frozen state made them one concept)."""
+        cache = self.__dict__.get("_decided_concepts")
+        if cache is None:
+            by_label: dict[str, list[SenseKey]] = defaultdict(list)
+            for k in self.senses:
+                by_label[k.label_key].append(k)
+            cache = set()
+            for rows in self.decided._by_pair.values():  # noqa: SLF001
+                for d in rows:
+                    if d["kind"] not in ("merge", "link", "unrelated"):
+                        continue  # a never-merge still allows a link between other members
+                    for x in by_label.get(d["label_a"], ()):
+                        for y in by_label.get(d["label_b"], ()):
+                            if self.decided.rows(x, y):
+                                cache.add(frozenset((self.concept_of(x), self.concept_of(y))))
+            self.__dict__["_decided_concepts"] = cache
+        return frozenset((self.concept_of(a), self.concept_of(b))) in cache
+
     def never_connect(self, a: SenseKey, b: SenseKey) -> bool:
         return self.vetoes.between(self.group_of(a), self.group_of(b), kinds=("never_connect",)) is not None
 
@@ -368,9 +396,23 @@ def _droppable(state: ConceptState, a: SenseKey, b: SenseKey) -> bool:
         return True
     if len(sa.papers) == 1 and sa.papers == sb.papers:
         return True
-    if state.decided.decided(a, b):
+    if state.decided.decided(a, b) or state.concepts_decided(a, b):
         return True
     return state.never_connect(a, b)
+
+
+def _once_per_concept_pair(state: ConceptState, cands: Iterable, seen: set[frozenset[str]]) -> list:
+    """Keep the first candidate of each concept pair (``cands`` are in priority order;
+    ``seen`` carries across families, so a concept pair appears once per batch)."""
+    out = []
+    for c in cands:
+        x, y = (c[1], c[2]) if isinstance(c, tuple) else (c.a, c.b)
+        pair = frozenset((state.concept_of(x), state.concept_of(y)))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        out.append(c)
+    return out
 
 
 def _lex_edges(keys: Sequence[SenseKey]) -> list[tuple[float, SenseKey, SenseKey]]:
@@ -413,9 +455,11 @@ def merge_candidates(state: ConceptState, *, families: Sequence[str] | None = No
     """Lexical groups (see the module doc), family by family in table order."""
     out: list[Candidate] = []
     group_no = 0
+    seen: set[frozenset[str]] = set()
     for family in [f for f in CONCEPT_FAMILIES if families is None or f in families]:
         keys = sorted(k for k in state.senses if k.family == family)
-        edges = [e for e in _lex_edges(keys) if not _droppable(state, e[1], e[2])]
+        edges = _once_per_concept_pair(
+            state, [e for e in _lex_edges(keys) if not _droppable(state, e[1], e[2])], seen)
         parent: dict[SenseKey, SenseKey] = {}
         size: dict[SenseKey, int] = {}
 
@@ -506,6 +550,7 @@ def bridge_candidates(state: ConceptState, *, families: Sequence[str] = FIRST_PA
     finder = finder or keyword_neighbours
     order = sorted(families, key=lambda f: (BY_NAME[f].bridge_order or 99, f))
     out: list[Candidate] = []
+    seen_pairs: set[frozenset[str]] = set()
     for family in order:
         keys = sorted(k_ for k_ in state.senses if k_.family == family)
         checks: list[Candidate] = []
@@ -535,7 +580,7 @@ def bridge_candidates(state: ConceptState, *, families: Sequence[str] = FIRST_PA
             d = state.citations.distance(state.senses[x].papers, state.senses[y].papers)
             pairs.append(Candidate("pair", x, y, distance=d, similarity=sim, family=family))
         pairs.sort(key=lambda c: (-distance_rank(c.distance), -c.similarity, c.a, c.b))
-        out += pairs
+        out += _once_per_concept_pair(state, pairs, seen_pairs)
     return out
 
 

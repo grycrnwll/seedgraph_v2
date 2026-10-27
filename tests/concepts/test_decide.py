@@ -53,6 +53,119 @@ def test_unclear_classification(verdict, conf, kw, expected):
     assert decide.REACH_MIN == 5
 
 
+def _pair_manifest(label_a, key_a, label_b, key_b, family_b="assumption"):
+    def side(label, key, family, ref):
+        return {"family": family, "label_key": key, "sense_id": "s0", "label": label, "papers": 1,
+                "ambiguous": False, "refs": {ref: {"paper_id": "lp_x", "claim_id": ref, "span_id": None,
+                                                   "claim_fingerprint": ref}}}
+    return {"items": [{"item": 1, "kind": "pair", "family": "assumption", "group": None, "distance": None,
+                       "reason": None, "a": side(label_a, key_a, "assumption", "c1"),
+                       "b": side(label_b, key_b, family_b, "c2"), "literature": None}]}
+
+
+SPLIT = {"items": [{"item": 1, "verdict": "split", "confidence": "high",
+                    "senses": [{"gloss": "Invented: one", "claims": ["c1"]}, {"gloss": "Invented: two", "claims": ["c2"]}]}]}
+
+
+def test_a_split_on_a_pair_is_allowed_when_the_labels_are_equal_after_label_normalisation():
+    manifest = _pair_manifest("Weak Sprocket-Balance", "Weak Sprocket-Balance", "weak sprocket balance",
+                              "weak sprocket balance")
+    assert decide.validate(manifest, SPLIT) == []
+
+
+def test_a_split_on_a_pair_of_one_label_is_saved_as_senses_of_that_label(lib, w):
+    view, msg, manifest = merge_batch(lib, w)
+    item = manifest["items"][0]
+    variant = item["a"]["label"].upper().replace(" ", "-")
+    item["b"]["label"], item["b"]["label_key"] = variant, variant
+    ra, rb = list(item["a"]["refs"])[0], list(item["b"]["refs"])[0]
+    ans = {"items": [{"item": 1, "verdict": "split", "confidence": "high",
+                      "senses": [{"gloss": "Invented: one", "claims": [ra]}, {"gloss": "Invented: two", "claims": [rb]}]}]}
+    assert decide.validate(manifest, ans, decide.Guard.load(lib.conn, None)) == []
+    with lib.write() as conn:
+        rep = decide.save_package(conn, manifest, ans)
+    assert rep.by_verdict == {"split": 1} and rep.applied == 1
+    rows = lib.conn.execute("SELECT label_key, sense_id, state FROM concept_senses WHERE decided_by = 'agent' "
+                            "ORDER BY sense_id").fetchall()
+    assert [tuple(r) for r in rows] == [(item["a"]["label_key"], "s1", "confirmed"),
+                                        (item["a"]["label_key"], "s2", "confirmed")]
+
+
+def test_a_split_on_a_pair_with_different_labels_or_families_is_refused():
+    for manifest in (_pair_manifest("weak sprocket balance", "weak sprocket balance", "weak sprocket rule",
+                                    "weak sprocket rule"),
+                     _pair_manifest("weak sprocket balance", "weak sprocket balance", "weak sprocket balance",
+                                    "weak sprocket balance", family_b="method")):
+        errs = decide.validate(manifest, SPLIT)
+        assert errs and "split on a pair needs both sides to share one label" in errs[0]
+
+
+def _concepts_x_y_merged_and_z(lib, w):
+    w.note("lp_p1", [a("sprocket monotone"), a("gadget drift")])
+    w.note("lp_p2", [a("sprocket monotone rule"), a("gadget drift")])
+    w.decide("unrelated", "gadget drift", "sprocket monotone", by="agent", family="assumption")
+    w.decide("merge", "sprocket monotone", "sprocket monotone rule", by="researcher", family="assumption")
+    rf.refresh(lib)
+
+
+def _save_one(lib, x, z, ans):
+    with lib.write() as conn:
+        return decide.save_package(conn, _pair_manifest(x, x, z, z), {"items": [{"item": 1, **ans}]})
+
+
+def test_a_different_verdict_on_another_member_pair_of_two_decided_concepts_is_queued(lib, w):
+    _concepts_x_y_merged_and_z(lib, w)
+    rep = _save_one(lib, "sprocket monotone rule", "gadget drift",
+                    {"verdict": "merge", "confidence": "high", "name": "gadget drift"})
+    assert rep.queue_reasons == {"disagreement": 1} and rep.applied == 0
+
+
+def test_the_same_verdict_on_another_member_pair_of_two_decided_concepts_is_dropped(lib, w):
+    _concepts_x_y_merged_and_z(lib, w)
+    rep = _save_one(lib, "sprocket monotone rule", "gadget drift", {"verdict": "unrelated", "confidence": "high"})
+    assert rep.dropped == 1 and rep.feedback[0]["reason"] == "already_decided"
+    assert len(agent_rows(lib)) == 1
+
+
+def test_a_link_or_unrelated_verdict_inside_one_concept_is_queued(lib, w):
+    # merged by an agent (a researcher merge would drop the verdict as researcher_decided)
+    w.note("lp_p1", [a("sprocket monotone")])
+    w.note("lp_p2", [a("sprocket monotone rule")])
+    w.decide("merge", "sprocket monotone", "sprocket monotone rule", by="agent", family="assumption",
+             name="sprocket monotone")
+    rf.refresh(lib)
+    rep = _save_one(lib, "sprocket monotone", "sprocket monotone rule", {"verdict": "unrelated", "confidence": "high"})
+    assert rep.queue_reasons == {"disagreement": 1} and rep.applied == 0
+
+
+def test_a_pair_on_the_default_sense_of_a_label_split_since_the_package_was_frozen_is_dropped(lib, w):
+    _concepts_x_y_merged_and_z(lib, w)
+    with lib.write() as conn:
+        for sid in ("s1", "s2"):
+            conn.execute("INSERT INTO concept_senses (family, label_key, sense_id, gloss, decided_by, state, "
+                         "decided_at) VALUES ('assumption', 'gadget drift', ?, 'Invented.', 'agent', 'confirmed', "
+                         "'2026-01-01')", (sid,))
+    rep = _save_one(lib, "sprocket monotone rule", "gadget drift", {"verdict": "link", "confidence": "high",
+                                                                     "note": "Invented."})
+    assert rep.dropped == 1 and rep.feedback[0]["reason"] == "label_split" and rep.applied == 0
+
+
+def test_two_items_of_one_package_on_the_same_concept_pair_do_not_both_apply(lib, w):
+    w.note("lp_p1", [a("sprocket monotone"), a("gadget drift")])
+    w.note("lp_p2", [a("sprocket monotone rule"), a("gadget drift")])
+    w.decide("merge", "sprocket monotone", "sprocket monotone rule", by="researcher", family="assumption")
+    rf.refresh(lib)
+    first = _pair_manifest("sprocket monotone", "sprocket monotone", "gadget drift", "gadget drift")
+    second = _pair_manifest("sprocket monotone rule", "sprocket monotone rule", "gadget drift", "gadget drift")
+    second["items"][0]["item"] = 2
+    manifest = {"items": first["items"] + second["items"]}
+    with lib.write() as conn:
+        rep = decide.save_package(conn, manifest, {"items": [
+            {"item": 1, "verdict": "unrelated", "confidence": "high"},
+            {"item": 2, "verdict": "merge", "confidence": "high", "name": "gadget drift"}]})
+    assert rep.applied == 1 and rep.queue_reasons == {"disagreement": 1}
+
+
 # --- through a real package -----------------------------------------------------------------------
 
 def merge_batch(lib, w, left="sprocket balance", right="sprocket balance rule"):
@@ -78,13 +191,19 @@ def merge_errors(lib, manifest, guard=None):
 
 
 def test_a_stoplist_veto_names_the_size_word_on_each_side(lib, w):
-    view, msg, manifest = merge_batch(lib, w, left="large sprocket panel", right="sprocket panel")
+    view, msg, manifest = merge_batch(lib, w, left="large sprocket panel", right="small sprocket panel")
     (item,) = manifest["items"]
     la, lb = item["a"]["label"], item["b"]["label"]
     big, other = (la, lb) if "large" in la else (lb, la)
     assert merge_errors(lib, manifest) == [
-        f"item 1: merge vetoed: the labels differ in a size word: {big!r} has 'large', {other!r} has none; "
+        f"item 1: merge vetoed: the labels differ in a size word: {big!r} has 'large', {other!r} has 'small'; "
         "answer link, unrelated or unsure"]
+
+
+def test_a_size_word_only_one_label_has_is_no_veto(lib, w):
+    view, msg, manifest = merge_batch(lib, w, left="sprocket drift",
+                                      right="sprocket drift (large T)")
+    assert merge_errors(lib, manifest) == []
 
 
 def test_a_type_fence_veto_names_both_families(lib, w):

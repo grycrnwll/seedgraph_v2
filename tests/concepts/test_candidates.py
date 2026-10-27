@@ -161,6 +161,46 @@ def test_bridge_crosses_into_adjacent_families_only_for_links(lib, w):
     assert not [c for c in later if c.kind == "pair" and c.a.family != c.b.family]
 
 
+def _fixed_finder(edges):
+    """A neighbour finder returning the given label pairs (similarity 0.5)."""
+    def finder(state, queries, pool, k):
+        out = {q: [] for q in queries}
+        for x, y in edges:
+            for q, o in ((x, y), (y, x)):
+                if q in out and o in pool:
+                    out[q].append((o, 0.5))
+        return out
+    return finder
+
+
+def _merged_concept_and_a_third(lib, w):
+    """'sprocket monotone' and 'sprocket monotone rule' are one concept (researcher merge);
+    'gadget drift' is a third concept."""
+    w.note("lp_p1", [a("sprocket monotone"), a("gadget drift")])
+    w.note("lp_p2", [a("sprocket monotone rule")])
+    w.note("lp_p3", [a("gadget drift")])
+    w.decide("merge", "sprocket monotone", "sprocket monotone rule", by="researcher", family="assumption")
+    rf.refresh(lib)
+
+
+def test_a_concept_pair_appears_once_per_batch(lib, w):
+    _merged_concept_and_a_third(lib, w)
+    finder = _fixed_finder([(A("sprocket monotone"), A("gadget drift")),
+                            (A("sprocket monotone rule"), A("gadget drift"))])
+    got = cand.bridge_candidates(cand.load(lib.conn), **BRIDGE, sense_checks="none", finder=finder)
+    concept_pairs = [frozenset((c.a.label_key, c.b.label_key)) for c in got if c.kind == "pair"]
+    assert len(concept_pairs) == 1 and frozenset(("gadget drift",)) < concept_pairs[0]
+
+
+def test_a_decision_between_two_concepts_settles_every_member_pair(lib, w):
+    _merged_concept_and_a_third(lib, w)
+    w.decide("unrelated", "gadget drift", "sprocket monotone", by="agent", family="assumption")
+    rf.refresh(lib)
+    finder = _fixed_finder([(A("sprocket monotone rule"), A("gadget drift"))])
+    got = cand.bridge_candidates(cand.load(lib.conn), **BRIDGE, sense_checks="none", finder=finder)
+    assert not [c for c in got if c.kind == "pair"]
+
+
 def test_effective_ambiguous_list_library_wide_versus_graph_scoped(lib, w):
     from seedgraph.concepts import guardrails
     from seedgraph.library import graphs

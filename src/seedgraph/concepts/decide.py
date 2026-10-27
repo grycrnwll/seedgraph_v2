@@ -12,10 +12,14 @@
   a save-time veto; ``unsure``; ``confidence = low``; an ambiguous label without
   ``high`` confidence; **reach** (a merge whose two concepts both have at least
   :data:`REACH_MIN` papers; links and splits are never held back for reach);
-  **disagreement** with an existing agent decision on the same subjects.
+  **disagreement** with an existing agent decision between the same two **concepts**
+  (any member pair, including decisions saved earlier in the same package), or a link /
+  unrelated verdict on two labels that are one concept by now. The same verdict between
+  two concepts already decided through other members is dropped (``already_decided``).
 - :func:`save_package`: in the protocol's save transaction, writes ``concept_decisions``
   / ``concept_senses`` / ``sense_assignments`` (``decided_by = 'agent'``, batch, packet,
-  model), classifies each item, drops proposals a researcher decision already settles
+  model), classifies each item, drops pair verdicts on the default sense of a label split
+  since the package was frozen (``label_split``), drops proposals a researcher decision already settles
   (with feedback; never queued), refuses items whose cited claims are no longer live,
   invalidates agent decisions on a label's default sense when the label is split, and
   refreshes the derived tables once at the end (applied merges are joined in memory
@@ -43,7 +47,7 @@ from typing import Any
 
 from . import guardrails as g
 from . import refresh as rf
-from .model import DEFAULT_SENSE, SenseKey, decision_id, ordered_pair
+from .model import DEFAULT_SENSE, SenseKey, decision_id, label_key, ordered_pair
 
 REACH_MIN = 5
 NOTE_MAX = 200
@@ -60,7 +64,7 @@ REASON_TEXT = {
     "type_fence": "different families ({fa} vs {fb})",
     "never_merge": "a never-merge pair",
     "never_connect": "a never-connect pair",
-    "stoplist": "stoplist (the labels differ in a version or size word)",
+    "stoplist": "stoplist (the labels carry conflicting version, size or variant words)",
 }
 
 
@@ -169,25 +173,69 @@ class Guard:
 
     def pair_rows(self, a: SenseKey, b: SenseKey, *, by: str | None = None) -> list[dict[str, Any]]:
         """Live decisions on the pair (NULL family / sense match any)."""
-        out = []
-        for d in self.decisions:
-            if d["state"] not in LIVE_STATES or (by and d["decided_by"] != by):
-                continue
-            fa, fb = d["family"], d["family_b"] or d["family"]
-            for x, y in ((a, b), (b, a)):
-                if (x.label_key, y.label_key) != (d["label_a"], d["label_b"]):
+        return [d for d in self.decisions if d["state"] in LIVE_STATES and not (by and d["decided_by"] != by)
+                and _row_matches(d, a, b)]
+
+    def add_decision(self, row: dict[str, Any]) -> None:
+        """Record a decision saved in this package, so later items see it."""
+        self.decisions.append(row)
+        index = self.__dict__.get("_by_label")
+        if index is not None:
+            index[row["label_a"]].append(row)
+            if row["label_b"] != row["label_a"]:
+                index[row["label_b"]].append(row)
+
+    def concept_rows(self, a: SenseKey, b: SenseKey, *, by: str = "agent",
+                     kinds: tuple[str, ...] = ("merge", "link", "unrelated")) -> list[dict[str, Any]]:
+        """Live decisions (of ``kinds``, by ``by``) between **any** member of ``a``'s concept
+        and any member of ``b``'s concept: one question per concept pair, however the
+        groups were reshaped since the package was frozen."""
+        index = self.__dict__.get("_by_label")
+        if index is None:
+            index = defaultdict(list)
+            for d in self.decisions:
+                index[d["label_a"]].append(d)
+                if d["label_b"] != d["label_a"]:
+                    index[d["label_b"]].append(d)
+            self.__dict__["_by_label"] = index
+        ga, gb = self.group(a), self.group(b)
+        b_labels = {k.label_key for k in gb}
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for x in sorted(ga):
+            for d in index.get(x.label_key, ()):
+                if d["decision_id"] in seen or d["kind"] not in kinds or d["decided_by"] != by \
+                        or d["state"] not in LIVE_STATES:
                     continue
-                if (fa and x.family != fa) or (fb and y.family != fb):
+                if not {d["label_a"], d["label_b"]} & b_labels:
                     continue
-                if (d["sense_a"] is None or d["sense_a"] == x.sense_id) and \
-                        (d["sense_b"] is None or d["sense_b"] == y.sense_id):
+                if any(_row_matches(d, x, y) for y in gb):
+                    seen.add(d["decision_id"])
                     out.append(d)
-                    break
         return out
+
+    def is_split(self, key: SenseKey) -> bool:
+        """The label has confirmed senses other than the default (any maker)."""
+        return any(s["family"] == key.family and s["label_key"] == key.label_key and s["sense_id"] != DEFAULT_SENSE
+                   and s["state"] == "confirmed" for s in self.senses)
 
     def researcher_senses(self, family: str, key: str) -> list[dict[str, Any]]:
         return [s for s in self.senses if s["family"] == family and s["label_key"] == key
                 and s["decided_by"] == "researcher" and s["state"] in ("default", "confirmed", "queued")]
+
+
+def _row_matches(d: Mapping[str, Any], a: SenseKey, b: SenseKey) -> bool:
+    """A decision row is about the pair (either order; NULL family / sense match any)."""
+    fa, fb = d["family"], d["family_b"] or d["family"]
+    for x, y in ((a, b), (b, a)):
+        if (x.label_key, y.label_key) != (d["label_a"], d["label_b"]):
+            continue
+        if (fa and x.family != fa) or (fb and y.family != fb):
+            continue
+        if (d["sense_a"] is None or d["sense_a"] == x.sense_id) and \
+                (d["sense_b"] is None or d["sense_b"] == y.sense_id):
+            return True
+    return False
 
 
 # --- validation -----------------------------------------------------------------------------------
@@ -211,6 +259,17 @@ def _has(label: str, key: SenseKey, words: list[str]) -> str:
 
 def _refs(side: Mapping[str, Any] | None) -> dict[str, Any]:
     return dict(side["refs"]) if side else {}
+
+
+def same_label(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Two item sides are one label: one family, and the labels equal after the label
+    normalisation (:func:`seedgraph.concepts.model.label_key`), so trivial formatting
+    (case, hyphens, punctuation, spacing) never blocks a split."""
+    if a["family"] != b["family"]:
+        return False
+    keys_a = {label_key(a.get("label_key")), label_key(a.get("label"))} - {""}
+    keys_b = {label_key(b.get("label_key")), label_key(b.get("label"))} - {""}
+    return bool(keys_a & keys_b)
 
 
 def _check_split(n: int, item: Mapping[str, Any], ans: Mapping[str, Any]) -> list[str]:
@@ -275,8 +334,7 @@ def _check_item(n: int, item: Mapping[str, Any], ans: Mapping[str, Any], guard: 
         errs.append(f"item {n}: note is longer than {NOTE_MAX} characters")
     if verdict == "split":
         if kind == "pair":
-            a, b = item["a"], item["b"]
-            if (a["family"], a["label_key"]) != (b["family"], b["label_key"]):
+            if not same_label(item["a"], item["b"]):
                 errs.append(f"item {n}: split on a pair needs both sides to share one label; "
                             "answer merge, link, unrelated or unsure")
                 return errs
@@ -486,6 +544,9 @@ def _insert_decision(c: _Ctx, kind: str, a: SenseKey, b: SenseKey, *, state: str
         "'library', ?)",
         (did, kind, family, family_b, la, sa_, lb, sb_, ans.get("name") if kind == "merge" else None, state, note,
          _quote_json(qa), _quote_json(qb), ans.get("confidence"), reason, c.batch_id, c.packet_id, c.model, c.now))
+    c.guard.add_decision({"decision_id": did, "kind": kind, "family": family, "family_b": family_b, "label_a": la,
+                          "sense_a": sa_, "label_b": lb, "sense_b": sb_, "decided_by": "agent", "state": state,
+                          "veto_reason": reason, "confidence": ans.get("confidence"), "batch_id": c.batch_id})
     return did
 
 
@@ -505,7 +566,7 @@ def _count(c: _Ctx, verdict: str, state: str, reason: str | None) -> None:
 
 def _save_split(c: _Ctx, item: Mapping[str, Any], ans: Mapping[str, Any], state: str) -> None:
     a = item["a"]
-    family, key = a["family"], a["label_key"]
+    family, key = a["family"], label_key(a["label_key"])
     refs = {**_refs(item.get("a")), **_refs(item.get("b"))}
     sense_state = "confirmed" if state == "applied" else "queued"
     for i, s in enumerate(ans["senses"], start=1):
@@ -566,11 +627,29 @@ def _save_item(c: _Ctx, item: Mapping[str, Any], ans: Mapping[str, Any], graph: 
         _count(c, verdict, state, reason)
         return
     a, b = _key(item["a"]), _key(item["b"])
+    split = next((k for k in (a, b) if k.sense_id == DEFAULT_SENSE and
+                  ((k.family, k.label_key) in c.touched_splits or c.guard.is_split(k))), None)
+    if split is not None:  # split after the package was frozen: its default sense is gone
+        c.report.dropped += 1
+        c.report.feedback.append({"item": n, "reason": "label_split",
+                                  "message": f"{split.label_key!r} was split into senses since this package was "
+                                             "made; its pairs are judged again per sense"})
+        return
     kind = {"merge": "merge", "link": "link", "unrelated": "unrelated", "unsure": "unrelated"}[verdict]
     save_veto = c.guard.merge_veto(a, b) if verdict == "merge" else \
         (c.guard.link_veto(a, b) if verdict == "link" else None)
-    agent_rows = [d for d in c.guard.pair_rows(a, b, by="agent") if d["kind"] in ("merge", "link", "unrelated")]
-    disagreement = any(d["kind"] != kind for d in agent_rows)
+    same_concept = c.guard.group(a) == c.guard.group(b)
+    agent_rows = c.guard.concept_rows(a, b)
+    exact = {d["decision_id"] for d in c.guard.pair_rows(a, b, by="agent")}
+    if not same_concept and any(d["kind"] == kind and d["decision_id"] not in exact for d in agent_rows):
+        c.report.dropped += 1
+        c.report.feedback.append({"item": n, "reason": "already_decided",
+                                  "message": f"{kind} is already stored between these two concepts "
+                                             "(through other member labels)"})
+        return
+    # a different verdict between the same two concepts (any member pair), or a link /
+    # unrelated inside one concept (merged since the package was frozen): the researcher decides
+    disagreement = any(d["kind"] != kind for d in agent_rows) or (same_concept and kind != "merge")
     state, reason = classify(verdict, conf, ambiguous=c.guard.is_ambiguous(a) or c.guard.is_ambiguous(b),
                              papers_a=c.guard.concept_papers(a), papers_b=c.guard.concept_papers(b),
                              disagreement=disagreement, save_veto=save_veto)

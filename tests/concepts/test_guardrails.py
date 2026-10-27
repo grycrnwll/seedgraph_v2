@@ -64,6 +64,58 @@ def test_stoplist_is_compared_over_the_resulting_group():
     assert g.merge_veto([K("a v1")], [K("a v2")], g.VetoIndex([]), stoplist=False) is None
 
 
+def _conflict(x: str, y: str) -> bool:
+    from seedgraph.concepts.model import label_key
+    return g.discriminating_conflict([label_key(x), label_key(y)])
+
+
+@pytest.mark.parametrize("x, y", [
+    # one side adds a size word the other lacks (often in parentheses): no conflict
+    ("Joint (p,Q)-limits with p/Q → c", "joint P,Q limits with P/Q -> kappa^2"),
+    ("Joint p,Q limits", "joint p,Q limits (large p, large Q)"),
+    ("widget drift correction", "widget drift correction (large-Q sprocket limits)"),
+    ("sprocket balance", "sprocket balance / no dynamic widget structure"),
+    # singular / plural and simple inflections are one word
+    ("comparative static widget analysis", "Comparative Statics widget analysis"),
+    ("comparative-static derivatives of sprocket levels", "Comparative-Statics Derivatives of Sprocket Levels"),
+    # math symbols, single-letter variables, their case and exponents are ignored
+    ("sprocket slope and widget effect", "sprocket slope and widget effect function (gamma, mu(z_i))"),
+    ("widget rate n/T -> c", "widget rate N/T -> kappa^2"),
+    # a shared word is not a difference
+    ("fixed effects widget estimator", "large-N fixed effects widget estimator"),
+])
+def test_stoplist_does_not_fire_when_one_side_merely_adds_or_inflects_a_word(x, y):
+    assert not _conflict(x, y)
+
+
+@pytest.mark.parametrize("x, y", [
+    ("large-N widget limits", "fixed-N widget limits"),
+    ("large N widget limits", "small N widget limits"),
+    ("static widget model", "dynamic widget model"),
+    ("static widget models", "Dynamic Widget Model"),
+    ("short sprocket panel", "long sprocket panel"),
+    ("short panels of sprockets", "long panel of sprockets"),
+    ("large samples of widgets", "small sample of widgets"),
+    ("large n large T widget limits", "large n fixed T widget limits"),
+    ("widget model v1", "widget model v2"),
+    ("Type I sprocket error", "Type II sprocket error"),
+    ("widget condition 1", "widget condition 2"),
+    ("finite sample widget bias", "large sample widget bias"),
+])
+def test_stoplist_still_blocks_conflicting_size_version_and_variant_words(x, y):
+    assert _conflict(x, y)
+
+
+def test_stoplist_triggers_name_the_conflicting_words_only():
+    assert g.stoplist_triggers(["large n large t widget limits"], ["large n fixed t widget limits"]) == \
+        (["large"], ["fixed"])
+    assert g.stoplist_triggers(["static widget model"], ["dynamic widget model"]) == (["static"], ["dynamic"])
+    assert g.stoplist_triggers(["widget drift"], ["widget drift large t"]) == ([], [])
+    assert g.stoplist_kind(["short", "long"]) == "size"
+    assert g.stoplist_kind(["static", "dynamic"]) == "variant"
+    assert g.stoplist_kind(["v1", "v2"]) == "version"
+
+
 def test_closure():
     assert g.closure_ok("Parallel trends", ["parallel trends", "common trends"])
     assert not g.closure_ok("trend assumptions", ["parallel trends", "common trends"])

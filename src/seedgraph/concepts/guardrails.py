@@ -13,8 +13,9 @@ builds the groups, so no derived concept ever violates them):
 3. **ambiguous labels** (:class:`AmbiguousList`): no rule merges; agent work must compare
    example claims (the concept tasks enforce that);
 4. **closure**: a concept name must be one of its member labels (:func:`closure_ok`);
-5. **stoplist**: v2's discriminating tokens (versions, sizes, numerals, static/dynamic),
-   compared over the whole resulting group (:func:`discriminating_conflict`).
+5. **stoplist**: conflicting size / version / variant words (large vs fixed N, v1 vs v2,
+   short vs long, static vs dynamic) between two labels of the resulting group
+   (:func:`discriminating_conflict`); a word only one label has is no conflict.
 
 v2's token-overlap precondition is **not** a veto here (it would block every merge across
 notation); lexical overlap only generates candidates.
@@ -38,12 +39,37 @@ from .model import SenseKey, decision_id, label_key
 if TYPE_CHECKING:
     from ..library.store import Library
 
-#: Frozen discriminating-token stoplist (v2 ``canon.DISCRIMINATING_TOKENS``). Compared
-#: after ``merge.normalize``, which strips dots, so the bare numerals are listed.
-DISCRIMINATING_TOKENS: frozenset[str] = frozenset({
-    "v1", "v2", "v3", "v4", "base", "large", "small", "xl", "xxl", "mini", "tiny", "encoder", "decoder",
-    "cased", "uncased", "static", "dynamic", "1", "2", "3", "4", "0", "11", "i", "ii", "iii",
-})
+#: Stoplist vocabulary (compared after ``merge.normalize``): each word's axis and value.
+#: Two labels conflict only when both carry a value on one axis and the values differ
+#: (:func:`discriminating_conflict`). Size and length words are qualified by the word they
+#: modify ("large T" and "fixed T" share an axis, "large N" has its own), so
+#: "large N, large T" vs "large N" is no conflict while "large T" vs "fixed T" is.
+_SCALE = {"large": "large", "big": "large", "small": "small", "fixed": "small", "finite": "small",
+          "base": "base", "xl": "xl", "xxl": "xxl", "mini": "mini", "tiny": "tiny"}
+_LENGTH = {"short": "short", "long": "long"}
+_VARIANT = {"static": ("dynamics", "static"), "dynamic": ("dynamics", "dynamic"),
+            "encoder": ("architecture", "encoder"), "decoder": ("architecture", "decoder"),
+            "cased": ("casing", "cased"), "uncased": ("casing", "uncased")}
+#: Versions conflict within a kind only (v-numbers, bare numerals, roman numerals).
+_VERSION_V = frozenset({"v1", "v2", "v3", "v4"})
+_VERSION_DIGIT = frozenset({"0", "1", "2", "3", "4", "11"})
+_VERSION_ROMAN = frozenset({"i", "ii", "iii"})
+#: Simple inflections folded before comparing ("statics" is "static").
+_INFLECTIONS = {"statics": "static", "dynamics": "dynamic", "larger": "large", "largest": "large",
+                "smaller": "small", "smallest": "small", "bigger": "big", "biggest": "big",
+                "shorter": "short", "shortest": "short", "longer": "long", "longest": "long",
+                "encoders": "encoder", "decoders": "decoder"}
+#: Fixed phrases that are not sizes ("fixed effects", "fixed point", "fixed costs").
+_NOT_SIZE_BEFORE = {"fixed": frozenset({"effect", "effects", "point", "points", "cost", "costs"})}
+#: Symbols: a numeral or roman ``i`` right after one is an exponent or index (``kappa^2``,
+#: ``w_i``), not a version.
+_GREEK = frozenset({"alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+                    "lambda", "mu", "nu", "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon", "phi",
+                    "chi", "psi", "omega"})
+
+#: Every stoplist word (inflected forms included).
+DISCRIMINATING_TOKENS: frozenset[str] = frozenset(
+    {*_SCALE, *_LENGTH, *_VARIANT, *_VERSION_V, *_VERSION_DIGIT, *_VERSION_ROMAN, *_INFLECTIONS})
 
 #: Generic words: the rule-merge suffixes, and the words a ``head`` pattern ignores.
 SUFFIX_WORDS: tuple[str, ...] = ("assumption", "condition", "restriction", "hypothesis")
@@ -86,30 +112,84 @@ def _now() -> str:
 
 # --- stoplist and closure -------------------------------------------------------------------------
 
+def _is_symbol(tok: str) -> bool:
+    return (len(tok) == 1 and tok.isalpha()) or tok in _GREEK
+
+
+Axis = tuple[str, str]
+
+
+def _singular(word: str) -> str:
+    """A plain plural folded ("panels" is "panel"), so a size word's qualifier matches."""
+    word = _INFLECTIONS.get(word, word)
+    return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
+
+
+def _axis_words(key: str) -> dict[Axis, dict[str, set[str]]]:
+    """``{axis: {value: raw words}}`` of one label (see :data:`_SCALE` and neighbours)."""
+    toks = normalize(key).split()
+    out: dict[Axis, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for i, raw in enumerate(toks):
+        tok = _INFLECTIONS.get(raw, raw)
+        prev = toks[i - 1] if i else ""
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if tok in _SCALE or tok in _LENGTH:
+            if nxt in _NOT_SIZE_BEFORE.get(tok, ()):
+                continue
+            axis: Axis = ("scale" if tok in _SCALE else "length", _singular(nxt))
+            value = _SCALE.get(tok) or _LENGTH[tok]
+        elif tok in _VARIANT:
+            axis, value = (_VARIANT[tok][0], ""), _VARIANT[tok][1]
+        elif tok in _VERSION_V:
+            axis, value = ("version_v", ""), tok
+        elif tok in _VERSION_DIGIT or tok in _VERSION_ROMAN:
+            if prev and _is_symbol(prev):
+                continue
+            axis, value = ("version_digit" if tok in _VERSION_DIGIT else "version_roman", ""), tok
+        else:
+            continue
+        out[axis][value].add(raw)
+    return out
+
+
+def _conflicting_axes(labels: Iterable[str]) -> set[Axis]:
+    """The axes on which two labels both carry words and the words' values differ."""
+    seen: dict[Axis, set[frozenset[str]]] = defaultdict(set)
+    for key in set(labels):
+        for axis, values in _axis_words(key).items():
+            seen[axis].add(frozenset(values))
+    return {axis for axis, sets in seen.items() if len(sets) > 1}
+
+
 def discriminating_conflict(labels: Iterable[str]) -> bool:
-    """True when a stoplist token is present in some of ``labels`` but not all."""
-    token_sets = [set(normalize(m).split()) for m in set(labels)]
-    if len(token_sets) < 2:
-        return False
-    differing = set().union(*token_sets) - set(token_sets[0]).intersection(*token_sets[1:])
-    return any(tok in DISCRIMINATING_TOKENS for tok in differing)
+    """True when two of ``labels`` carry **conflicting** stoplist words: both have a word on
+    one axis (the size of the same thing, length, static/dynamic, a version of one kind)
+    and the words differ ("large N" vs "fixed N", "v1" vs "v2"). A word only one label has
+    is no conflict ("bias correction" vs "bias correction (large T)"); simple inflections
+    are folded first ("statics" is "static")."""
+    return bool(_conflicting_axes(labels))
 
 
-#: How a refusal names a stoplist token (the rest are "variant" words).
-VERSION_TOKENS: frozenset[str] = frozenset({"v1", "v2", "v3", "v4", "1", "2", "3", "4", "0", "11", "i", "ii", "iii"})
-SIZE_TOKENS: frozenset[str] = frozenset({"base", "large", "small", "xl", "xxl", "mini", "tiny"})
+#: How a refusal names a stoplist word (the rest are "variant" words).
+VERSION_TOKENS: frozenset[str] = _VERSION_V | _VERSION_DIGIT | _VERSION_ROMAN
+SIZE_TOKENS: frozenset[str] = frozenset(
+    {*_SCALE, *_LENGTH, *(k for k, v in _INFLECTIONS.items() if v in _SCALE or v in _LENGTH)})
 
 
 def stoplist_triggers(labels_a: Iterable[str], labels_b: Iterable[str]) -> tuple[list[str], list[str]]:
-    """The stoplist tokens behind a :func:`discriminating_conflict` of the two groups'
-    labels together, as found on each side (sorted; a side can have none)."""
-    sides = [[set(normalize(m).split()) for m in set(side)] for side in (labels_a, labels_b)]
-    every = sides[0] + sides[1]
-    if len(every) < 2:
-        return [], []
-    differing = (set().union(*every) - set(every[0]).intersection(*every[1:])) & DISCRIMINATING_TOKENS
-    found_a, found_b = (sorted(differing & set().union(*side)) for side in sides)
-    return found_a, found_b
+    """The conflicting stoplist words behind a :func:`discriminating_conflict` of the two
+    groups' labels together, as found on each side (sorted; a side can have none)."""
+    sides = [sorted(set(side)) for side in (labels_a, labels_b)]
+    axes = _conflicting_axes(sides[0] + sides[1])
+    found: list[list[str]] = []
+    for side in sides:
+        hits: set[str] = set()
+        for key in side:
+            for axis, values in _axis_words(key).items():
+                if axis in axes:
+                    hits.update(w for words in values.values() for w in words)
+        found.append(sorted(hits))
+    return found[0], found[1]
 
 
 def stoplist_kind(tokens: Iterable[str]) -> str:

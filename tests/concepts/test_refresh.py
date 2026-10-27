@@ -86,9 +86,13 @@ def test_a_split_rule_merge_stays_split(lib, w):
 
 
 def test_stoplist_blocks_rule_merges(lib, w):
-    w.note("lp_p1", [m("sdm"), m("static dynamic model"), m("widget model 2"), m("widget model 2 assumption")])
+    w.note("lp_p1", [m("bwp"), m("big widget panel"), m("base widget panel"), m("widget model 2"),
+                     m("widget model 2 assumption")])
     rf.refresh(lib)
-    assert w.concept_of("method", "sdm") != w.concept_of("method", "static dynamic model")
+    # both expansions fold onto the acronym, but big (large) and base conflict: never one concept
+    assert w.concept_of("method", "big widget panel") != w.concept_of("method", "base widget panel")
+    acronym = w.concept_of("method", "bwp")
+    assert [w.concept_of("method", x) == acronym for x in ("big widget panel", "base widget panel")].count(True) == 1
     # the suffix fold keeps the same version token: allowed
     assert w.concept_of("method", "widget model 2") == w.concept_of("method", "widget model 2 assumption")
 
