@@ -4,9 +4,31 @@ feedback assembly and the save transaction; anchor preview is a protocol service
 the quotes a task's :meth:`TaskType.check` declares.
 
 Registered here: ``notes``, ``metadata`` and ``lens:<lens_id>`` (a prefix factory).
-**Stage 4 hook**: ``concepts:*`` task types (subject kinds such as
-``concept_pair_group``) register with :func:`register_prefix` and need no protocol
-change; nothing is registered for them in stage 2.
+**Stage 4**: ``concepts:*`` task types (``subject_kind = 'concept_package'``) register
+with :func:`register_prefix`. Subjects that are not papers use the optional hooks below
+(stage 4 design §3.1); a task without them keeps the paper behaviour unchanged.
+
+**Optional hooks** (not part of :class:`TaskType`; looked up with ``getattr``):
+
+- ``task_options: Mapping[str, Any]`` - the task's own batch options and their defaults
+  (e.g. ``{"family": None, "k": 5, "budget_tokens": None}``). :func:`batch_options` merges
+  them into the stored option map, so ``eligibility`` / ``plan`` / ``save`` (via
+  ``ctx.options``) and the hooks below all see the same values; a key the task does not
+  declare and :class:`~seedgraph.work.routine.BatchOptions` does not know is refused.
+- ``select(lib, options) -> list[str]`` (:data:`SELECT`) - the task chooses its subjects.
+  ``create_batch`` calls it instead of the paper selection and refuses ``paper_ids`` and a
+  ``query``. ``options`` is the merged map plus ``"graph"`` (the ``graph`` argument or
+  ``None``). The ids must be distinct.
+- ``subject_label(lib, subject_id) -> str`` (:data:`SUBJECT_LABEL`) - the human label of a
+  subject (``"assumption pairs 41-90"``) for package messages, batch views and the batch
+  page. Default: the paper's title.
+- ``estimate(lib, options) -> <estimate>`` (:data:`ESTIMATE`) - the dry run, called by
+  :func:`seedgraph.work.estimate.estimate` with the same ``options`` as ``select``. It
+  returns the task's own object; it should expose ``text_tokens``, ``agent_tokens_low``
+  and ``agent_tokens_high`` (:class:`TokenEstimate`).
+
+A task whose ``check`` declares no :class:`QuoteRef` gets no anchor preview (concept tasks
+cite claim refs and never write quotes).
 
 Also here: the fixed selection language (design §1.2), resolved once at batch creation:
 ``held [papers] [in graph <slug>] [without current note | with stale note |
@@ -114,6 +136,47 @@ class SaveContext:
 #: no transaction open (network work such as the metadata task's DOI verification belongs
 #: here, never inside ``save``); an exception from it is logged, never raised.
 AFTER_COMMIT = "after_commit"
+
+#: Optional hook names for subjects that are not papers (see the module doc).
+SELECT = "select"
+SUBJECT_LABEL = "subject_label"
+ESTIMATE = "estimate"
+TASK_OPTIONS = "task_options"
+
+
+class TokenEstimate(Protocol):
+    """What an ``estimate`` hook's result should expose (the totals a dry run shows)."""
+
+    @property
+    def text_tokens(self) -> int: ...
+    @property
+    def agent_tokens_low(self) -> int: ...
+    @property
+    def agent_tokens_high(self) -> int: ...
+
+
+def task_option_defaults(task: TaskType) -> dict[str, Any]:
+    """The task's own batch options with their defaults (``{}`` for most tasks)."""
+    return dict(getattr(task, TASK_OPTIONS, None) or {})
+
+
+def split_options(task: TaskType, options: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``(protocol options, task options)``: the task's declared keys (defaults filled in)
+    split off from the rest, which go to ``BatchOptions``."""
+    defaults = task_option_defaults(task)
+    given = dict(options or {})
+    own = {**defaults, **{k: v for k, v in given.items() if k in defaults}}
+    return {k: v for k, v in given.items() if k not in defaults}, own
+
+
+def hook_options(option_map: Mapping[str, Any], graph: str | None) -> dict[str, Any]:
+    """The map ``select`` and ``estimate`` receive: the batch options plus ``graph``."""
+    return {**option_map, "graph": graph}
+
+
+def selects_subjects(task: TaskType) -> bool:
+    """Whether the task chooses its own subjects (defines ``select``)."""
+    return callable(getattr(task, SELECT, None))
 
 
 class TaskType(Protocol):

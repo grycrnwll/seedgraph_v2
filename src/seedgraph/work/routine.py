@@ -2,6 +2,7 @@
 the CLI mirror (P8) and the Ollama worker loop (P6) are thin adapters over these calls:
 
     create_batch(lib, task, *, paper_ids | query | graph, options, client) -> BatchView
+        (a task with a ``select`` hook chooses its own subjects: graph and options only)
     claim_next(lib, batch_id, worker, *, paper_id)                         -> ClaimReply
     submit(lib, packet_id, claim_id, *, note | note_path, accept_unanchored,
            model, usage)                                                   -> SubmitResult
@@ -48,7 +49,8 @@ if TYPE_CHECKING:
     from ..library.store import Library
     from .claims import WorkerRef
 
-MAX_PAPERS = 1000
+MAX_SUBJECTS = 1000
+MAX_PAPERS = MAX_SUBJECTS  # the stage 2 name, kept for callers
 STALE_REASON = "the paper was re-converted; create a new batch"
 CONFLICT_REASON = "the paper's current note changed since the batch was created; create a new batch (replace)"
 
@@ -94,6 +96,16 @@ class BatchOptions:
         return asdict(self)
 
 
+def batch_option_map(task: tasks.TaskType, options: BatchOptions | Mapping[str, Any] | None) -> dict[str, Any]:
+    """The option map a batch of ``task`` stores: :class:`BatchOptions` plus the task's own
+    options (``task_options``, defaults filled in). ``create_batch`` and the dry run
+    (:func:`seedgraph.work.estimate.estimate`) both build it here, so they agree."""
+    if isinstance(options, BatchOptions):
+        return {**options.as_dict(), **tasks.task_option_defaults(task)}
+    protocol, own = tasks.split_options(task, options)
+    return {**BatchOptions.coerce(protocol).as_dict(), **own}
+
+
 @dataclass(frozen=True)
 class ItemView:
     ordinal: int
@@ -109,6 +121,9 @@ class ItemView:
     #: split paper). ``ended``: ``live`` while held, else ``submitted`` / ``expired`` /
     #: ``released`` / ``stopped`` / ``limit``.
     claims: list[dict[str, Any]] = field(default_factory=list)
+    #: The human label: the task's ``subject_label`` hook, else the paper title (else the id
+    #: for a non-paper subject whose task cannot be loaded).
+    subject_label: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -211,7 +226,15 @@ def _write_text(path: Path, text: str) -> str:
 # --- create -------------------------------------------------------------------------------
 
 def _select(lib: Library, task: tasks.TaskType, paper_ids: Sequence[str] | None, query: str | None,
-            graph: str | None) -> tuple[list[str], str | None, str | None]:
+            graph: str | None, option_map: Mapping[str, Any]) -> tuple[list[str], str | None, str | None]:
+    if tasks.selects_subjects(task):
+        if paper_ids is not None or query is not None:
+            raise WorkError(f"task {task.name!r} chooses its own subjects; give options (and a graph), "
+                            "not paper_ids or a query")
+        ids = [str(s) for s in getattr(task, tasks.SELECT)(lib, tasks.hook_options(option_map, graph))]
+        if len(set(ids)) != len(ids):
+            raise WorkError(f"task {task.name!r} selected the same subject twice; subjects must be distinct")
+        return ids, None, graph
     if paper_ids is not None and query is not None:
         raise WorkError("give paper_ids or a query, not both")
     if paper_ids is not None:
@@ -238,13 +261,13 @@ def create_batch(lib: Library, task: str, *, paper_ids: Sequence[str] | None = N
     eligibility (gate and title hold-back), write ``instructions.md``, ``labels.json``
     and one text file per package, and insert the batch, items and packages."""
     tt = tasks.get_task(lib, task)
-    opts = BatchOptions.coerce(options)
-    ids, selection_query, graph_slug = _select(lib, tt, paper_ids, query, graph)
+    option_map = batch_option_map(tt, options)
+    ids, selection_query, graph_slug = _select(lib, tt, paper_ids, query, graph, option_map)
     if not ids:
-        raise WorkError("the selection names no papers")
-    if len(ids) > MAX_PAPERS:
-        raise WorkError(f"a batch takes at most {MAX_PAPERS} papers, not {len(ids)}")
-    option_map = opts.as_dict()
+        raise WorkError(f"task {tt.name!r} selected no subjects" if tasks.selects_subjects(tt)
+                        else "the selection names no papers")
+    if len(ids) > MAX_SUBJECTS:
+        raise WorkError(f"a batch takes at most {MAX_SUBJECTS} subjects, not {len(ids)}")
     decided = [(sid, tt.eligibility(lib, sid, option_map)) for sid in ids]
     plans = {sid: tt.plan(lib, sid, option_map) for sid, el in decided if el.state == "queued"}
     instr = tt.instructions(lib, has_parts=any(len(p) > 1 for p in plans.values()))
@@ -283,13 +306,51 @@ def create_batch(lib: Library, task: str, *, paper_ids: Sequence[str] | None = N
     return batch_view(lib, batch_id, now=now)
 
 
+# --- subject labels -----------------------------------------------------------------------
+
+def subject_labels(lib: Library, task: tasks.TaskType | None,
+                   subjects: Sequence[tuple[str, str]]) -> dict[str, str | None]:
+    """``{subject_id: label}`` for ``(subject_kind, subject_id)`` pairs: the task's
+    ``subject_label`` hook when it has one, else the paper title for a paper (``None`` if
+    untitled or unknown), else the subject id (e.g. ``task`` is ``None`` because the
+    batch's task version changed)."""
+    hook = getattr(task, tasks.SUBJECT_LABEL, None) if task is not None else None
+    if callable(hook):
+        return {sid: hook(lib, sid) for _, sid in subjects}
+    out: dict[str, str | None] = {sid: sid for kind, sid in subjects if kind != "paper"}
+    paper_ids = [sid for kind, sid in subjects if kind == "paper"]
+    titles: dict[str, str | None] = {}
+    for start in range(0, len(paper_ids), 500):
+        chunk = paper_ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        titles.update(lib.conn.execute(f"SELECT paper_id, title FROM papers WHERE paper_id IN ({marks})",
+                                       chunk).fetchall())
+    out.update({sid: titles.get(sid) for sid in paper_ids})
+    return out
+
+
+def batch_task(lib: Library, batch: store.Batch) -> tasks.TaskType | None:
+    """The batch's task type for read-only views, or ``None`` if it can no longer be loaded
+    (its version changed, or it is no longer registered): views never fail on that."""
+    try:
+        return tasks.task_for_batch(lib, batch.task_type, batch.task_version)
+    except WorkError:
+        return None
+
+
 # --- claim --------------------------------------------------------------------------------
 
 def _package_message(lib: Library, batch: store.Batch, package: store.WorkPackage,
-                     claim: store.PackageClaim) -> dict[str, Any]:
+                     claim: store.PackageClaim, task: tasks.TaskType) -> dict[str, Any]:
+    """The package message. A paper subject carries ``paper_id`` / ``title`` / ``year``;
+    a non-paper subject has ``paper_id`` and ``year`` ``None`` and its label as ``title``.
+    Both carry ``subject_kind`` / ``subject_id`` / ``subject_label``."""
     item = store.get_item(lib.conn, batch.batch_id, package.ordinal)
     assert item is not None
-    paper = lib.conn.execute("SELECT title, year FROM papers WHERE paper_id = ?", (item.subject_id,)).fetchone()
+    is_paper = item.subject_kind == "paper"
+    paper = lib.conn.execute("SELECT title, year FROM papers WHERE paper_id = ?",
+                             (item.subject_id,)).fetchone() if is_paper else None
+    label = subject_labels(lib, task, [(item.subject_kind, item.subject_id)])[item.subject_id]
     folder = work_root(lib) / batch.batch_id
     text_file = _home(lib) / package.text_path if package.text_path else None
     try:
@@ -298,8 +359,9 @@ def _package_message(lib: Library, batch: store.Batch, package: store.WorkPackag
         lines = None
     return {
         "packet_id": package.packet_id, "claim_id": claim.claim_id, "batch_id": batch.batch_id,
-        "task_type": batch.task_type, "paper_id": item.subject_id,
-        "title": paper[0] if paper else None, "year": paper[1] if paper else None,
+        "task_type": batch.task_type, "paper_id": item.subject_id if is_paper else None,
+        "title": (paper[0] if paper else None) if is_paper else label, "year": paper[1] if paper else None,
+        "subject_kind": item.subject_kind, "subject_id": item.subject_id, "subject_label": label,
         "part": package.part, "part_count": package.part_count,
         "text_path": str(text_file) if text_file else None, "lines": lines,
         "instructions_path": str(folder / "instructions.md"), "labels_path": str(folder / "labels.json"),
@@ -324,7 +386,7 @@ def claim_next(lib: Library, batch_id: str, worker: WorkerRef, *, paper_id: str 
         nxt = NEXT_NO_PACKAGE if res.status == "no_package" else res.state.next_action
         return ClaimReply(res.status, res.state, None, nxt)
     assert res.package is not None and res.claim is not None
-    msg = _package_message(lib, batch, res.package, res.claim)
+    msg = _package_message(lib, batch, res.package, res.claim, tt)
     return ClaimReply("claimed", res.state, msg, NEXT_CLAIMED)
 
 
@@ -606,9 +668,11 @@ def batch_view(lib: Library, batch_id: str, *, offset: int = 0, limit: int | Non
         (batch_id,))}
     page = all_items[offset:] if limit is None else all_items[offset:offset + limit]
     history = _claim_history(conn, batch_id) if page else {}
+    pairs = [(i.subject_kind, i.subject_id) for i in page]
+    labels = subject_labels(lib, batch_task(lib, batch), pairs) if page else {}
     items = [ItemView(i.ordinal, i.subject_kind, i.subject_id, i.state, i.reason, i.part_count,
                       saved.get(i.ordinal, 0), i.result_ref, i.attention_item_id,
-                      history.get(i.ordinal, [])) for i in page]
+                      history.get(i.ordinal, []), labels.get(i.subject_id)) for i in page]
     return BatchView(batch_id=batch_id, task_type=batch.task_type, task_version=batch.task_version,
                      selection_query=batch.selection_query, graph=batch.graph_slug, options=batch.options,
                      state=st, items=items, item_total=len(all_items), commands=work_commands(batch_id),

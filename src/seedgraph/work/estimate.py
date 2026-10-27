@@ -17,9 +17,9 @@ tokens**, and the totals over the queued papers.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..library import attention, textquality
 from . import packages, tasks
@@ -117,10 +117,25 @@ def _one(lib: Library, task: WholePaperTask, paper_id: str, replace: bool) -> Pa
                          round(tokens * AGENT_FACTOR_HIGH), checked)
 
 
-def estimate(lib: Library, task: str, paper_ids: Iterable[str], *, replace: bool = False) -> Estimate:
+def estimate(lib: Library, task: str, paper_ids: Iterable[str] = (), *, replace: bool = False,
+             options: Mapping[str, Any] | None = None, graph: str | None = None) -> Any:
     """The estimate for running whole-paper ``task`` over ``paper_ids`` (see the module doc).
-    ``replace`` mirrors the batch option: preserved papers are counted too."""
+    ``replace`` mirrors the batch option: preserved papers are counted too.
+
+    A task with an ``estimate`` hook (stage 4 design §3.1; it chooses its own subjects)
+    gets no paper ids: the hook is called with the option map ``create_batch`` would store
+    for ``options`` plus ``graph`` (the same map its ``select`` sees), and its own result
+    object is returned (exposing ``text_tokens`` / ``agent_tokens_low`` /
+    ``agent_tokens_high``, :class:`seedgraph.work.tasks.TokenEstimate`)."""
     tt = tasks.get_task(lib, task)
+    hook = getattr(tt, tasks.ESTIMATE, None)
+    if callable(hook):
+        ids = list(paper_ids)
+        if ids:
+            raise WorkError(f"task {task!r} chooses its own subjects; give options (and a graph), not paper ids")
+        from .routine import batch_option_map  # routine imports the task registry, not this module
+
+        return hook(lib, tasks.hook_options(batch_option_map(tt, options), graph))
     if not isinstance(tt, WholePaperTask):
         raise WorkError(f"no estimate for task {task!r}: only whole-paper tasks (notes, lens:<id>)")
     ids = list(dict.fromkeys(paper_ids))

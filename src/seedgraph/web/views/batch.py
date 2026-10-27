@@ -8,6 +8,10 @@ batch whose claim has lapsed records that expiry; nothing else here writes.
 Per-paper state words: ``queued``, ``claimed by <worker> since <t>`` (a live claim),
 ``in progress`` (some parts saved, none claimed), ``done``, ``held back``, ``failed``,
 ``preserved``, ``stale``, ``conflict``.
+
+Subjects that are not papers (stage 4 design §3.1; e.g. ``concept_package``) show the
+task's subject label (``work.routine.subject_labels``) as ``title`` with no paper link,
+and the page says "subjects" instead of "papers".
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ class BatchRow:
 @dataclass(frozen=True)
 class ItemRow:
     ordinal: int
-    paper_id: str
+    paper_id: str                  # the subject id (a paper id for a paper subject)
     title: str | None
     held: bool
     state: str
@@ -50,6 +54,7 @@ class ItemRow:
     reason: str | None
     attention_item_id: str | None
     claims: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    subject_kind: str = "paper"    # not 'paper': ``title`` is the subject label, no paper link
 
 
 @dataclass(frozen=True)
@@ -72,24 +77,34 @@ class BatchDetail:
     item_total: int
     work_dir: str
     created_at: str
+    subject_noun: str = "paper"    # "subject" for a batch of non-paper subjects
 
 
-def _selection(selection_query: str | None, total: int) -> str:
-    return selection_query or f"{total} selected paper{'s' if total != 1 else ''}"
+def _selection(selection_query: str | None, total: int, noun: str = "paper") -> str:
+    return selection_query or f"{total} selected {noun}{'s' if total != 1 else ''}"
 
 
 def _created(lib: Library) -> dict[str, str]:
     return {r[0]: r[1] for r in lib.conn.execute("SELECT batch_id, created_at FROM batches")}
 
 
+def _nouns(lib: Library, batch_id: str | None = None) -> dict[str, str]:
+    """``{batch_id: 'subject'}`` for batches with any non-paper subject (others: "paper")."""
+    sql = "SELECT DISTINCT batch_id FROM batch_items WHERE subject_kind != 'paper'"
+    rows = lib.conn.execute(sql + " AND batch_id = ?", (batch_id,)) if batch_id else lib.conn.execute(sql)
+    return {r[0]: "subject" for r in rows}
+
+
 def list_page(lib: Library, *, now: datetime | None = None) -> list[BatchRow]:
     """Every batch, newest first."""
     created = _created(lib)
+    nouns = _nouns(lib)
     rows = []
     for v in routine.list_batches(lib, now=now):
         items = v.state.items
         rows.append(BatchRow(
-            batch_id=v.batch_id, task=v.task_type, selection=_selection(v.selection_query, v.item_total),
+            batch_id=v.batch_id, task=v.task_type,
+            selection=_selection(v.selection_query, v.item_total, nouns.get(v.batch_id, "paper")),
             graph=v.graph, state=v.state.state, label=v.state.label, done=items.get("done", 0),
             held_back=items.get("held_back", 0), failed=items.get("failed", 0), total=v.item_total,
             created_at=created.get(v.batch_id, "")))
@@ -134,19 +149,23 @@ def detail(lib: Library, batch_id: str, *, now: datetime | None = None) -> Batch
     quotes = _quotes(lib, [i.result_ref for i in v.items if i.state == "done" and i.result_ref])
     items = []
     for i in v.items:
-        title, held = papers.get(i.subject_id, (None, False))
+        if i.subject_kind == "paper":
+            title, held = papers.get(i.subject_id, (None, False))
+        else:
+            title, held = i.subject_label or i.subject_id, False
         q = quotes.get(i.result_ref or "") if i.state == "done" else None
         items.append(ItemRow(
             ordinal=i.ordinal, paper_id=i.subject_id, title=title, held=held, state=i.state,
             state_text=_state_text(i.state, i.claims),
             parts=f"{i.parts_done}/{i.part_count}" if (i.part_count or 0) > 1 else None,
             quotes_anchored=q[0] if q else None, quotes_total=q[1] if q else None, reason=i.reason,
-            attention_item_id=i.attention_item_id, claims=tuple(i.claims)))
+            attention_item_id=i.attention_item_id, claims=tuple(i.claims), subject_kind=i.subject_kind))
     st = v.state
+    noun = _nouns(lib, batch_id).get(batch_id, "paper")
     return BatchDetail(
-        batch_id=v.batch_id, task=v.task_type, selection=_selection(v.selection_query, v.item_total),
+        batch_id=v.batch_id, task=v.task_type, selection=_selection(v.selection_query, v.item_total, noun),
         graph=v.graph, state=st.state, label=st.label, next_action=st.next_action, stop_mode=st.stop_mode,
         paused=st.state in ("stopped", "usage_limit", "claim_expired"), finished=st.state == "finished",
         pause_detail=st.pause_detail, commands=v.commands, accepted_unanchored=v.accepted_unanchored,
         counts=dict(st.items), items=tuple(items), item_total=v.item_total, work_dir=v.work_dir,
-        created_at=_created(lib).get(v.batch_id, ""))
+        created_at=_created(lib).get(v.batch_id, ""), subject_noun=noun)

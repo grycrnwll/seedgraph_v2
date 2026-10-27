@@ -5,12 +5,12 @@
   <p>{% for k, n in view.counts | dictsort %}{{ k.replace("_", " ") }}: {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
   {% if view.accepted_unanchored %}<p class="sg-warn">{{ view.accepted_unanchored }} quotes were saved as ambiguous after revision.</p>{% endif %}
   <table class="sg-table">
-    <thead><tr><th>#</th><th>Paper</th><th>State</th><th>Parts</th><th>Quotes</th><th>Reason</th></tr></thead>
+    <thead><tr><th>#</th><th>{{ view.subject_noun | capitalize }}</th><th>State</th><th>Parts</th><th>Quotes</th><th>Reason</th></tr></thead>
     <tbody>
       {% for i in view.items %}
       <tr>
         <td>{{ i.ordinal }}</td>
-        <td>{{ paper_title(i.paper_id, i.title, i.held) }}
+        <td>{% if i.subject_kind == "paper" %}{{ paper_title(i.paper_id, i.title, i.held) }}{% else %}<span class="sg-subject-label">{{ i.title }}</span>{% endif %}
           {% if i.claims %}
           <details><summary>claim history ({{ i.claims | length }})</summary>
             <table class="sg-table sg-compact">
@@ -32,5 +32,5 @@
       {% endfor %}
     </tbody>
   </table>
-  {% if view.item_total > view.items | length %}<p class="sg-hint">Showing {{ view.items | length }} of {{ view.item_total }} papers.</p>{% endif %}
+  {% if view.item_total > view.items | length %}<p class="sg-hint">Showing {{ view.items | length }} of {{ view.item_total }} {{ view.subject_noun }}s.</p>{% endif %}
 </div>
