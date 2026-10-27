@@ -213,11 +213,12 @@ def register_prefix(prefix: str, factory: Callable[..., TaskType]) -> None:
 def _ensure_builtins() -> None:
     if "notes" in _BY_NAME:
         return
-    from . import tasks_lens, tasks_metadata, tasks_notes
+    from . import tasks_concepts, tasks_lens, tasks_metadata, tasks_notes
 
     register("notes", tasks_notes.NotesTask)
     register("metadata", tasks_metadata.MetadataTask)
     register_prefix("lens", tasks_lens.LensTask)
+    register_prefix("concepts", tasks_concepts.ConceptTask)
 
 
 def get_task(lib: Library, name: str) -> TaskType:

@@ -7,6 +7,7 @@ inside the program). Each command is a thin adapter over one call of
 Pauses, ``invalid`` and ``needs_revision`` are normal replies (exit 0).
 
     work create TASK --paper ID... | --query "..." | --graph G [--replace] [--ttl S] [--split-threshold N]
+                [--option KEY=VALUE]...   (task options, e.g. concepts:bridge --option families=assumption)
     work claim BATCH --worker NAME [--client C] [--paper ID]
     work submit PACKET --claim CLAIM --note-file PATH [--accept-unanchored] [--model M] [--usage-file PATH]
     work release PACKET --claim CLAIM --reason give_back|paper_problem [--message T]
@@ -64,7 +65,7 @@ def _out(obj: Any) -> None:
 
 @work_app.command("create")
 def create(
-    task: str = typer.Argument(..., help="notes, metadata or lens:<lens_id>."),
+    task: str = typer.Argument(..., help="notes, metadata, lens:<lens_id> or concepts:merge|bridge|name_literatures."),
     paper: Optional[List[str]] = typer.Option(None, "--paper", help="A library paper id (repeatable)."),
     query: Optional[str] = typer.Option(None, "--query",
                                         help='A selection such as "held in graph G without current note".'),
@@ -73,6 +74,8 @@ def create(
     ttl: Optional[int] = typer.Option(None, "--ttl", min=1, help="Claim time-to-live in seconds."),
     split_threshold: Optional[int] = typer.Option(None, "--split-threshold", min=1,
                                                   help="Split papers above this many tokens."),
+    option: Optional[List[str]] = typer.Option(None, "--option", help="A task option KEY=VALUE (repeatable); "
+                                               "VALUE is read as JSON when it parses, else as text."),
     root: Optional[Path] = ROOT,
 ) -> None:
     """Create a batch and print it (with the copyable work commands)."""
@@ -83,9 +86,28 @@ def create(
         options["claim_ttl_s"] = ttl
     if split_threshold is not None:
         options["split_threshold_tokens"] = split_threshold
+    with _common.work_errors():
+        options.update(parse_options(option or []))
     with _common.work_errors(), _common.work_library(root) as lib:
         _out(routine.create_batch(lib, task, paper_ids=paper or None, query=query, graph=graph,
                                   options=options, client="cli"))
+
+
+def parse_options(pairs: List[str]) -> dict[str, Any]:
+    """``["k=3", "families=assumption,method", "budget_tokens=200000"]`` -> a task option map
+    (JSON values when they parse: numbers, true/false/null, lists; text otherwise). Unknown
+    keys are refused by the task at batch creation."""
+    out: dict[str, Any] = {}
+    for raw in pairs:
+        key, sep, value = raw.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise ValueError(f"--option takes KEY=VALUE, not {raw!r}")
+        try:
+            out[key] = json.loads(value)
+        except ValueError:
+            out[key] = value
+    return out
 
 
 @work_app.command("claim")
