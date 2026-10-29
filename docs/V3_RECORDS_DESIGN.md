@@ -87,7 +87,8 @@ This decides what "read" means (§3.3):
 - `paper_show` returns metadata, the section outline and the current claims with their text, plus each claim's
   anchor **span ids and pages, but no quote text** (`tools_library.py:208-222`).
 - `paper_read` returns a bounded slice of the paper's markdown by character range or section.
-- `concept_show` returns supporting claims with their quotes (`tools_concepts.py:130`).
+- `concept_show` returns supporting claims with their quotes; `concept_search` returns one example claim with
+  its quote per hit (both through `_claim_rows`, `tools_concepts.py:124-134`).
 
 ### 1.4 Model per claim, and the original beneath an overlay
 
@@ -159,9 +160,11 @@ level). An invalid name is refused with a plain `next_action`.
 
 **Helpers (subagents).** A name with a suffix, `parallel-trends-1432/a`, is a **helper stream** of the parent
 `parallel-trends-1432`:
-- A record in the parent owns the parent's unowned events **and** its helpers' unowned events since the
-  parent's previous answer. The path shows which helper made each call.
-- A helper that records its own answer owns only its own events.
+- A helper stream opens no record of its own. Its events go into the **parent's** open record (opening one if
+  there is none). So the parent's answer owns its own and its helpers' calls since its previous answer. The
+  path shows which helper made each call.
+- A helper that calls `record_answer` itself gets its own record. Its own events since its previous answer
+  move from the parent's open record into the new one. This is the only time an event changes record.
 - The citation check (§3.3) looks at the parent's whole family log, so a passage a helper opened counts as
   read for the parent's answer. It is tagged "opened by helper a".
 
@@ -250,7 +253,8 @@ record_answer(question, answer, evidence, judgement?, session?)
 - `judgement`: the agent's own view, kept apart and labelled "agent's judgement" everywhere (≤ 5 000).
 - `evidence`: 1 to 100 items. Span or paper ids, as SPEC says, plus **claim ids**, because agents cite claims
   from `search(kind=claims)` and `paper_show`. A claim resolves to its paper and anchor span.
-- Reply: `record_id`, the counts (searches, opened, cited), the flags, the Records URL, and a `next_action`
+- Reply: `record_id`, the counts (searches, opened, cited), the flags, the page path `/records/<record_id>`
+  (the MCP process does not know the web server's port), and a `next_action`
   when something is flagged ("tell the researcher which citations were not read, or read them and record
   again").
 
@@ -273,6 +277,7 @@ flagged. Nothing is ever amended in place.
 
 The first logged event of a stream with no open record **opens** a record (`state = open`). `record_answer`
 answers it. The next event opens the next one. So ownership is exactly ticket 07 #1, with no claiming step.
+Helper streams use their parent's open record (§3.1).
 
 An open record is shown as:
 - **in progress** while its last event is less than `PATH_IDLE` (30 minutes) old and its connection is live;
@@ -297,7 +302,7 @@ A long gap inside a record is shown in the path ("40 minutes later").
 | `record_sessions` | `session_id` ('ss_' + hash of key), `key_kind` (`named`, `connection`), `client`, `name`, `parent_session_id` NULL, `first_at`, `last_at` | one row per stream; a helper points to its parent |
 | `record_connections` | `connection_id` (the process `worker_id`), `client`, `started_at`, `closed_at` NULL, `meta_keys_json` | `closed_at` set when stdin ends; `meta_keys_json` is the identity probe |
 | `traversal_records` | `record_id` ('tr_' + hex), `session_id`, `state` (`open`, `answered`), `opened_at`, `last_event_at`, `answered_at`, `question`, `answer`, `judgement`, `evidence_json` (frozen, §3.4), `flags_json`, `counts_json`, `unlogged_calls`, `starred` (0/1), `annotation`, `annotated_at`, `record_version` (1), `seedgraph_version` | `record_version` lets readers tolerate later fields (the v2 trace's additive rule, kept) |
-| `traversal_events` | `event_id`, `record_id`, `session_id`, `seq`, `at`, `tool`, `kind` (`search`, `open_paper`, `open_text`, `open_concept`), `connection_id`, `args_json`, `items_json` | immutable; `items_json` holds ids, ranges and previews only |
+| `traversal_events` | `event_id`, `record_id`, `session_id`, `seq`, `at`, `tool`, `kind` (`search`, `open_paper`, `open_text`, `open_concept`), `connection_id`, `args_json`, `items_json` | content immutable; `record_id` changes at most once, when a helper records its own answer (§3.1); `items_json` holds ids, ranges and previews only |
 | `record_graphs` | PK(`record_id`, `slug`); `how` (`searched`, `cited_member`) | ticket 07 #5 |
 
 The item tags are **derived**, never stored: `records.path(events, evidence)` is a pure function, so the
@@ -402,7 +407,7 @@ and "fix it now" opens the paper page at the current note.
 | table | key columns | notes |
 |---|---|---|
 | `spot_check_samples` | `sample_id` ('sc_' + hash of seed, size, ids), `seed`, `size`, `filters_json`, `created_at`, `finished_at` NULL | one row per spot-check sample |
-| `spot_check_items` | PK(`sample_id`, `claim_id`); `ordinal`, `paper_id`, `extraction_run_id`, `claim_type`, `model_key`, `claim_fingerprint`, `mark` NULL (`right`, `partly`, `wrong`), `reasons_json`, `note`, `marked_at`, `fixed_at` NULL | `claim_id` is the immutable `extracted_claims` id; the fingerprint (stage 3 `notes/identity.py`) finds the claim in a later note; `fixed_at` is set when an overlay save on that claim follows the mark |
+| `spot_check_items` | PK(`sample_id`, `claim_id`); `ordinal`, `paper_id`, `extraction_run_id`, `claim_type`, `model_key`, `claim_fingerprint`, `mark` NULL (`right`, `partly`, `wrong`), `reasons_json`, `note`, `marked_at` | `claim_id` is the immutable `extracted_claims` id; the fingerprint (stage 3 `notes/identity.py`) finds the claim in a later note. "Fixed" is derived, not stored: an `overlay_versions` row for the paper after `marked_at` whose ops touch the claim's fingerprint. So "fix it now" needs no hook in the notes routes |
 | view `spot_check_accuracy` | `claim_type`, `model_key`, `n_right`, `n_partly`, `n_wrong`, `n_marked` | latest mark per claim |
 
 ### 5.6 Spot-check module (`src/seedgraph/spotcheck/`)
@@ -410,7 +415,7 @@ and "fix it now" opens the paper page at the current note.
 | module | interface | hides |
 |---|---|---|
 | `sample.py` | `create_sample(lib, *, n=20, seed=None, filters=None) -> Sample`, `sample(lib, sample_id)` | the population, model keys, the least-marked-first draw |
-| `marks.py` | `mark(lib, sample_id, claim_id, value, *, reasons=(), note=None)`, `note_fixed(lib, paper_id, claim_id)` | validation, last-mark rule |
+| `marks.py` | `mark(lib, sample_id, claim_id, value, *, reasons=(), note=None)`, `fixed(lib, sample_id, claim_id) -> bool` | validation, last-mark rule, the derived "fixed" check |
 | `accuracy.py` | `accuracy(lib, *, by=('type', 'model')) -> AccuracyTable` | raw rows, the weighted overall line, the "too few" rule |
 
 ## 6. Screens
@@ -460,13 +465,15 @@ without answer (4 searches)", linked to the record. Open records still in progre
   sample.
 - **Earlier samples**: date, size, how many marked, link.
 - **Sample page** (`/spot-check/{sample_id}`): the items in order (§5.3), each with its mark buttons, reasons
-  and note; marks save by htmx swap; a running "marked 12 of 20" line; "fix it now" after partly right or
-  wrong.
+  and note; marks save by htmx swap; a running line for this sample ("marked 12 of 20: right 9, partly 2,
+  wrong 1", ticket 08's running figure); "fix it now" after partly right or wrong, and "fixed" once an edit
+  follows.
 
 ### 6.6 The paper page change
 
 `/papers/{id}` accepts `edit={claim_id}`: that claim's existing edit form renders open and the page scrolls to
-it. `from=spot-check:{sample_id}` adds the "back to the spot-check" link. Nothing else on the page changes.
+it. For a hidden claim it also turns on "show hidden", so the form is there (the researcher may unhide or edit
+it). `from=spot-check:{sample_id}` adds the "back to the spot-check" link. Nothing else on the page changes.
 
 ## 7. MCP updates
 
@@ -474,7 +481,7 @@ New module `mcp/tools_records.py`:
 
 | tool | arguments | returns |
 |---|---|---|
-| `record_answer` | `question, answer, evidence, judgement?, session?` | `record_id`, counts, flags, `next_action`, the Records URL |
+| `record_answer` | `question, answer, evidence, judgement?, session?` | `record_id`, counts, flags, `next_action`, the page path |
 
 `record_answer` is a mutation (`readOnlyHint: false`). It writes only records.
 
@@ -582,8 +589,8 @@ answers and marks stay there.
      land_value graphs, into `<home>/acceptance/stage5/questions.yaml`. At least one is asked from **Codex**,
      the rest from Claude Code. One uses two helper subagents.
    - The researcher asks each question in a fresh agent session with the consultation skill.
-   - After each answer, the researcher opens the record and fills the check form on the record page
-     (acceptance mode only): the question is right; the answer matches what the agent said; every search
+   - After each answer, the researcher opens the record and fills the per-record checklist that
+     `records acceptance-report` writes to `<home>/acceptance/stage5/records_check.md`: the question is right; the answer matches what the agent said; every search
      appears with its query and hits; every paper or section opened appears; the tags are right; the cited
      passages are the ones the agent named; judgement is apart; the graphs are right.
    - An automated cross-check (`records check-transcript`, Claude Code only) reads the local session transcript
@@ -620,13 +627,13 @@ touched only by the slice named for them.
 | # | Slice | Depends | Owns | Tests first |
 |---|---|---|---|---|
 | R1 | **Schema and session log**: both migrations, `records/{__init__,sessions,log}.py` | — | `db/schema/library/0011_records.sql`, `db/schema/library/0012_spot_check.sql`, `src/seedgraph/records/{__init__,sessions,log}.py`, any migrate-test expectations for the new tables, `tests/records/test_sessions*.py`, `test_log*.py` | key order (named, connection); name validation; helpers point to parents; same name from two connections warns; restart keeps a named stream and splits a connection one; first event opens a record; unlogged-call count; migrate tests green without editing `src/seedgraph/migrate/` |
-| R2 | **Answer, path, export, manage**: `records/{answer,path,export,manage}.py` | R1 | those files, `tests/records/test_answer*.py`, `test_path*.py`, `test_export*.py` | found / opened / cited rules incl. the half-span overlap and anchors-only; each flag; unknown ids refused; zero-event record passes on earlier reads; helper reads count for the parent; frozen claim text and `(overlay_id, version_no)` survive a later edit; graph links (`searched`, `cited_member`, none); idle and closed → path without answer; export layout; delete removes events |
+| R2 | **Answer, path, export, manage**: `records/{answer,path,export,manage}.py` | R1 | those files, `tests/records/test_answer*.py`, `test_path*.py`, `test_export*.py` | found / opened / cited rules incl. the half-span overlap and anchors-only; each flag; unknown ids refused; zero-event record passes on earlier reads; helper events join the parent's open record, and move to the helper's own record when the helper answers (no helper record left as a path without answer); frozen claim text and `(overlay_id, version_no)` survive a later edit; graph links (`searched`, `cited_member`, none); idle and closed → path without answer; export layout; delete removes events |
 | R3 | **MCP and skills**: `tools_records.py`, logging in the read tools, reminder line, connection close, skill text | R1, R2 | `mcp/tools_records.py`, `mcp/tools_library.py`, `mcp/tools_concepts.py`, `mcp/server.py` (registration, `call_info`, close hook), `agent_setup/*.md`, `tests/mcp/test_records*.py` | in-memory MCP: every logged tool writes one event and echoes `session`; unlogged tools write none; reminder on search-kind replies only; a failed log write still answers; `record_answer` round-trip; agent audience unchanged (stage 2–4 MCP suites green) |
-| R4 | **Spot-check core**: `spotcheck/{__init__,sample,marks,accuracy}.py` | R1 | those files, `tests/spotcheck/` | population includes hidden and edited, excludes added and lens claims and marked ones; model key fallbacks; least-marked-first with ties; 2-per-paper cap; same state + seed → same sample; last mark counts; an overlay edit after a mark sets `fixed_at` and leaves the figure unchanged; weighted overall; "too few" rule |
+| R4 | **Spot-check core**: `spotcheck/{__init__,sample,marks,accuracy}.py` | R1 | those files, `tests/spotcheck/` | population includes hidden and edited, excludes added and lens claims and marked ones; model key fallbacks; least-marked-first with ties; 2-per-paper cap; same state + seed → same sample; last mark counts; an overlay edit after a mark shows as fixed and leaves the figure unchanged; weighted overall; "too few" rule |
 | R5 | **Records screens**: list, detail, graph tab, Home feed; replaces the placeholders | R2 | `web/views/records.py`, `web/routes/records.py`, `web/templates/records/*`, `web/views/home.py` (`activity` only), `web/views/graphs.py` (tabs constant only), deletes `web/routes/placeholders.py` and `web/templates/placeholders/`, tests | each POST calls one deep function; filters; "spans 2 graphs" mark; judgement labelled; standing scope line; export download; feed entries; CSP test |
-| R6 | **Spot-check screens and "fix it now"** | R4, R5 | `web/views/spotcheck.py`, `web/routes/spotcheck.py`, `web/templates/spotcheck/*`, `web/views/paper.py` + `web/routes/papers.py` + `web/templates/paper/_notes.html` (the `edit=` / `from=` parameters only), tests | start, mark and change a mark by htmx; "fix it now" opens the right form; back link; earlier-extraction notice; accuracy tables with counts |
+| R6 | **Spot-check screens and "fix it now"** | R4, R5 | `web/views/spotcheck.py`, `web/routes/spotcheck.py`, `web/templates/spotcheck/*`, `web/views/paper.py` + `web/routes/papers.py` + `web/templates/paper/_notes.html` (the `edit=` / `from=` parameters only), tests | start, mark and change a mark by htmx; "fix it now" opens the right form, including for a hidden claim; back link; earlier-extraction notice; running per-sample counts; accuracy tables with counts |
 | R7 | **Deletions and reachability**: §9.1, §9.2 | — | `vocab.py` (the enums), `config/{models,loader,__init__}.py` (answer parts), `tests/test_config.py` (those tests), `evals/`, `tests/test_reachability.py` | `DELETED_IN_STAGE5` green; full suite green |
-| R8 | **Acceptance harness**: planted citation, path without answer, identity probe, transcript cross-check, spot-check report | R3, R5, R6, R7 | `tests/acceptance/stage5/`, `src/seedgraph/commands/records.py` (`acceptance-report`, `check-transcript`) and its registration in `cli.py` / `commands/__init__.py` | opt-in; writes reports to the home; the transcript reader on an invented transcript |
+| R8 | **Acceptance harness**: planted citation, path without answer, identity probe, transcript cross-check, the per-record checklist, spot-check report | R3, R5, R6, R7 | `tests/acceptance/stage5/`, `src/seedgraph/commands/records.py` (`acceptance-report`, `check-transcript`) and its registration in `cli.py` / `commands/__init__.py` | opt-in; writes reports to the home; the transcript reader on an invented transcript |
 
 **Waves (2–3 at a time).** Wave 1: R1, R7. Wave 2: R2, R4. Wave 3: R3, R5. Wave 4: R6. Then R8 and the real
 acceptance run. The critical path is R1 → R2 → R5 → R6 → R8. R1 owns both migrations, so only one slice
