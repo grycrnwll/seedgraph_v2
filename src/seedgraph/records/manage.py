@@ -269,7 +269,8 @@ def _require(conn: sqlite3.Connection, record_id: str) -> None:
 
 
 def star(lib: Library, record_id: str, starred: bool = True) -> None:
-    with lib.write() as conn:
+    # Records are test data until stage 7 (design §13 Q9): star, annotate and delete leave dirty alone.
+    with lib.write(dirty=False) as conn:
         _require(conn, record_id)
         conn.execute("UPDATE traversal_records SET starred = ? WHERE record_id = ?", (int(starred), record_id))
 
@@ -279,7 +280,7 @@ def annotate(lib: Library, record_id: str, text: str | None, *, now: datetime | 
     if text is not None and len(text) > MAX_ANNOTATION:
         raise RecordError(f"the annotation is {len(text)} characters; the limit is {MAX_ANNOTATION}")
     value = text if text and text.strip() else None
-    with lib.write() as conn:
+    with lib.write(dirty=False) as conn:
         _require(conn, record_id)
         conn.execute("UPDATE traversal_records SET annotation = ?, annotated_at = ? WHERE record_id = ?",
                      (value, fmt_ts(now or now_utc()) if value else None, record_id))
@@ -287,7 +288,7 @@ def annotate(lib: Library, record_id: str, text: str | None, *, now: datetime | 
 
 def delete(lib: Library, record_id: str) -> None:
     """Delete the record with its events and graph links."""
-    with lib.write() as conn:
+    with lib.write(dirty=False) as conn:
         _require(conn, record_id)
         conn.execute("DELETE FROM traversal_events WHERE record_id = ?", (record_id,))
         conn.execute("DELETE FROM record_graphs WHERE record_id = ?", (record_id,))

@@ -42,13 +42,6 @@ KEEP = {
     "seedgraph.library._calibrate_textquality": "calibration script, run by hand",
     "seedgraph.library._calibrate_titlecheck": "calibration script, run by hand",
     # Stage 5 cores built before their wiring; the wiring slice removes each entry (docs/V3_RECORDS_DESIGN.md §11).
-    "seedgraph.records": "stage 5 records core (R1), wired to the MCP server by R3",
-    "seedgraph.records.log": "stage 5 records core (R1), wired to the MCP server by R3",
-    "seedgraph.records.sessions": "stage 5 records core (R1), wired to the MCP server by R3",
-    "seedgraph.records.answer": "stage 5 records core (R2), wired to the MCP server by R3",
-    "seedgraph.records.path": "stage 5 records core (R2), wired by R3 and R5",
-    "seedgraph.records.manage": "stage 5 records core (R2), wired to the screens by R5",
-    "seedgraph.records.export": "stage 5 records core (R2), wired to the screens by R5",
     "seedgraph.spotcheck": "stage 5 spot-check core (R4), wired to the screens by R6",
     "seedgraph.spotcheck.sample": "stage 5 spot-check core (R4), wired to the screens by R6",
     "seedgraph.spotcheck.marks": "stage 5 spot-check core (R4), wired to the screens by R6",

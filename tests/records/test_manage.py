@@ -266,6 +266,17 @@ def test_delete_removes_events_and_graph_links(lib, world):
     assert lib.conn.execute("SELECT COUNT(*) FROM traversal_events").fetchone()[0] == 1
 
 
+def test_star_annotate_and_delete_leave_the_library_clean(lib, world):
+    # Records are test data until stage 7 (design §13 Q9), like the session log.
+    w, did, _ = world
+    rid = Agent(lib).answer([{"paper_id": did.paper_id}]).record_id
+    lib.conn.execute("UPDATE library_meta SET value = '0' WHERE key = 'dirty'")
+    manage.star(lib, rid)
+    manage.annotate(lib, rid, "Check the pre-trends figure.", now=T0)
+    manage.delete(lib, rid)
+    assert lib.conn.execute("SELECT value FROM library_meta WHERE key = 'dirty'").fetchone()[0] == "0"
+
+
 def test_deleting_an_earlier_record_never_changes_a_later_check(lib, world):
     w, did, _ = world
     sp = w.span(did, "parallel")
