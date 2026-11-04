@@ -41,6 +41,10 @@ KEEP = {
     "seedgraph.migrate.v2_schema": "frozen v2 schema, package data read by the migrate test fixtures",
     "seedgraph.library._calibrate_textquality": "calibration script, run by hand",
     "seedgraph.library._calibrate_titlecheck": "calibration script, run by hand",
+    # Stage 5 cores built before their wiring; R3 removes these entries (docs/V3_RECORDS_DESIGN.md §11).
+    "seedgraph.records": "stage 5 records core (R1), wired to the MCP server by R3",
+    "seedgraph.records.log": "stage 5 records core (R1), wired to the MCP server by R3",
+    "seedgraph.records.sessions": "stage 5 records core (R1), wired to the MCP server by R3",
 }
 
 
