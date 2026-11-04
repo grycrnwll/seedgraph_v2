@@ -11,7 +11,9 @@ mark that merely carries an earlier edit forward (a notes-only save, say) is not
 the claim's ops at the last version at or before the mark are compared with each later
 version's, ignoring the target (a replay re-keys it to the new claim id). An op is the
 claim's when its target names the claim id, carries the stored fingerprint, or is the
-same claim by the stage 3 identity tiers (:func:`seedgraph.notes.identity.tier`).
+same claim by the stage 3 identity tiers (:func:`seedgraph.notes.identity.tier`); the
+tiers are tried only for a target outside the claim's own note (a replay's new claim),
+since another claim of the same note quoting the same sentence would match them.
 """
 
 from __future__ import annotations
@@ -80,9 +82,12 @@ def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _same_claim(target: Mapping[str, Any], claim_id: str, fp: Mapping[str, Any], fp_obj: ClaimFingerprint) -> bool:
+def _same_claim(target: Mapping[str, Any], claim_id: str, fp: Mapping[str, Any], fp_obj: ClaimFingerprint,
+                siblings: set[str]) -> bool:
     if target.get("claim_id") == claim_id:
         return True
+    if target.get("claim_id") in siblings:  # another claim of the same note: never this one
+        return False
     other = target.get("fingerprint")
     if not isinstance(other, Mapping):
         return False
@@ -92,9 +97,10 @@ def _same_claim(target: Mapping[str, Any], claim_id: str, fp: Mapping[str, Any],
 
 
 def _claim_ops(ops: list[dict[str, Any]], claim_id: str, fp: Mapping[str, Any],
-               fp_obj: ClaimFingerprint) -> list[str]:
+               fp_obj: ClaimFingerprint, siblings: set[str]) -> list[str]:
     return sorted(json.dumps([o["op"], o.get("set")], sort_keys=True) for o in ops
-                  if o.get("op") in ("edit", "hide") and _same_claim(o.get("target") or {}, claim_id, fp, fp_obj))
+                  if o.get("op") in ("edit", "hide")
+                  and _same_claim(o.get("target") or {}, claim_id, fp, fp_obj, siblings))
 
 
 def is_fixed(conn: sqlite3.Connection, paper_id: str, claim_id: str, fp: Mapping[str, Any],
@@ -104,13 +110,16 @@ def is_fixed(conn: sqlite3.Connection, paper_id: str, claim_id: str, fp: Mapping
         return False
     after = _ts(marked_at)
     fp_obj = ClaimFingerprint.from_dict(claim_id, fp)
+    siblings = {r[0] for r in conn.execute(
+        "SELECT o.claim_id FROM extracted_claims o JOIN extracted_claims c "
+        "ON c.structured_note_id = o.structured_note_id WHERE c.claim_id = ?", (claim_id,))}
     rows = conn.execute(
         "SELECT v.overlay_id, v.ops_json, v.created_at FROM overlay_versions v "
         "JOIN note_overlays o ON o.overlay_id = v.overlay_id WHERE o.paper_id = ? "
         "ORDER BY v.overlay_id, v.version_no", (paper_id,)).fetchall()
     before: dict[str, list[str]] = {}
     for overlay_id, ops_json, created_at in rows:
-        ops = _claim_ops(json.loads(ops_json), claim_id, fp, fp_obj)
+        ops = _claim_ops(json.loads(ops_json), claim_id, fp, fp_obj, siblings)
         if _ts(created_at) <= after:
             before[overlay_id] = ops
         elif ops != before.get(overlay_id, []):

@@ -105,6 +105,21 @@ def test_an_edit_carried_forward_after_the_mark_is_not_a_fix(method_item, lib):
     assert marks.fixed(lib, sid, cid)
 
 
+def test_editing_a_sibling_that_quotes_the_same_sentence_is_not_a_fix(world, lib):
+    from .conftest import raw_note
+
+    pid = world.paper()
+    saved = world.note(pid, raw=raw_note(results=2))
+    claims = world.claims(saved.note_id)
+    first, second = claims["main_results[0]"], claims["main_results[1]"]
+    s = sp.create_sample(lib, n=2, seed=1, filters={"claim_type": "result"})
+    assert {i.claim_id for i in s.items} == {first, second}
+    marks.mark(lib, s.sample_id, first, "wrong", now=PAST)
+    overlay.save_edit(lib, pid, {"op": "edit", "target": {"claim_id": second},
+                                 "set": {"claim_text": "An edited second result."}}, expected_version=0)
+    assert not marks.fixed(lib, s.sample_id, first)
+
+
 def test_hiding_after_the_mark_is_a_fix(method_item, lib):
     pid, sid, cid = method_item
     marks.mark(lib, sid, cid, "wrong", now=PAST)
