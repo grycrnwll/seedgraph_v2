@@ -55,7 +55,11 @@ def test_population_includes_hidden_and_edited_excludes_added_lens_and_older_not
     lens = add_lens_claim(lib, pid)
 
     ids = {c.claim_id for c in sp.population(lib)}
-    assert ids == set(claims.values())
+    not_found = {r[0] for r in lib.conn.execute(
+        "SELECT claim_id FROM extracted_claims WHERE structured_note_id = ? AND status = 'not_found'",
+        (cur.note_id,))}
+    assert not_found  # the fixture's absent fields
+    assert ids == set(claims.values()) - not_found
     assert edited in ids and hidden in ids
     assert hidden not in {r[0] for r in lib.conn.execute("SELECT claim_id FROM current_claims")}
     assert not any(i.startswith("rc_") for i in ids)

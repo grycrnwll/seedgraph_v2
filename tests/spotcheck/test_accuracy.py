@@ -78,7 +78,7 @@ def test_accuracy_from_the_library(world, lib):
     assert all(r.model_key is None for r in table.by_type) and all(r.claim_type is None for r in table.by_model)
     assert sum(r.n_marked for r in table.by_model) == 20
     assert table.overall.n_marked == 20 and not table.overall.too_few
-    assert table.overall.population == 10 * 12
+    assert table.overall.population == 10 * 5  # 12 claims per note, 7 of them not_found
     weights = {}
     for c in sp.population(lib, include_marked=True):
         weights[c.cell] = weights.get(c.cell, 0) + 1

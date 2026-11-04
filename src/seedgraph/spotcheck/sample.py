@@ -158,13 +158,15 @@ def marked_claim_ids(lib: Library | sqlite3.Connection) -> set[str]:
 def population(lib: Library | sqlite3.Connection, *, include_marked: bool = False,
                paper_ids: Iterable[str] | None = None) -> list[Claim]:
     """Every agent claim of each paper's current note, sorted by claim id; already marked
-    claims left out unless ``include_marked`` (the accuracy weights use the whole)."""
+    claims left out unless ``include_marked`` (the accuracy weights use the whole). ``not_found``
+    rows (no text, no quote: nothing to judge) are left out (researcher, 2026-11-04)."""
     conn = _conn(lib)
     rows = conn.execute(
         "SELECT c.claim_id, c.paper_id, c.extraction_run_id, c.claim_type, r.model_name, r.provider "
         "FROM extracted_claims c "
         "JOIN note_current n ON n.note_id = c.structured_note_id "
         "JOIN extraction_runs r ON r.extraction_run_id = c.extraction_run_id "
+        "WHERE c.status IS NOT 'not_found' "
         "ORDER BY c.claim_id").fetchall()
     keep = None if paper_ids is None else set(paper_ids)
     marked = set() if include_marked else marked_claim_ids(conn)
