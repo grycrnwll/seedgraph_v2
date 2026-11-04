@@ -152,8 +152,11 @@ orchestrator (§9.3).
 A **session** is one stream of logged calls. Its key is chosen in this order:
 1. **Named**: the call passes `session`, a short name the agent chose. The stream key is `(client, name)`. It
    is scoped to the library, not to the connection, so it survives reconnects and server restarts.
-2. **Connection** (fallback): no `session`. The stream key is the connection: the process's `worker_id`. On
-   stdio this is one process, so it is also one client window.
+2. **Connection** (default): no `session`. The stream key is the connection: the process's `worker_id`. On
+   stdio this is one process, so it is also one client window. The session is **named by its start date and
+   time** (`2026-11-04 14:32`, local time; a second one in the same minute gets `-2`), and that is how it is
+   listed and indexed within each context graph (researcher, 2026-11-04). The name is a label only: two
+   windows started in the same minute stay apart by connection.
 
 Name rules: `[a-z0-9][a-z0-9-]{2,47}`, optionally followed by `/` and a helper suffix of the same form (one
 level). An invalid name is refused with a plain `next_action`.
@@ -428,7 +431,8 @@ script (CSP).
 - A standing line at the top: "Only answers an agent recorded from your library appear here, with paths that
   ended without an answer. Questions answered without searching the library do not."
 - **List**: newest first, paged. Each row: when; the question, or "path without answer", or "in progress";
-  graphs (with "spans 2 graphs" marked) or "Library-wide"; client and session name; counts (searches, opened,
+  graphs (with "spans 2 graphs" marked) or "Library-wide"; client and session name (the start date and time
+  when the agent gave none); counts (searches, opened,
   cited); flags; star.
 - **Filters**: graph (including Library-wide), state (answered, path without answer, in progress), starred,
   flagged, client, and a text match on the question.
@@ -491,7 +495,7 @@ Changes to the existing read tools (§3.2):
 - one helper, `call_info(ctx, mcp_ctx, session)`, builds the `CallInfo`; one wrapper logs after success;
 - search-kind replies carry one line, `record_reminder`: "If you answer the researcher from these results,
   call record_answer once with the question, your answer, the ids you cite and your own judgement apart.";
-- every logged reply echoes `session` (the name in use, or `null` for the connection fallback);
+- every logged reply echoes `session` (the name in use, or the start date and time for an unnamed connection);
 - `main()` marks the connection closed when the stdio transport ends.
 
 The researcher is asked to approve `record_answer` once in Claude Code ("always allow"). `setup agents` prints
@@ -563,7 +567,7 @@ a module that is still reachable (`vocab.py` is imported everywhere), so the del
 - **Context graph**: "owns ... traversal records" becomes "lists the traversal records that searched it".
 - **AnswerTrace**, **Disposition**, **Unsaved answer**, **MCP surface**: mark as v2 only.
 - New: **Session** (one agent's stream of logged calls, told apart by a session name or, failing that, by its
-  connection) and **Spot-check sample**.
+  connection, which is then named by its start date and time) and **Spot-check sample**.
 
 ### 9.4 Reused
 
@@ -656,11 +660,14 @@ slice that edits `tools_library.py` and `tools_concepts.py`.
 
 ## 13. Open questions for the researcher
 
-Each has a recommendation (*R*).
+Each has a recommendation (*R*). **All twelve were settled by the researcher on 2026-11-04**: each *R* is
+adopted, with question 1 amended as recorded there.
 1. **How a session is told apart.** Options: the connection only (simple, but subagents on one connection and
    restarts go wrong); an agent-chosen session name with helper names and the connection as fallback; or a
    client-supplied marker, if Claude Code turns out to send one. *R:* the session name with the connection as
-   fallback (§3.1). Revisit after the identity probe reports the `_meta` keys.
+   fallback (§3.1). Revisit after the identity probe reports the `_meta` keys. **Decided:** the session name
+   stays optional; by default a session is indexed by its start date and time within the context graph
+   (§3.1).
 2. **A citation seen only in search results.** Flag it "cited without being read", or only tag it? *R:* flag it,
    with "(seen in search results only)". That matches SPEC's "never opened" check and the skill's "read before
    relying". If the five real questions show this flag on answers you consider fine, soften it to a tag.
