@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/records.css">{% endblock %}
+{% block content %}
+{% include "graphs/_tabs.html" %}
+<p>Records that searched this graph, and library-wide records that cite its papers (marked).
+  <a href="/records?graph={{ d.slug }}">Open in Records</a></p>
+{% with graph_tab = true %}{% include "records/_list.html" %}{% endwith %}
+{% endblock %}

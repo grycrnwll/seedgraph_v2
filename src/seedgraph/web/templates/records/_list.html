@@ -1,0 +1,81 @@
+{#- The records list: filters, rows, paging. Needs ``view`` (views.records.RecordsList) and
+    ``graph_tab`` (true on a graph's Records tab: no graph filter, the graph's mark shown). -#}
+{% set f = view.form %}
+<p class="sg-scope-line sg-hint">{{ view.scope_line }}</p>
+<form class="sg-record-filters" method="get" action="{{ view.base }}" role="search" aria-label="Filter records">
+  {% if not graph_tab %}
+  <label>Graph
+    <select name="graph">
+      <option value="">All</option>
+      {% for value, text in view.graph_choices %}
+      <option value="{{ value }}"{% if f.graph == value %} selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  <label>State
+    <select name="state">
+      <option value="">Any</option>
+      {% for value, text in view.state_choices %}
+      <option value="{{ value }}"{% if f.state == value %} selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Flags
+    <select name="flagged">
+      <option value="">Any</option>
+      <option value="1"{% if f.flagged == true %} selected{% endif %}>flagged</option>
+      <option value="0"{% if f.flagged == false %} selected{% endif %}>not flagged</option>
+    </select>
+  </label>
+  <label>Client
+    <select name="client">
+      <option value="">Any</option>
+      {% for value in view.client_choices %}
+      <option value="{{ value }}"{% if f.client == value %} selected{% endif %}>{{ value }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Question contains
+    <input type="search" name="q" value="{{ f.text }}">
+  </label>
+  <label><span><input type="checkbox" name="starred" value="1"{% if f.starred %} checked{% endif %}> starred only</span></label>
+  <button type="submit">Filter</button>
+  <a href="{{ view.base }}">Clear</a>
+</form>
+{% if view.rows %}
+<p class="sg-hint">{{ view.first }}–{{ view.last }} of {{ view.total }} record{{ "" if view.total == 1 else "s" }}</p>
+<table class="sg-table sg-records">
+  <thead><tr><th>When</th><th>Question</th><th>Graphs</th><th>Session</th><th>Counts</th><th>Flags</th><th>Star</th></tr></thead>
+  <tbody>
+    {% for rv in view.rows %}
+    {% set r = rv.row %}
+    <tr id="record-{{ r.record_id }}">
+      <td>{{ rv.when }}</td>
+      <td><a class="sg-record-link" href="{{ rv.href }}">{{ r.title }}</a>
+        {% if r.state != "answered" %}<span class="sg-badge">{{ r.state_label }}</span>{% endif %}
+        {% if rv.mark %}<br><span class="sg-hint">{{ rv.mark }}</span>{% endif %}</td>
+      <td>{% if rv.library_wide %}Library-wide{% endif %}
+        {% for g in rv.searched %}{% if g.href %}<a href="{{ g.href }}">{{ g.name }}</a>{% else %}{{ g.slug }} <span class="sg-badge">graph deleted</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
+        {% if rv.cited_only %}<br><span class="sg-hint">library-wide search; cites papers in {% for g in rv.cited_only %}{{ g.name }}{% if g.deleted %} (graph deleted){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+        {% if r.spans_label %}<br><span class="sg-badge">spans {{ r.graphs | length }} graphs</span>{% endif %}</td>
+      <td>{{ r.session_name }}{% if r.client %} <span class="sg-hint">({{ r.client }})</span>{% endif %}</td>
+      <td>{{ rv.counts_text }}</td>
+      <td>{% for flag in r.flags %}<span class="sg-record-flag">{{ flag }}</span>{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+      <td><form class="sg-inline-form" method="post" action="/records/{{ r.record_id }}/star">
+          {{ csrf_input }}
+          <input type="hidden" name="starred" value="{{ '0' if r.starred else '1' }}">
+          <input type="hidden" name="next" value="{{ view.here }}">
+          <button type="submit" aria-label="{{ 'Remove the star' if r.starred else 'Star this record' }}">{{ "★" if r.starred else "☆" }}</button>
+        </form></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<nav class="sg-pager" aria-label="Pages">
+  {% if view.prev_href %}<a href="{{ view.prev_href }}">Newer</a>{% endif %}
+  {% if view.next_href %}<a href="{{ view.next_href }}">Older</a>{% endif %}
+</nav>
+{% else %}
+<p>No records{% if f.query(graph=none) %} match these filters{% endif %}.</p>
+{% endif %}

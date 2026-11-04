@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/records.css">{% endblock %}
+{% block content %}
+{% set d = view.detail %}
+{% set r = d.row %}
+{% set rv = view.row %}
+<p><a href="/records">All records</a></p>
+<h1>{{ view.heading }}</h1>
+<p>
+  {% if not view.answered %}<span class="sg-badge">{{ r.state_label }}</span>{% endif %}
+  {% if r.starred %}<span class="sg-badge">starred</span>{% endif %}
+  Session {{ r.session_name }}{% if r.client %} ({{ r.client }}){% endif %}
+  · opened {{ view.opened }}
+  · {% if view.answered %}answered {{ view.answered_at }}{% else %}last call {{ view.last_call }}{% endif %}
+  · {{ rv.counts_text }}
+</p>
+<p>Graphs:
+  {% if rv.library_wide %}Library-wide{% endif %}
+  {% for g in rv.searched %}{% if g.href %}<a href="{{ g.href }}">{{ g.name }}</a>{% else %}{{ g.slug }} <span class="sg-badge">graph deleted</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
+  {% if rv.cited_only %}<span class="sg-hint">(library-wide search; cites papers in {% for g in rv.cited_only %}{% if g.href %}<a href="{{ g.href }}">{{ g.name }}</a>{% else %}{{ g.slug }} (graph deleted){% endif %}{% if not loop.last %}, {% endif %}{% endfor %})</span>{% endif %}
+  {% if r.spans_label %}<span class="sg-badge">{{ r.spans_label }}</span>{% endif %}
+</p>
+{% if d.notes %}
+<ul class="sg-notes">
+  {% for note in d.notes %}<li class="sg-warn">{{ note }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<div class="sg-record-actions">
+  <form class="sg-inline-form" method="post" action="/records/{{ r.record_id }}/star">
+    {{ csrf_input }}
+    <input type="hidden" name="starred" value="{{ '0' if r.starred else '1' }}">
+    <button type="submit">{{ "Remove star" if r.starred else "Star" }}</button>
+  </form>
+  <a href="/records/{{ r.record_id }}/export">Export to markdown</a>
+  <a href="/records/{{ r.record_id }}/delete">Delete…</a>
+</div>
+
+{% if view.answered %}
+<section class="sg-section sg-answer" aria-labelledby="sg-answer-h">
+  <h2 id="sg-answer-h">Answer</h2>
+  {% for para in (d.answer or "").split("\n\n") %}<p>{{ para }}</p>{% endfor %}
+</section>
+<section class="sg-judgement" aria-labelledby="sg-judgement-h">
+  <h2 id="sg-judgement-h">Agent's judgement</h2>
+  <p class="sg-hint">The agent's own view, kept apart from what the corpus says.</p>
+  {% if d.judgement %}{% for para in d.judgement.split("\n\n") %}<p>{{ para }}</p>{% endfor %}{% else %}<p>(none given)</p>{% endif %}
+</section>
+
+<section class="sg-section sg-evidence" aria-labelledby="sg-evidence-h">
+  <h2 id="sg-evidence-h">Cited evidence</h2>
+  <ol class="sg-evidence-list">
+    {% for ev in view.evidence %}
+    <li id="evidence-{{ ev.n }}">
+      <p><strong>{% if ev.paper_id %}<a href="/papers/{{ ev.paper_id }}">{{ ev.paper_title }}</a>{% else %}{{ ev.paper_title }}{% endif %}</strong>{% if ev.year %} ({{ ev.year }}){% endif %}{% if ev.page %}, {{ ev.page }}{% endif %}
+        {% if ev.trust_label %}<span class="sg-badge">{{ ev.trust_label }}</span>{% endif %}
+        {% if ev.edited_since %}<span class="sg-badge sg-warn">edited since this answer</span> <a href="{{ ev.href }}">current version</a>{% endif %}</p>
+      {% if ev.kind == "claim" %}
+      <p>Claim{% if ev.claim_type or ev.label %} ({{ [ev.claim_type | replace("_", " ") if ev.claim_type else none, ev.label] | select | join(", ") }}){% endif %}: {{ ev.text or "" }}</p>
+      {% if ev.trust_note %}<p class="sg-hint">{{ ev.trust_note }}</p>{% endif %}
+      {% if ev.note %}<p class="sg-hint">{{ ev.note }}</p>{% endif %}
+      {% endif %}
+      {% if ev.quote %}
+      <blockquote class="sg-record-quote">{% if ev.href %}<a href="{{ ev.href }}" title="Open the passage on the paper page">“{{ ev.quote }}”</a>{% else %}“{{ ev.quote }}”{% endif %}</blockquote>
+      {% elif ev.href and ev.kind == "claim" %}
+      <p><a href="{{ ev.href }}">Open the claim on the paper page</a></p>
+      {% endif %}
+      {% if ev.why %}<p>Why: {{ ev.why }}</p>{% endif %}
+      {% if ev.flag %}<p class="sg-record-flag">{{ ev.flag }}</p>
+      {% elif ev.check %}<p class="sg-hint">{{ ev.check }}{% for h in ev.opened_by %} (opened by helper {{ h }}){% endfor %}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endif %}
+
+<section class="sg-section sg-path" aria-labelledby="sg-path-h">
+  <h2 id="sg-path-h">Path</h2>
+  {% if view.steps %}
+  <ol class="sg-path-list">
+    {% for s in view.steps %}
+    {% if s.gap %}<li class="sg-hint">{{ s.gap }}</li>{% endif %}
+    <li><span class="sg-hint">{{ s.at }}</span> <code>{{ s.tool }}</code>
+      {% if s.query %}“{{ s.query }}”{% endif %}
+      {% if s.scope %}<span class="sg-hint">({{ s.scope | join("; ") }})</span>{% endif %}
+      {% if s.paper %}<a href="{{ s.paper_href }}">{{ s.paper }}</a>{% endif %}
+      {% if s.detail %}<span class="sg-hint">{{ s.detail }}</span>{% endif %}
+      {% if s.kind == "search" %}: {{ s.hits | length }} hit{{ "" if s.hits | length == 1 else "s" }}{% endif %}
+      {% if s.helper %}<span class="sg-badge">helper {{ s.helper }}</span>{% endif %}
+      {% if s.hits %}
+      <ul class="sg-record-hits">
+        {% for h in s.hits %}
+        <li>{{ h.kind }} <code>{{ h.item_id }}</code>{% if h.paper %}, {{ h.paper }}{% endif %}{% if h.tag %}: {{ h.tag }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p>No searches or reads in this record (answered from earlier reads in the session).</p>
+  {% endif %}
+
+  <h3>Items</h3>
+  {% if view.items %}
+  <table class="sg-table sg-items">
+    <thead><tr><th>Item</th><th>Paper</th><th>Tag</th></tr></thead>
+    <tbody>
+      {% for i in view.items %}
+      <tr><td>{{ i.kind }} <code>{{ i.item_id }}</code></td>
+        <td>{% if i.paper %}<a href="{{ i.paper_href }}">{{ i.paper }}</a>{% endif %}</td>
+        <td>{{ i.label }}{% for h in i.helpers %} <span class="sg-badge">helper {{ h }}</span>{% endfor %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>None.</p>
+  {% endif %}
+</section>
+
+<section class="sg-section sg-annotation" aria-labelledby="sg-annotation-h">
+  <h2 id="sg-annotation-h">Your annotation</h2>
+  {% if r.annotation %}
+  {% for para in r.annotation.split("\n\n") %}<p>{{ para }}</p>{% endfor %}
+  <p class="sg-hint">Saved {{ view.annotated_at }}.</p>
+  {% endif %}
+  <form method="post" action="/records/{{ r.record_id }}/annotate">
+    {{ csrf_input }}
+    <label for="sg-annotation-text">{{ "Change the annotation (empty clears it)" if r.annotation else "Add an annotation" }}</label>
+    <textarea id="sg-annotation-text" name="text">{{ r.annotation or "" }}</textarea>
+    <button type="submit">Save annotation</button>
+  </form>
+</section>
+{% endblock %}

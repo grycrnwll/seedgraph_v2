@@ -6,7 +6,8 @@ Checklist lines are derived on every read and appear only while true:
 ``needs_notes``, ``held_back``, ``attention``, ``batch:<id>`` (a paused batch holding
 one of the graph's members: its ``work.state`` label), ``newer_extraction`` and
 ``concepts``. The feed merges the latest ``batch_events`` (each with its batch's current
-``work.state`` label), finished add-paper jobs and overlay saves, newest first.
+``work.state`` label), finished add-paper jobs, overlay saves and records (answered, or a
+path without answer; in progress is left out: :func:`.records.feed`), newest first.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from ...library import graphs as graphs_mod
 from ...library.store import Library
 from ...work import routine
 from . import library as library_view
+from . import records as records_view
 
 PAUSED = frozenset({"stopped", "usage_limit", "claim_expired"})
 EVENT_WORDS = {"batch_created": "batch created", "items_decided": "papers decided", "claimed": "claimed",
@@ -146,6 +148,8 @@ def activity(lib: Library, *, jobs: Sequence = (), now: datetime | None = None, 
         entries.append(Entry(at, "note edited",
                              f"note edited ({action}{': ' + summary if summary else ''}) on {title or pid}, "
                              f"version {version}", f"/papers/{pid}"))
+    for item in records_view.feed(lib, now=now, limit=limit):
+        entries.append(Entry(item.at, "record", item.text, item.href))
     for j in jobs:
         if j.state in ("done", "failed") and j.finished_at:
             entries.append(Entry(j.finished_at, f"job {j.state}", f"{j.label}: {j.state}", "/library#sg-add-papers"))

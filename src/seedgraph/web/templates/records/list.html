@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/records.css">{% endblock %}
+{% block content %}
+<h1>Records</h1>
+{% with graph_tab = false %}{% include "records/_list.html" %}{% endwith %}
+{% endblock %}

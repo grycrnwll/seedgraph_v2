@@ -1,0 +1,19 @@
+/* Records pages (stage 5 design §6.1-6.3; slice R5). Colours come from app.css's tokens. */
+
+.sg-scope-line { font-size: 0.9em; }
+.sg-record-filters { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: end; margin: 0.5rem 0 1rem; }
+.sg-record-filters label { display: flex; flex-direction: column; font-size: 0.85em; }
+.sg-judgement {
+  margin: 1.5rem 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--sg-line);
+  border-left: 4px solid var(--sg-warn);
+  border-radius: 4px;
+}
+.sg-judgement h2 { margin-top: 0.3rem; font-size: 1rem; }
+.sg-evidence-list > li, .sg-path-list > li { padding: 0.4rem 0; border-bottom: 1px solid var(--sg-line); }
+.sg-record-quote { margin: 0.3rem 0 0.3rem 0.6rem; padding-left: 0.6rem; border-left: 3px solid var(--sg-line); }
+.sg-record-flag { color: var(--sg-error); font-weight: 600; }
+.sg-record-hits { margin: 0.2rem 0 0; font-size: 0.9em; }
+.sg-record-actions form, .sg-record-actions a { margin-right: 0.75rem; }
+.sg-annotation textarea { width: 100%; min-height: 5rem; }

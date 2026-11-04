@@ -12,7 +12,8 @@ import pytest
 
 from .pages_support import GRAPH, build, no_inline_script_or_style, post_forms_lead_with_csrf
 
-U7_ROUTE_MODULES = ("home", "library", "batches", "review", "graphs", "settings", "placeholders", "_pages")
+U7_ROUTE_MODULES = ("home", "library", "batches", "review", "graphs", "settings", "placeholders", "records",
+                    "_pages")
 
 
 @pytest.fixture

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/records.css">{% endblock %}
+{% block content %}
+{% set r = view.detail.row %}
+<h1>Delete this record?</h1>
+<p><strong>{{ view.heading }}</strong> ({{ r.session_name }}{% if r.client %}, {{ r.client }}{% endif %}; {{ view.row.counts_text }})</p>
+<p>The record, its path and its graph links are deleted for good. Other records keep their own checks.</p>
+<form method="post" action="/records/{{ r.record_id }}/delete" class="sg-inline-form">
+  {{ csrf_input }}
+  <button type="submit">Delete the record</button>
+</form>
+<p><a href="/records/{{ r.record_id }}">Keep it</a></p>
+{% endblock %}

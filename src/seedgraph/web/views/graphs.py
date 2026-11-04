@@ -29,7 +29,8 @@ from . import concepts as concepts_view
 from . import library as library_view
 
 STATUS_ORDER = {"member": 0, "frontier": 1, "excluded": 2}
-TABS = (("", "Overview"), ("concepts", "Concepts"), ("graph", "Graph"), ("grow", "Grow"), ("lenses", "Lenses"))
+TABS = (("", "Overview"), ("concepts", "Concepts"), ("graph", "Graph"), ("grow", "Grow"), ("lenses", "Lenses"),
+        ("records", "Records"))  # the Records tab (stage 5 §6.3) is served by routes/records.py
 TOP_PER_FAMILY = 15
 SUGGESTIONS_SHOWN = 10
 
