@@ -349,3 +349,20 @@ def test_the_records_route_module_runs_no_sql_and_calls_records_through_their_mo
             ).read_text(encoding="utf-8")
     assert "execute(" not in text and "sqlite3" not in text
     assert not re.search(r"from \S*records\.manage import|from \S*records\.export import", text)
+
+
+def test_a_helper_s_call_is_shown_with_its_helper_name(home, make_app, client_for):
+    from records._world import Agent
+
+    rx = build(home)
+
+    def go(lib):
+        parent = Agent(lib, "mcp-ffff0006", name="helper-check-1700", start=NOW - timedelta(minutes=20))
+        helper = Agent(lib, "mcp-ffff0006", name="helper-check-1700/a", start=NOW - timedelta(minutes=19))
+        helper.paper_show(rx.did)
+        return parent.answer([{"paper_id": rx.did.paper_id}], question="Did the helper read it?").record_id
+
+    rid = with_lib(home, go)
+    html = client_for(make_app(clock=clock())).get(f"/records/{rid}").text
+    path = re.search(r'<section class="sg-section sg-path".*?</section>', html, re.S).group(0)
+    assert "helper a" in path and "paper_show" in path
