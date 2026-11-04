@@ -199,3 +199,66 @@ def test_the_scan_sees_lazy_and_relative_imports():
     reached = _closure({"seedgraph.cli"})
     assert "seedgraph.commands.library" in reached
     assert "seedgraph.library.store" in reached
+
+
+# v2 answer-harness remnants the stage 5 design deletes (docs/V3_RECORDS_DESIGN.md §9.1). The
+# module scan cannot see dead names inside a reachable module (``vocab`` and ``config`` are
+# imported everywhere), so these are checked by name through ``ast``.
+DELETED_IN_STAGE5 = {
+    "seedgraph.vocab": ("QueryType", "AnswerCategory", "AnswerMode"),
+    "seedgraph.config.models": ("AnswerConfig", "AnswerPolicy"),
+    "seedgraph.config": ("AnswerConfig", "AnswerPolicy"),
+}
+DELETED_FIELDS_IN_STAGE5 = {
+    ("seedgraph.config.models", "ContentPolicy"): ("external_llm_for_answer_generation",),
+    ("seedgraph.config.models", "GlobalConfig"): ("answer", "answer_policy"),
+}
+
+
+def _top_level_names(name: str) -> set[str]:
+    """Names a module defines, imports or lists in ``__all__``."""
+    tree = ast.parse(MODULES[name].read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update((a.asname or a.name).split(".")[0] for a in node.names)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+            if any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+                names.update(e.value for e in ast.walk(node.value)
+                             if isinstance(e, ast.Constant) and isinstance(e.value, str))
+    return names
+
+
+def _class_fields(name: str, cls: str) -> set[str]:
+    tree = ast.parse(MODULES[name].read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == cls:
+            return {s.target.id for s in node.body
+                    if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)}
+    raise AssertionError(f"{cls} not found in {name}")
+
+
+def test_stage5_deleted_names_are_gone():
+    present = sorted(f"{mod}.{n}" for mod, names in DELETED_IN_STAGE5.items()
+                     for n in names if n in _top_level_names(mod))
+    present += sorted(f"{mod}.{cls}.{f}" for (mod, cls), fields in DELETED_FIELDS_IN_STAGE5.items()
+                      for f in fields if f in _class_fields(mod, cls))
+    assert not present, present
+
+
+def test_stage5_no_answer_ceiling_entries():
+    from seedgraph.config.models import CEILING_SPEC
+
+    assert not [k for k in CEILING_SPEC if k.startswith("answer") or "answer_generation" in k]
+
+
+def test_stage5_deleted_packages_and_fixtures_are_gone():
+    assert not [m for m in ("seedgraph.answer", "seedgraph.api", "seedgraph.eval")
+                if _expand(m + ".*")]
+    # Leftover untracked ``__pycache__`` bytecode does not count as the fixtures existing.
+    left = SRC.parent / "evals"
+    assert not [p for p in left.rglob("*") if p.is_file() and p.suffix != ".pyc"]

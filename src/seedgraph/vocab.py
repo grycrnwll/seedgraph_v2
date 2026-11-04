@@ -489,38 +489,3 @@ def lens_claim_type(object_type: str | None, lens_id: str) -> str:
     if ot in CLAIM_TYPES:
         return ot
     return f"lens:{lens_id}"
-
-
-# --- phase_8: answer-harness closed enums (relocated from answer/types.py) ---
-
-class QueryType(StrEnum):
-    """Closed query-type vocabulary (phase_8 §4). Values equal those scaffolded in
-    ``answer/types.py``."""
-
-    factual = "factual"
-    comparative = "comparative"
-    synthesis = "synthesis"
-    gap_finding = "gap_finding"
-    citation_search = "citation_search"
-    concept_explanation = "concept_explanation"
-    assumption_search = "assumption_search"
-    evidence_request = "evidence_request"
-
-
-class AnswerCategory(StrEnum):
-    """Closed epistemic-category vocabulary (phase_8 §7)."""
-
-    source_grounded = "source_grounded"
-    corpus_synthesis = "corpus_synthesis"
-    project_graph_inference = "project_graph_inference"
-    outside_corpus = "outside_corpus"
-    unresolved = "unresolved"
-
-
-class AnswerMode(StrEnum):
-    """Answer scope mode (phase_8 §2 / §6). Member casing follows the §6 signature
-    literally (``AnswerMode.PROJECT_ONLY``)."""
-
-    PROJECT_ONLY = "project_only"
-    ALLOW_OUTSIDE = "allow_outside"
-    RETRIEVAL_ONLY = "retrieval_only"

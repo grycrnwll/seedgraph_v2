@@ -361,10 +361,9 @@ def write_project_overrides(
     """Deep-merge a thin project OVERRIDE ``patch`` into ``projects/{slug}/project.yaml``.
 
     The settings-inheritance write path (mirror of :func:`write_global_config`): the
-    ``patch`` carries ONLY the four override groups — routing profile CHOICE
-    (``llm.routes.*.preferred_profile`` / ``fallback_profile``), ``content_policy``,
-    ``budget``, ``answer`` tunables, and ``answer_policy`` — never project identity
-    fields. It is deep-merged (a thin overlay) over the existing ``project.yaml`` so
+    ``patch`` carries ONLY the override groups — routing profile CHOICE
+    (``llm.routes.*.preferred_profile`` / ``fallback_profile``), ``content_policy``
+    and ``budget`` — never project identity fields. It is deep-merged (a thin overlay) over the existing ``project.yaml`` so
     an omitted key means INHERIT (the current global default is never materialized
     into the file). The merged project dict is scanned for raw secrets — a project
     may CHOOSE a profile but may never persist a raw key / provider endpoint /

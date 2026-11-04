@@ -98,12 +98,6 @@ def test_ceiling_allow_unverified_pricing_cannot_loosen():
     assert load_project_config("proj").budget.allow_unverified_pricing is False
 
 
-def test_ceiling_answer_policy_external_search_cannot_loosen():
-    _global_yaml({"answer_policy": {"allow_external_search_by_default": False}})
-    _project_yaml("proj", {"answer_policy": {"allow_external_search_by_default": True}})
-    assert load_project_config("proj").answer_policy.allow_external_search_by_default is False
-
-
 def test_ceiling_intersects_route_access_classes():
     _global_yaml(
         {"llm": {"routes": {"note_extraction": {
@@ -164,13 +158,6 @@ def test_live_inheritance_unset_field_tracks_current_global():
     assert load_project_config("proj").budget.usd_limit == 3.0
 
 
-def test_live_inheritance_answer_policy_from_global():
-    # answer_policy has a GLOBAL anchor now, so an unset project field inherits it.
-    _global_yaml({"answer_policy": {"require_project_sources": False}})
-    _project_yaml("proj", {"log_level": "INFO"})  # no answer_policy override
-    assert load_project_config("proj").answer_policy.require_project_sources is False
-
-
 # ==========================================================================
 # Settings inheritance: free overrides (no ceiling)
 # ==========================================================================
@@ -190,10 +177,26 @@ def test_free_override_routing_profile_choice_wins():
     assert route.preferred_profile == "anthropic_api_default"
 
 
-def test_free_override_require_project_sources_wins():
-    _global_yaml({"answer_policy": {"require_project_sources": True}})
-    _project_yaml("proj", {"answer_policy": {"require_project_sources": False}})
-    assert load_project_config("proj").answer_policy.require_project_sources is False
+def test_old_config_with_answer_keys_still_loads():
+    # Stage 5 deleted the v2 answer-harness config (docs/V3_RECORDS_DESIGN.md §9.1); a v2-era
+    # config.yaml / project.yaml carrying those keys must still load (extra="ignore").
+    _global_yaml({
+        "log_level": "DEBUG",
+        "answer": {"max_evidence_tokens": 4000, "weak_evidence_floor": 0.2},
+        "answer_policy": {"require_project_sources": False,
+                          "allow_external_search_by_default": True},
+        "content_policy": {"external_llm_for_answer_generation": True,
+                           "external_llm_for_private_full_text": False},
+    })
+    _project_yaml("proj", {"answer_policy": {"require_project_sources": True}})
+    cfg = load_global_config()
+    assert cfg.log_level == "DEBUG"
+    assert cfg.content_policy.external_llm_for_private_full_text is False
+    assert not hasattr(cfg, "answer") and not hasattr(cfg, "answer_policy")
+    assert not hasattr(cfg.content_policy, "external_llm_for_answer_generation")
+    proj = load_project_config("proj")
+    assert proj.log_level == "DEBUG"
+    assert not hasattr(proj, "answer_policy")
 
 
 # ==========================================================================

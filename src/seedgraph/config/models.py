@@ -56,8 +56,7 @@ class TaskRoute(BaseModel):
     # the authoritative external-dispatch gate.
     # ``None`` ⇒ unconstrained (no per-route access-class narrowing).
     allowed_access_classes: Optional[list[str]] = None
-    # may bounded private fragments leave the machine for this task (answer-boundary
-    # mirror of content_policy.external_llm_for_answer_generation; defense-in-depth).
+    # may bounded private fragments leave the machine for this task (defense-in-depth).
     allow_external_fragments: bool = False
     requires_structured_output: bool = False
     max_input_tokens: Optional[int] = None
@@ -73,52 +72,6 @@ class ContentPolicy(BaseModel):
     # may full source text leave the local machine to an external LLM?
     external_llm_for_private_full_text: bool = False
     allow_external_llm: bool = True
-    # phase_8 (plan §7): may bounded private (``user_supplied_private``) evidence
-    # FRAGMENTS leave the machine for external answer generation? Private-by-default
-    # (decisions 76/30/60): False → a private feeding fragment routes to a local
-    # profile if available, else the answer degrades to retrieval_only. This is
-    # orthogonal to ``external_llm_for_private_full_text`` (that gates whole-document
-    # source text; this gates short retrieved snippets at the answer boundary).
-    external_llm_for_answer_generation: bool = False
-
-
-class AnswerConfig(BaseModel):
-    """phase_8 answer-harness tunables (plan §8/§11) — config constants under the
-    ``answer_generation`` task. Floors make the weak-vs-absent distinction testable;
-    the token budget keeps evidence a bounded set of fragments."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    # token budgeting (plan §8): the effective evidence cap is
-    # ``min(max_evidence_tokens, context_window - prompt_overhead - reserved_output)``.
-    max_evidence_tokens: int = 6000
-    max_fragment_chars: int = 1200
-    prompt_overhead_tokens: int = 800
-    reserved_output_tokens: int = 1024
-    # rank-score floors over the normalized top candidate (plan §10 step 7c).
-    weak_evidence_floor: float = 0.15
-    absent_floor: float = 0.0
-    # minimum supporting citations a non-abstaining prose answer must keep (must-fix #1).
-    support_floor: int = 1
-
-
-class AnswerPolicy(BaseModel):
-    """Global ANCHOR for the answer-harness policy so a project can inherit it live.
-
-    Mirrors the three declarative fields (and defaults) of
-    :class:`seedgraph.project.config.AnswerPolicy`: the on-disk ``project.yaml``
-    carries a single ``answer_policy`` block that both the declarative project model
-    and this runtime anchor interpret. Anchoring it on :class:`GlobalConfig` lets an
-    unset project field resolve to the current global default via the loader deep-
-    merge (settings inheritance). ``allow_external_search_by_default`` is a
-    tighten-only ceiling (see :data:`CEILING_SPEC`); the other two are free.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    require_project_sources: bool = True
-    allow_external_search_by_default: bool = False
-    distinguish_source_claims_from_synthesis: bool = True
 
 
 class LlmBudget(BaseModel):
@@ -356,12 +309,6 @@ class GlobalConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=default_llm_config)
     content_policy: ContentPolicy = Field(default_factory=ContentPolicy)
     budget: LlmBudget = Field(default_factory=LlmBudget)
-    answer: AnswerConfig = Field(default_factory=AnswerConfig)
-    # Global anchor for the answer-harness policy so a project inherits it live
-    # (settings inheritance). ``project.yaml`` carries the same ``answer_policy``
-    # block that the declarative project model owns; here it is the inheritable
-    # default with a tighten-only ceiling on ``allow_external_search_by_default``.
-    answer_policy: AnswerPolicy = Field(default_factory=AnswerPolicy)
     # Build D chunk 11 (gap scan §4.3): institutional lawful-access LINK config,
     # consumed ONLY by acquisition/links.py (links only — never a fetch path; the
     # separation invariant is asserted in tests/test_links.py). Both are NON-secret
@@ -400,14 +347,12 @@ class ProjectConfig(GlobalConfig):
 #                    = project ∩ global, so a project may only NARROW the set, never
 #                    widen it; a global ``None`` lets the project narrow freely.
 #
-# Everything NOT listed here is a free override (routing profile CHOICE,
-# ``answer.*`` tunables, ``answer_policy.require_project_sources`` /
-# ``distinguish_source_claims_from_synthesis``): the plain deep-merge wins.
+# Everything NOT listed here is a free override (routing profile CHOICE): the plain
+# deep-merge wins.
 CEILING_SPEC: dict[str, str] = {
     # privacy gates (content policy) — project may only tighten
     "content_policy.external_llm_for_private_full_text": "and",
     "content_policy.allow_external_llm": "and",
-    "content_policy.external_llm_for_answer_generation": "and",
     # budget ceilings — project may only lower a cap (or keep global's)
     "budget.usd_limit": "min",
     "budget.max_tokens": "min",
@@ -415,8 +360,6 @@ CEILING_SPEC: dict[str, str] = {
     "budget.monthly_soft_limit_usd": "min",
     "budget.require_confirmation_above_usd": "min",
     "budget.allow_unverified_pricing": "and",
-    # answer policy ceiling — external search may only be narrowed, never widened
-    "answer_policy.allow_external_search_by_default": "and",
     # per-route access-class allow-set — project must be a subset (intersection)
     "llm.routes.*.allowed_access_classes": "subset",
 }
