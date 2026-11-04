@@ -41,6 +41,33 @@ Cite what you used as paper title, year and page (from the claim's anchors or th
 `page_start`). Say plainly when the library has nothing on a point; do not fill the gap
 from memory as if it came from the papers.
 
+## Record your answer
+
+Seedgraph keeps a record of each answer you give from the library: the searches, what
+you opened and what you cited. The researcher reads these records later.
+
+- When you answer the researcher from the library, call `record_answer(question, answer,
+  evidence, judgement?, session?)` once per answer, at the end. Do not record answers
+  that did not use the library.
+- Choose a session name at the start of each question thread: a topic slug plus the
+  clock time, for example `parallel-trends-1432` (lowercase letters, digits and hyphens).
+  Pass it as `session` on every seedgraph call for that question and its follow-ups,
+  and on `record_answer`. Every reply echoes the `session` in use.
+- When you start subagents to search for you, give each a helper name `<yours>/a`,
+  `<yours>/b`, and tell it to pass that name as `session`. If you are a subagent and were
+  given no name, choose your own.
+- Cite only what you opened: read the passage with `paper_read` (or see its quote in
+  `concept_show`) before you cite a span. A search hit alone counts as found, not read,
+  and a claim's anchors in `paper_show` give pages, not text.
+- `evidence` lists what you cite: `{"span_id": ...}`, `{"claim_id": ...}` or
+  `{"paper_id": ..., "page": n}`, each with an optional `"why"`.
+- Put what the papers say in `answer` and your own view in `judgement`.
+- If the reply flags a citation ("cited without being read"), tell the researcher which
+  citations were not read, or read them and record again. The reply's `page` is the
+  record's page in the Seedgraph app.
+
+Search replies carry a one-line `record_reminder`; it is the same rule.
+
 ## The researcher's version
 
 Notes and claims are the researcher's current version of each paper. The researcher may

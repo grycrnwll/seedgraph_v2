@@ -28,6 +28,12 @@ literatures without a sense check (or an ambiguous label's unchecked default sen
 listed apart as "same words, sense not checked" and counts for nothing.
 
 Every view refreshes the derived concept tables first when they are stale.
+
+**Session log** (stage 5 §3.2). The four tools take an optional ``session`` and log one
+event each after the body succeeded: ``concept_search``, ``literatures`` and
+``concept_hubs`` as searches (concept handles; a search hit adds its example claim id and
+paper), ``concept_show`` as an open concept (the claims returned and the span ids whose
+quotes were returned, link quotes included). The hubs resource is not logged.
 """
 
 from __future__ import annotations
@@ -37,7 +43,9 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from .server import READ, tool_error
+from mcp.server.fastmcp import Context
+
+from .server import READ, call_info, logged, tool_error
 
 if TYPE_CHECKING:
     import sqlite3
@@ -498,6 +506,52 @@ def _hubs(lib: Library, graph: str | None, family: str | None, limit: int) -> di
     return body
 
 
+# --- session-log items (the shapes records/path.py documents) ------------------------------------
+
+def _search_items(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for h in reply["hits"]:
+        item: dict[str, Any] = {"kind": "concept", "id": h["handle"]}
+        ex = h.get("example")
+        if ex:
+            item["claim_ids"] = [ex["claim_id"]]
+            item["paper_ids"] = [ex["paper"]["paper_id"]]
+        out.append(item)
+    return out
+
+
+def _handles(value: Any, out: dict[str, None]) -> dict[str, None]:
+    """Every concept ``handle`` in a reply, in the order shown."""
+    if isinstance(value, dict):
+        if isinstance(value.get("handle"), str):
+            out.setdefault(value["handle"], None)
+        for v in value.values():
+            _handles(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _handles(v, out)
+    return out
+
+
+def _concept_items(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"kind": "concept", "id": h} for h in _handles(reply, {})]
+
+
+def _shown_quotes(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """The claims concept_show returned, with the spans whose quotes it returned; a link's
+    quotes are spans returned without a claim. A chooser returns none."""
+    out: list[dict[str, Any]] = []
+    for c in reply.get("claims", []):
+        q = c.get("quote")
+        out.append({"claim_id": c["claim_id"], "span_ids": [q["span_id"]] if q and q.get("span_id") else [],
+                    "paper_id": c["paper"]["paper_id"]})
+    for link in reply.get("links", []):
+        for q in link.get("quotes", []):
+            if q.get("span_id") and q.get("text"):
+                out.append({"span_ids": [q["span_id"]], "paper_id": q["paper"]["paper_id"]})
+    return out
+
+
 # --- registration -------------------------------------------------------------------------------
 
 def register_concept_tools(server: FastMCP, ctx: V3Context) -> None:
@@ -505,45 +559,64 @@ def register_concept_tools(server: FastMCP, ctx: V3Context) -> None:
 
     @server.tool(annotations=READ)
     def concept_search(query: str, family: str | None = None, graph: str | None = None,
-                       k: int = 20) -> dict[str, Any]:
+                       k: int = 20, session: str | None = None, mcp_ctx: Context | None = None) -> dict[str, Any]:
         """Search concepts by words. Hits are senses (label + sense): handle, name, gloss
         (labelled agent inferred or researcher), paper and claim counts, and the best
         example claim with its quote. `search_mode` says how the search ran (keyword or
         meaning). Filter by `family` (assumption, estimand, method, ...) or a context
         `graph` (members only). Search concepts before spans when the question is about
-        an idea."""
+        an idea. `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _search(lib, query, family, graph, k)
+            reply = _search(lib, query, family, graph, k)
+            return logged(lib, call, "concept_search", "search",
+                          {"query": query, "family": family, "graph": graph, "k": k, "mode": reply["search_mode"]},
+                          lambda: _search_items(reply), reply)
 
     @server.tool(annotations=READ)
     def concept_show(handle: str, graph: str | None = None, claims_offset: int = 0,
-                     claims_limit: int = 20) -> dict[str, Any]:
+                     claims_limit: int = 20, session: str | None = None,
+                     mcp_ctx: Context | None = None) -> dict[str, Any]:
         """One concept by handle (`family/label` or `family/label~sense`): its member
         senses, supporting claims with quotes (paged), merges, closely related links with
         their notes and quotes, often-appears-with, and with `graph` its literatures. A
         label with several senses answers with a chooser. A concept marked "same words,
-        sense not checked" is not evidence of a cross-literature connection."""
+        sense not checked" is not evidence of a cross-literature connection. A quote shown
+        here counts as read. `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _show(lib, handle, graph, claims_offset, claims_limit)
+            reply = _show(lib, handle, graph, claims_offset, claims_limit)
+            return logged(lib, call, "concept_show", "open_concept",
+                          {"handle": handle, "graph": graph, "claims_offset": claims_offset,
+                           "claims_limit": claims_limit},
+                          lambda: _shown_quotes(reply), reply)
 
     @server.tool(annotations=READ)
-    def literatures(graph: str) -> dict[str, Any]:
+    def literatures(graph: str, session: str | None = None, mcp_ctx: Context | None = None) -> dict[str, Any]:
         """The literatures of a context graph (groups of papers that cite each other):
         name (agent inferred or researcher), size and top concepts; bridges (concepts or
         closely related links spanning literatures, counting only checked or
         single-literature senses); and the "same words, sense not checked" list, which
-        are not bridges."""
+        are not bridges. `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _literatures(lib, graph)
+            reply = _literatures(lib, graph)
+            return logged(lib, call, "literatures", "search", {"graph": graph}, lambda: _concept_items(reply),
+                          reply)
 
     @server.tool(annotations=READ)
-    def concept_hubs(graph: str | None = None, family: str | None = None, limit: int = 30) -> dict[str, Any]:
+    def concept_hubs(graph: str | None = None, family: str | None = None, limit: int = 30,
+                     session: str | None = None, mcp_ctx: Context | None = None) -> dict[str, Any]:
         """Orientation: the most common supported concepts per family (in a context
         `graph`, or the whole library), each with paper count, gloss and literature
         spread, plus the graph's top bridges. Start here, with `literatures`, before
-        answering a question about ideas across a graph."""
+        answering a question about ideas across a graph. `session`: your session name, as
+        on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _hubs(lib, graph, family, limit)
+            reply = _hubs(lib, graph, family, limit)
+            return logged(lib, call, "concept_hubs", "search", {"graph": graph, "family": family, "limit": limit},
+                          lambda: _concept_items(reply), reply)
 
     @server.resource("seedgraph://graphs/{slug}/hubs", mime_type="application/json")
     def graph_hubs(slug: str) -> str:

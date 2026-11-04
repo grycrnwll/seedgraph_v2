@@ -122,7 +122,7 @@ def resolve(lib: Library, call: CallInfo, *, now: datetime | None = None, tz: tz
     name = validate_name(call.session_name)
     now = now or now_utc()
     ts = fmt_ts(now)
-    with lib.write() as conn:
+    with lib.write(dirty=False) as conn:
         _touch_connection(conn, call, ts)
         if name is None:
             stream = _connection_stream(conn, call, now, ts, tz)

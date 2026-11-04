@@ -30,8 +30,10 @@ words; follow it. If the MCP tools are not available, the same steps exist as
 4. Write the result as JSON alone (no prose, no code fence) to `result_path`.
 5. Submit the result file: `work_submit(packet_id, claim_id, note_path=result_path)`
    (CLI: `seedgraph-v3 work submit PACKET --claim CLAIM --note-file result_path`). If you
-   cannot write files, pass the JSON as `note` instead. Pass `model` if your client shows
-   it. If your client exposes token usage, write it to a JSON file and pass `--usage-file`
+   cannot write files, pass the JSON as `note` instead. Pass `model` on every submit: your
+   model id as your client states it (for example in your system prompt). Spot-check
+   accuracy is reported per model. If your client exposes token usage, write it to a JSON
+   file and pass `--usage-file`
    (CLI) or `usage` (MCP); otherwise skip it.
 6. Read the reply:
    - `accepted` - claim the next package (step 1).

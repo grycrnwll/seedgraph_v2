@@ -319,7 +319,8 @@ def record_answer(lib: Library, call: CallInfo, question: str, answer: str, evid
     now = now or now_utc()
     ts = fmt_ts(now)
 
-    with lib.write() as conn:                             # a refusal below rolls everything back
+    # dirty=False: records are test data until stage 7 and must not block a re-migration
+    with lib.write(dirty=False) as conn:  # a refusal below rolls everything back
         frozen = _freeze(conn, items)                     # unknown ids are refused here
         stream = sessions.resolve(lib, call, now=now, tz=tz)
         record_id = _answering_record(conn, stream, now)

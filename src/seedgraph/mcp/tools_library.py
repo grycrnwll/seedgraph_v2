@@ -10,6 +10,12 @@ paper, the researcher's version (edited wording, added claims, hidden claims lef
 Every claim carries ``trust`` / ``trust_label`` / ``trust_note``, ``claim_kind`` and
 ``edited_by_researcher``; an edited claim keeps the agent's wording one level down in
 ``original``.
+
+**Session log** (stage 5 §3.2). ``search``, ``paper_list`` with a ``query``, ``paper_show``,
+``paper_read`` and ``lens_results`` take an optional ``session`` and log one event each
+after the body succeeded (:func:`.server.logged`); the item shapes are the ones
+:mod:`seedgraph.records.path` documents. ``graph_list``, ``graph_show`` and ``paper_list``
+without a query are orientation and are not logged.
 """
 
 from __future__ import annotations
@@ -17,7 +23,9 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from .server import READ, tool_error
+from mcp.server.fastmcp import Context
+
+from .server import READ, call_info, logged, tool_error
 
 if TYPE_CHECKING:
     import sqlite3
@@ -34,6 +42,8 @@ MAX_LIST = 200
 MAX_SEARCH = 100
 DEFAULT_READ_CHARS = 12_000
 MAX_READ_CHARS = 48_000
+PREVIEW_CHARS = 160
+_HIT_KINDS = {"spans": ("span", "span_id"), "claims": ("claim", "claim_id"), "notes": ("note", "note_id")}
 
 
 # --- shared helpers ---------------------------------------------------------------------------
@@ -349,6 +359,34 @@ def _lens_results(lib: Library, lens_id: str, graph: str | None, status: str) ->
     return out
 
 
+# --- session-log items (the shapes records/path.py documents) --------------------------------
+
+def _search_items(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    out = []
+    for h in reply["hits"]:
+        kind, key = _HIT_KINDS[h["kind"]]
+        out.append({"kind": kind, "id": h.get(key), "paper_ids": list(h.get("paper_ids") or []),
+                    "preview": (h.get("text") or "")[:PREVIEW_CHARS]})
+    return out
+
+
+def _paper_items(paper_ids: list[str]) -> list[dict[str, Any]]:
+    return [{"kind": "paper", "id": pid} for pid in dict.fromkeys(paper_ids)]
+
+
+def _shown_claims(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """The claims paper_show returned, with their anchor span ids (anchors count as nothing)."""
+    note = reply.get("current_note") or {}
+    return [{"claim_id": c["claim_id"], "span_ids": [a["span_id"] for a in c.get("anchors", [])]}
+            for c in note.get("claims", [])]
+
+
+def _read_items(reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """The range paper_read actually returned."""
+    return [{"paper_id": reply["paper_id"], "markdown_id": reply["markdown_id"], "start": reply["start"],
+             "end": reply["end"], "section_id": (reply.get("section") or {}).get("section_id")}]
+
+
 # --- registration -----------------------------------------------------------------------------
 
 def register_library_tools(server: FastMCP, ctx: V3Context) -> None:
@@ -369,48 +407,83 @@ def register_library_tools(server: FastMCP, ctx: V3Context) -> None:
 
     @server.tool(annotations=READ)
     def paper_list(graph: str | None = None, status: str | None = None, needs: str | None = None,
-                   query: str | None = None, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+                   query: str | None = None, offset: int = 0, limit: int = 50, session: str | None = None,
+                   mcp_ctx: Context | None = None) -> dict[str, Any]:
         """Library papers, ordered by paper id. `graph` limits to one context graph's papers;
         `status` is held, cited_only, member or frontier (the last two need `graph`);
-        `needs` is note (held, no current note) or metadata; `query` matches title text."""
+        `needs` is note (held, no current note) or metadata; `query` matches title text.
+        `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _paper_list(lib, graph, status, needs, query, offset, limit)
+            reply = _paper_list(lib, graph, status, needs, query, offset, limit)
+            if not (query or "").strip():
+                return reply
+            return logged(lib, call, "paper_list", "search",
+                          {"query": query, "graph": graph, "status": status, "needs": needs, "offset": offset,
+                           "limit": limit},
+                          lambda: _paper_items([p["paper_id"] for p in reply["papers"]]), reply)
 
     @server.tool(annotations=READ)
-    def paper_show(paper_id: str) -> dict[str, Any]:
+    def paper_show(paper_id: str, session: str | None = None, mcp_ctx: Context | None = None) -> dict[str, Any]:
         """One paper: metadata, files, section outline, open attention items, and its current
         interpretation's claims with anchor pages (hidden while an attention item hides its
         notes). Each claim has a trust label (paper states / agent inferred / researcher); a
         researcher-edited claim has edited_by_researcher and the agent's `original`, and
-        researcher_notes holds the researcher's own notes. Follow the researcher's version."""
+        researcher_notes holds the researcher's own notes. Follow the researcher's version.
+        Anchors give pages, not text: read the passage with paper_read before you cite it."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _paper_show(lib, paper_id)
+            reply = _paper_show(lib, paper_id)
+            return logged(lib, call, "paper_show", "open_paper", {"paper_id": paper_id},
+                          lambda: _shown_claims(reply), reply)
 
     @server.tool(annotations=READ)
     def search(query: str, kind: str = "spans", graph: str | None = None, paper_id: str | None = None,
                section_kind: str | None = None, include_frontier: bool = False,
-               limit: int = 20) -> dict[str, Any]:
+               limit: int = 20, session: str | None = None, mcp_ctx: Context | None = None) -> dict[str, Any]:
         """Full-text search of the library: `kind` spans (paper text), claims or notes.
         The query is matched as one phrase. `graph` limits to a context graph's members
         (`include_frontier` adds its frontier); `section_kind` applies to spans only.
         Claims and notes are the researcher's current version; claim hits carry trust,
-        trust_note and edited_by_researcher (with the agent's `original`)."""
+        trust_note and edited_by_researcher (with the agent's `original`). A hit is found,
+        not read: read a span with paper_read before you cite it. `session` is your session
+        name for this question thread (for example parallel-trends-1432; a helper adds /a):
+        pass the same name on every call for the question and on record_answer."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _search(lib, query, kind, graph, paper_id, section_kind, include_frontier, limit)
+            reply = _search(lib, query, kind, graph, paper_id, section_kind, include_frontier, limit)
+            return logged(lib, call, "search", "search",
+                          {"query": query, "kind": kind, "graph": graph, "paper_id": paper_id,
+                           "section_kind": section_kind, "include_frontier": include_frontier or None,
+                           "limit": limit},
+                          lambda: _search_items(reply), reply)
 
     @server.tool(annotations=READ)
     def paper_read(paper_id: str, start: int | None = None, end: int | None = None,
-                   section: str | None = None, max_chars: int = DEFAULT_READ_CHARS) -> dict[str, Any]:
+                   section: str | None = None, max_chars: int = DEFAULT_READ_CHARS, session: str | None = None,
+                   mcp_ctx: Context | None = None) -> dict[str, Any]:
         """A bounded slice of a paper's current markdown: character offsets `start`..`end`
         (half-open), or one `section` (section id or exact heading from paper_show). At most
-        `max_chars` (up to 48000) per call; continue from `next_start`."""
+        `max_chars` (up to 48000) per call; continue from `next_start`. A span counts as read
+        when a slice covers at least half of it. `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _paper_read(lib, paper_id, start, end, section, max_chars)
+            reply = _paper_read(lib, paper_id, start, end, section, max_chars)
+            return logged(lib, call, "paper_read", "open_text",
+                          {"paper_id": paper_id, "start": start, "end": end, "section": section,
+                           "max_chars": max_chars},
+                          lambda: _read_items(reply), reply)
 
     @server.tool(annotations=READ)
-    def lens_results(lens_id: str, graph: str | None = None, status: str = "found") -> dict[str, Any]:
+    def lens_results(lens_id: str, graph: str | None = None, status: str = "found", session: str | None = None,
+                     mcp_ctx: Context | None = None) -> dict[str, Any]:
         """Current results of one lens (each paper's latest run matching the lens definition
         and the paper's current text). `graph` limits to its members and lists the members
-        without current results; `status` is found, not_found, ambiguous or all."""
+        without current results; `status` is found, not_found, ambiguous or all.
+        `session`: your session name, as on search."""
+        call = call_info(ctx, mcp_ctx, session)
         with ctx.library() as lib:
-            return _lens_results(lib, lens_id, graph, status)
+            reply = _lens_results(lib, lens_id, graph, status)
+            return logged(lib, call, "lens_results", "search",
+                          {"lens_id": lens_id, "graph": graph, "status": status},
+                          lambda: _paper_items([r["paper_id"] for r in reply["results"]]), reply)

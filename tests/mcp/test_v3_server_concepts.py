@@ -263,7 +263,9 @@ def test_concept_hubs_tool_and_resource(server, world, home):
     assert top["handle"].startswith("assumption/sprocket rule") and top["papers"] == SIZE
     assert top["literature_count"] == 1
     assert "method" in body["families"] and body["bridges"]
-    assert body == read_resource(server, f"seedgraph://graphs/{GRAPH}/hubs")
+    # the tool reply adds the session-log fields (stage 5 §7); the resource is not logged
+    assert {k: v for k, v in body.items() if k not in ("session", "record_reminder")} == \
+        read_resource(server, f"seedgraph://graphs/{GRAPH}/hubs")
     only = ok(call(server, "concept_hubs", {"family": "method", "limit": 2}))
     assert list(only["families"]) == ["method"] and len(only["families"]["method"]) == 2
     hide(home, p(2, 3))

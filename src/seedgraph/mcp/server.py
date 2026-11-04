@@ -12,6 +12,19 @@ library, its context graphs and the agent work protocol.
 - Concepts (:mod:`.tools_concepts`): ``concept_search``, ``concept_show``,
   ``literatures``, ``concept_hubs`` and the resource ``seedgraph://graphs/{slug}/hubs``;
   agent audience (hidden claims support nothing).
+- Records (:mod:`.tools_records`): ``record_answer``, the one mutation outside the
+  protocol; it writes only records.
+
+**The session log** (stage 5 design §3.2, §7). The evidence reads (``search``,
+``paper_list`` with a ``query``, ``paper_show``, ``paper_read``, ``lens_results``,
+``concept_search``, ``concept_show``, ``literatures``, ``concept_hubs``) take an optional
+``session`` name; :func:`call_info` checks it before the tool body runs (``invalid_session``
+with a plain ``next_action``), and :func:`logged` writes one event after the body succeeded
+and echoes ``session`` (the name, or the start date and time of an unnamed connection).
+Search-kind replies also carry ``record_reminder``. A failed log write never fails the read
+(it is counted and shown on the record). Log writes leave the library's ``dirty`` flag
+alone. :func:`main` marks the connection closed when stdin ends. The hubs resource takes no
+``session`` and is not logged.
 
 Every result is a JSON object. Errors are tool errors whose text is the JSON
 ``{code, message, detail, next_action}`` (FastMCP prefixes it with
@@ -30,7 +43,7 @@ import json
 import sqlite3
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,7 +81,11 @@ NEXT_ACTIONS = {
     "batch_stopped": "The batch was stopped; stop working and report your counts.",
     "library_busy": "Another process is writing to the library; wait a few seconds and call again.",
     "internal_error": "This is a Seedgraph bug; report the message to the researcher and stop.",
+    "invalid_session": "Fix the session name as the message says, or leave session out.",
+    "unknown_evidence": "Check the ids against the search, paper_show or concept_show replies and record again.",
 }
+RECORD_REMINDER = ("If you answer the researcher from these results, call record_answer once with the question, "
+                   "your answer, the ids you cite and your own judgement apart.")
 
 
 def tool_error(code: str, message: str, *, next_action: str | None = None, **detail: Any) -> NoReturn:
@@ -154,11 +171,77 @@ def client_name(mcp_ctx: Any) -> str | None:
     return str(name)
 
 
+def _meta_keys(mcp_ctx: Any) -> tuple[str, ...]:
+    """The keys (never the values) of this request's MCP ``_meta`` (the identity probe)."""
+    try:
+        meta = mcp_ctx.request_context.meta
+    except Exception:  # noqa: BLE001 - no request context outside a request
+        return ()
+    if meta is None:
+        return ()
+    try:
+        return tuple(sorted(meta.model_dump(by_alias=True, exclude_none=True)))
+    except Exception:  # noqa: BLE001 - an odd meta object is not worth failing a read
+        return ()
+
+
+def call_info(ctx: V3Context, mcp_ctx: Any, session: str | None) -> Any:
+    """The :class:`seedgraph.records.sessions.CallInfo` of one call. An invalid ``session``
+    is refused here, before the tool body runs, as ``invalid_session``."""
+    from ..records import sessions
+
+    try:
+        name = sessions.validate_name(session)
+    except sessions.SessionNameError as exc:
+        tool_error("invalid_session", str(exc), next_action=exc.next_action, session=session)
+    return sessions.CallInfo(ctx.worker_id, client_name(mcp_ctx), name, _meta_keys(mcp_ctx))
+
+
+def logged(lib: Library, call: Any, tool: str, kind: str, args: dict[str, Any],
+           items: Callable[[], list[Any]], reply: dict[str, Any]) -> dict[str, Any]:
+    """Log one successful read and return its reply with ``session`` (and, for a search,
+    ``record_reminder``). ``args`` drop ``None`` values (so ``graph`` is there only when the
+    agent named one); ``items`` is built here, so a fault in building or writing the event
+    never fails the read."""
+    from ..records import log
+
+    stream = None
+    try:
+        stream = log.log_event(lib, call, tool, kind, {k: v for k, v in args.items() if v is not None}, items())
+    except Exception as exc:  # noqa: BLE001 - logging must never fail the read
+        print(f"seedgraph: could not log {tool}: {type(exc).__name__}: {exc}", file=sys.stderr)
+    out = dict(reply)
+    out["session"] = stream.name if stream is not None else call.session_name
+    if kind == "search":
+        out["record_reminder"] = RECORD_REMINDER
+    return out
+
+
+def close_connection(ctx: V3Context) -> None:
+    """Mark this process's connection closed in the session log (stdin ended). Never
+    creates a library and never raises: the server is shutting down."""
+    from ..library import store as libstore
+    from ..records import log
+
+    try:
+        lib_dir = libstore.library_dir(ctx.home)
+        if not libstore.library_db_path(lib_dir).is_file():
+            return
+        lib = libstore.open_library_at(lib_dir)
+        try:
+            log.close_connection(lib, ctx.worker_id)
+        finally:
+            lib.close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"seedgraph: could not mark the connection closed: {exc}", file=sys.stderr)
+
+
 def build_server(*, home: Path | str | None = None) -> FastMCP:
     """Construct the v3 ``seedgraph`` server. ``home`` defaults to ``$SEEDGRAPH_HOME``
     (resolved once, here); nothing is read or written until a tool is called."""
     from .tools_concepts import register_concept_tools
     from .tools_library import register_library_tools
+    from .tools_records import register_record_tools
     from .tools_work import register_work_tools
 
     ctx = V3Context(home=paths.resolve_home(home))
@@ -176,6 +259,7 @@ def build_server(*, home: Path | str | None = None) -> FastMCP:
     register_library_tools(server, ctx)
     register_work_tools(server, ctx)
     register_concept_tools(server, ctx)
+    register_record_tools(server, ctx)
     server.seedgraph_context = ctx  # type: ignore[attr-defined]
     return server
 
@@ -183,12 +267,17 @@ def build_server(*, home: Path | str | None = None) -> FastMCP:
 def main(home: Path | str | None = None) -> None:
     """Run the stdio server (``seedgraph mcp serve``). The SDK's stdio transport reads and
     writes UTF-8; stderr is reconfigured too so log lines with non-ASCII text never fail
-    on a Windows console."""
+    on a Windows console. When stdin ends, the connection is marked closed, so an
+    unanswered path shows as "path without answer" at once."""
     try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     except (AttributeError, ValueError):
         pass
-    build_server(home=home).run("stdio")
+    server = build_server(home=home)
+    try:
+        server.run("stdio")
+    finally:
+        close_connection(server.seedgraph_context)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

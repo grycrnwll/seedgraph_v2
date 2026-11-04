@@ -166,12 +166,17 @@ class Library:
         return graphs_root_for(self.root)
 
     @contextmanager
-    def write(self) -> Iterator[sqlite3.Connection]:
+    def write(self, *, dirty: bool = True) -> Iterator[sqlite3.Connection]:
         """One write transaction. Outside migration mode it also sets ``dirty = '1'``
-        in the same transaction, so a committed write is never left unflagged."""
+        in the same transaction, so a committed write is never left unflagged.
+
+        ``dirty=False`` is for writes that do not change the researcher's data and must
+        not block a fresh re-migration: the session log and recorded answers (stage 5
+        records are test data until stage 7). Nested inside a ``dirty=True`` write, the
+        outer write still sets the flag."""
         with transaction(self.conn) as conn:
             yield conn
-            if not self.migration:
+            if dirty and not self.migration:
                 _set_meta(conn, "dirty", "1")
 
     def mark_dirty(self) -> None:

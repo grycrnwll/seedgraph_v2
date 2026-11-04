@@ -49,9 +49,13 @@ def _time_id(prefix: str, now: datetime) -> str:
 
 
 def log_event(lib: Library, call: CallInfo, tool: str, kind: str, args: Mapping[str, Any],
-              items: Sequence[Any], *, now: datetime | None = None, tz: tzinfo | None = None) -> None:
+              items: Sequence[Any], *, now: datetime | None = None, tz: tzinfo | None = None
+              ) -> sessions.Stream | None:
     """Log one call of ``tool`` (an event of ``kind``) with what the agent passed (``args``)
-    and what it was shown (``items``, in reply order). Never raises on a write failure."""
+    and what it was shown (``items``, in reply order). Returns the stream the event joined
+    (its ``name`` is what the adapter echoes as ``session``), or ``None`` when the write
+    failed and was counted. Never raises on a write failure. Log writes leave the library's
+    ``dirty`` flag alone (records are test data until stage 7)."""
     if kind not in KINDS:
         raise ValueError(f"unknown event kind {kind!r} (expected one of {', '.join(KINDS)})")
     sessions.validate_name(call.session_name)
@@ -60,10 +64,11 @@ def log_event(lib: Library, call: CallInfo, tool: str, kind: str, args: Mapping[
     with _UNLOGGED_LOCK:
         pending = _UNLOGGED.pop(call.connection_id, 0)
     try:
-        _write_event(lib, call, tool, kind, args_json, items_json, now=now, tz=tz, pending=pending)
+        return _write_event(lib, call, tool, kind, args_json, items_json, now=now, tz=tz, pending=pending)
     except sqlite3.Error:
         with _UNLOGGED_LOCK:
             _UNLOGGED[call.connection_id] = _UNLOGGED.get(call.connection_id, 0) + pending + 1
+        return None
     except BaseException:
         with _UNLOGGED_LOCK:  # not a write failure: keep the earlier count and let it surface
             _UNLOGGED[call.connection_id] = _UNLOGGED.get(call.connection_id, 0) + pending
@@ -71,9 +76,9 @@ def log_event(lib: Library, call: CallInfo, tool: str, kind: str, args: Mapping[
 
 
 def _write_event(lib: Library, call: CallInfo, tool: str, kind: str, args_json: str, items_json: str, *,
-                 now: datetime, tz: tzinfo | None, pending: int) -> None:
+                 now: datetime, tz: tzinfo | None, pending: int) -> sessions.Stream:
     ts = fmt_ts(now)
-    with lib.write() as conn:
+    with lib.write(dirty=False) as conn:
         stream = sessions.resolve(lib, call, now=now, tz=tz)
         record_id = open_record(conn, stream.owner_session_id) or _open_record(conn, stream.owner_session_id,
                                                                                now)
@@ -84,6 +89,7 @@ def _write_event(lib: Library, call: CallInfo, tool: str, kind: str, args_json: 
                       call.connection_id, args_json, items_json))
         conn.execute("UPDATE traversal_records SET last_event_at = MAX(last_event_at, ?), "
                      "unlogged_calls = unlogged_calls + ? WHERE record_id = ?", (ts, pending, record_id))
+    return stream
 
 
 def open_record(conn: sqlite3.Connection, session_id: str) -> str | None:
@@ -116,7 +122,7 @@ def close_connection(lib: Library, connection_id: str, *, now: datetime | None =
         if lib.conn.execute("SELECT 1 FROM record_connections WHERE connection_id = ? AND closed_at IS NULL",
                             (connection_id,)).fetchone() is None:
             return
-        with lib.write() as conn:
+        with lib.write(dirty=False) as conn:
             conn.execute("UPDATE record_connections SET closed_at = ? WHERE connection_id = ? "
                          "AND closed_at IS NULL", (fmt_ts(now or now_utc()), connection_id))
     except sqlite3.Error:
