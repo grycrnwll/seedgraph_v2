@@ -320,6 +320,7 @@ class NotesPane:
     message: str | None = None
     message_level: str = "info"
     history: History | None = None
+    edit: str | None = None        # the claim whose edit form renders open (``?edit=``)
 
     @property
     def claims(self) -> tuple[ClaimRow, ...]:
@@ -335,9 +336,18 @@ def _quotes(lib: Library, span_ids: list[str]) -> dict[str, str]:
     return out
 
 
+def _hides(lib: Library, paper_id: str, claim_id: str) -> bool:
+    """Whether the current interpretation hides this claim (so its form needs "show hidden")."""
+    interp = interpretation.current(lib, paper_id, "researcher", show_hidden=True)
+    return bool(interp and any(c.claim_id == claim_id and c.hidden for c in interp.claims))
+
+
 def notes(lib: Library, paper_id: str, *, show_hidden: bool = False, message: str | None = None,
-          message_level: str = "info") -> NotesPane:
-    """The notes pane: the researcher's view of the current interpretation."""
+          message_level: str = "info", edit: str | None = None) -> NotesPane:
+    """The notes pane: the researcher's view of the current interpretation. ``edit`` names a
+    claim whose edit form renders open; for a hidden claim that also turns on "show hidden"."""
+    if edit and not show_hidden and _hides(lib, paper_id, edit):
+        show_hidden = True
     interp = interpretation.current(lib, paper_id, "researcher", show_hidden=show_hidden)
     md_id, _ = pages.current_markdown(lib, paper_id)
     has_pages = bool(md_id) and pages.PageAssigner(lib).has_markers(md_id)
@@ -367,7 +377,8 @@ def notes(lib: Library, paper_id: str, *, show_hidden: bool = False, message: st
         researcher_notes=interp.researcher_notes, newer_extraction=interp.newer_extraction,
         edited=interp.overlay_id is not None, show_hidden=show_hidden, has_page_info=has_pages,
         claim_types=claim_type_choices(), message=message, message_level=message_level,
-        history=history(lib, paper_id))
+        history=history(lib, paper_id),
+        edit=edit if edit and any(c.claim_id == edit for c in interp.claims) else None)
 
 
 def edit_set(lib: Library, paper_id: str, claim_id: str, form: Mapping[str, Any]) -> dict[str, str]:
@@ -618,12 +629,15 @@ class PaperPage:
     notes: NotesPane
     layout: str
     pdf_url: str | None
+    back_sample: str | None = None  # ``from=spot-check:<id>``: the "back to the spot-check" link
 
 
-def page(lib: Library, paper_id: str, *, layout: str = "split", show_hidden: bool = False) -> PaperPage | None:
+def page(lib: Library, paper_id: str, *, layout: str = "split", show_hidden: bool = False,
+         edit: str | None = None, back_sample: str | None = None) -> PaperPage | None:
     h = header(lib, paper_id)
     if h is None:
         return None
-    return PaperPage(header=h, notes=notes(lib, paper_id, show_hidden=show_hidden),
+    return PaperPage(header=h, notes=notes(lib, paper_id, show_hidden=show_hidden, edit=edit),
                      layout=layout if layout in LAYOUTS else "split",
-                     pdf_url=f"/papers/{paper_id}/pdf" if pdf_file(lib, paper_id) else None)
+                     pdf_url=f"/papers/{paper_id}/pdf" if pdf_file(lib, paper_id) else None,
+                     back_sample=back_sample)

@@ -1,0 +1,12 @@
+/* Spot-check pages (stage 5 design §6.5; slice R6). Colours come from app.css's tokens. */
+
+.sg-sc-item { margin: 1rem 0; padding: 0.6rem 1rem; border: 1px solid var(--sg-line); border-radius: 4px; }
+.sg-sc-marked { border-left: 4px solid var(--sg-accent); }
+.sg-sc-head { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: baseline; }
+.sg-sc-state { font-weight: 600; margin: 0.3rem 0; }
+.sg-sc-buttons button { margin-right: 0.4rem; }
+.sg-sc-buttons button[aria-pressed="true"] { font-weight: 700; border-width: 2px; }
+.sg-sc-reasons label { display: block; }
+.sg-sc-running { font-weight: 600; }
+.sg-sc-start { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: end; }
+.sg-sc-start label { display: flex; flex-direction: column; font-size: 0.85em; }

@@ -1,5 +1,5 @@
 """Small helpers shared by the U7 route modules (home, library, batches, review, graphs,
-settings, placeholders). The leading underscore keeps this module out of route
+settings, records, spot-check). The leading underscore keeps this module out of route
 discovery. No SQL here: routes call one view or one deep function."""
 
 from __future__ import annotations

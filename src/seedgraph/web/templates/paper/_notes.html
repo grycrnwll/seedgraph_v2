@@ -77,7 +77,7 @@ method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#sg-notes" hx-
       </details>
       {% endif %}
       <div class="sg-claim-controls">
-        <details class="sg-claim-edit">
+        <details class="sg-claim-edit"{% if pane.edit == c.claim_id %} open data-edit-open{% endif %}>
           <summary>Edit</summary>
           <form {{ post_attrs(base ~ "/notes/edit") }} class="sg-form sg-claim-form">
             {{ csrf_input }}

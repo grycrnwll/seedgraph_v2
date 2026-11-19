@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/spotcheck.css">{% endblock %}
+{% block content %}
+<p><a href="/spot-check">Back to the spot-check</a></p>
+<h1>Spot-check sample</h1>
+<p class="sg-hint">Drawn {{ view.when }} · {{ view.size }} asked{% if view.filters %} · {{ view.filters }}{% endif %}{% if view.finished %} · finished{% endif %}</p>
+<p id="sc-running" class="sg-sc-running" data-running>{{ view.running }}</p>
+<p class="sg-hint">Judge each claim against its quote and the paper. A mark saves when you click it; the last mark counts. The claims shown are the agent's originals.</p>
+{% for iv in view.items %}
+{% include "spotcheck/_item.html" %}
+{% endfor %}
+{% endblock %}

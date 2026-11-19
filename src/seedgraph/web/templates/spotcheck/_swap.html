@@ -1,0 +1,3 @@
+{#- An htmx mark: the refreshed item, and the sample's running line swapped out of band. -#}
+{% with iv = swap.item %}{% include "spotcheck/_item.html" %}{% endwith %}
+<p id="sc-running" class="sg-sc-running" hx-swap-oob="true" data-running>{{ swap.running }}</p>

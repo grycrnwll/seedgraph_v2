@@ -1,0 +1,59 @@
+{#- One sample item. Needs ``iv`` (views.spotcheck.ItemView), ``mark_choices``, ``reason_choices`` and
+    csrf_input. The item is swapped whole after every mark (htmx), so its form shows the current mark. -#}
+{% from "_pdf_button.html" import paper_link, pdf_button %}
+{% set item = iv.item %}
+{% set path = "/spot-check/" ~ iv.sample_id ~ "/mark/" ~ item.claim_id %}
+<article class="sg-sc-item{% if item.mark %} sg-sc-marked{% endif %}" id="item-{{ item.claim_id }}" data-claim-id="{{ item.claim_id }}"
+         data-mark="{{ item.mark or '' }}">
+  <header class="sg-sc-head">
+    <span class="sg-sc-ordinal">{{ item.ordinal }}.</span>
+    <span class="sg-paper-title">{{ paper_link(item.paper_id, item.title) }} {{ pdf_button(item.paper_id, iv.held) }}</span>
+    {% if item.year %}<span class="sg-hint">{{ item.year }}</span>{% endif %}
+  </header>
+  <p class="sg-hint sg-sc-meta">
+    <span class="sg-chip sg-chip-plain" data-claim-type>{{ iv.type_label }}</span>
+    <span data-model>{{ item.model_key }}</span>{% if iv.when %} · extracted {{ iv.when }}{% endif %}
+  </p>
+  {% if item.hidden %}<p class="sg-sc-state" data-hidden>you hid this claim</p>{% endif %}
+  {% if item.edited %}<p class="sg-sc-state" data-edited>you edited this{% if item.overlay_version %} (version {{ item.overlay_version }}){% endif %}; the claim below is the agent's original</p>{% endif %}
+  {% if item.earlier_extraction %}<p class="sg-sc-state" data-earlier-extraction>this claim is from an earlier extraction</p>{% endif %}
+  {% if item.normalized_label %}<p class="sg-claim-label">{{ item.normalized_label }}</p>{% endif %}
+  {% if item.claim_text %}<p class="sg-claim-text">{{ item.claim_text }}</p>{% endif %}
+  {% if item.plain_words %}<p class="sg-claim-plain sg-muted">{{ item.plain_words }}</p>{% endif %}
+  {% if item.quote %}
+  <blockquote class="sg-quote">“{{ item.quote }}”
+    {% if iv.pages %}<span class="sg-chip sg-chip-plain">{{ iv.pages }}</span>{% endif %}
+    {% if iv.show_href %}<a href="{{ iv.show_href }}">show in PDF</a>{% endif %}
+  </blockquote>
+  {% elif not item.claim_text %}
+  <p class="sg-muted">The agent gave no text or quote for this claim.</p>
+  {% endif %}
+  {% if iv.message %}<div class="sg-flash sg-flash-{{ iv.message_level }}" role="alert" data-mark-message>{{ iv.message }}</div>{% endif %}
+  <form class="sg-form sg-sc-form" method="post" action="{{ path }}" hx-post="{{ path }}"
+        hx-target="#item-{{ item.claim_id }}" hx-swap="outerHTML">
+    {{ csrf_input }}
+    <div class="sg-sc-buttons" role="group" aria-label="Mark this claim">
+      {% for value, label in mark_choices %}
+      <button type="submit" name="value" value="{{ value }}" data-mark-button="{{ value }}"
+              aria-pressed="{{ 'true' if item.mark == value else 'false' }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+    <details class="sg-sc-reasons"{% if item.reasons or item.note %} open{% endif %}>
+      <summary>Reasons and a note (for partly right or wrong)</summary>
+      {% for value, label in reason_choices %}
+      <label><input type="checkbox" name="reasons" value="{{ value }}"{% if value in item.reasons %} checked{% endif %}> {{ label }}</label>
+      {% endfor %}
+      <label>Note <textarea name="note" rows="2" data-autogrow>{{ item.note or '' }}</textarea></label>
+    </details>
+  </form>
+  {% if item.mark %}
+  <p class="sg-sc-marked-line" data-marked-line>Marked <strong>{{ iv.mark_label }}</strong>{% if iv.reason_labels %} ({{ iv.reason_labels | join(", ") }}){% endif %}.
+    {% if item.note %}<span class="sg-muted">{{ item.note }}</span>{% endif %}</p>
+  {% endif %}
+  {% if iv.fix_href %}
+  <p class="sg-sc-fix">
+    <a class="sg-sc-fix-link" href="{{ iv.fix_href }}" data-fix-it-now>Fix it now</a>
+    {% if item.fixed %}<span class="sg-chip sg-chip-ok" data-fixed>fixed</span>{% endif %}
+  </p>
+  {% endif %}
+</article>

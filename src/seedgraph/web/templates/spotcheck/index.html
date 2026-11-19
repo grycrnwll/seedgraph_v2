@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block head %}<link rel="stylesheet" href="/static/pages.css"><link rel="stylesheet" href="/static/spotcheck.css">{% endblock %}
+{% block content %}
+{% macro table(title, lines, what) %}
+<h3>{{ title }}</h3>
+{% if lines %}
+<table class="sg-table sg-sc-table">
+  <thead><tr><th>{{ what }}</th><th>Accuracy</th></tr></thead>
+  <tbody>
+    {% for l in lines %}<tr><td>{{ l.label }}</td><td{% if l.too_few %} class="sg-muted"{% endif %}>{{ l.summary }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="sg-hint">No marks yet.</p>{% endif %}
+{% endmacro %}
+{% set a = view.accuracy %}
+<h1>Spot-check</h1>
+<section aria-labelledby="sc-acc">
+  <h2 id="sc-acc">Accuracy</h2>
+  <p class="sg-sc-overall" data-overall>{{ a.overall }}</p>
+  <p class="sg-hint">{{ view.note }}</p>
+  {{ table("By claim type", a.by_type, "Claim type") }}
+  {{ table("By model", a.by_model, "Model") }}
+  <details><summary>Each claim type and model</summary>{{ table("By claim type and model", a.cells, "Claim type · model") }}</details>
+</section>
+<section aria-labelledby="sc-start">
+  <h2 id="sc-start">Start a spot-check</h2>
+  <form class="sg-form sg-sc-start" method="post" action="/spot-check/start">
+    {{ csrf_input }}
+    <label>Size <input type="number" name="size" min="1" max="{{ view.max_size }}" value="{{ view.default_size }}"></label>
+    <label>Graph
+      <select name="graph"><option value="">Any</option>
+        {% for slug, name in view.graph_choices %}<option value="{{ slug }}">{{ name }}</option>{% endfor %}
+      </select></label>
+    <label>Claim type
+      <select name="claim_type"><option value="">Any</option>
+        {% for value, label in view.type_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select></label>
+    <label>Model
+      <select name="model"><option value="">Any</option>
+        {% for value in view.model_choices %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
+      </select></label>
+    <button type="submit">Start</button>
+  </form>
+</section>
+<section aria-labelledby="sc-earlier">
+  <h2 id="sc-earlier">Earlier samples</h2>
+  {% if view.samples %}
+  <table class="sg-table sg-sc-samples">
+    <thead><tr><th>Drawn</th><th>Size</th><th>Marked</th><th>Filters</th><th></th></tr></thead>
+    <tbody>
+      {% for s in view.samples %}
+      <tr id="sample-{{ s.sample_id }}">
+        <td>{{ s.when }}</td><td>{{ s.drawn }}</td><td>{{ s.n_marked }} of {{ s.drawn }}{% if s.finished %} (finished){% endif %}</td>
+        <td>{{ s.filters }}</td><td><a class="sg-sc-link" href="/spot-check/{{ s.sample_id }}">Open</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="sg-hint">No samples yet.</p>{% endif %}
+</section>
+{% endblock %}

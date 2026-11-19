@@ -9,6 +9,7 @@
 {% endblock %}
 {% block content %}
 {% set h = view.header %}
+{% if view.back_sample %}<p class="sg-back-link"><a href="/spot-check/{{ view.back_sample }}" data-back-to-spot-check>Back to the spot-check</a></p>{% endif %}
 {% include "paper/_header.html" %}
 <div class="sg-layout-toggle" role="group" aria-label="Layout">
   <button type="button" data-layout-set="split" aria-pressed="{{ 'true' if view.layout == 'split' else 'false' }}">Side by side</button>

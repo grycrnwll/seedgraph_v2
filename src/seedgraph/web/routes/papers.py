@@ -2,6 +2,8 @@
 renders :func:`views.paper.page`; each POST calls one deep function and redirects back.
 
     GET  /papers/{id}?layout=split|pdf|notes&show_hidden=1   the page
+         &edit={claim_id}  that claim's edit form open (and "show hidden" for a hidden claim)
+         &from=spot-check:{sample_id}  adds a "back to the spot-check" link
     POST /papers/{id}/metadata      library.metadata_edit.set_user_metadata (title_source='user')
     POST /papers/{id}/graphs        library.graphs.set_membership
     POST /papers/{id}/write-notes   work.routine.create_batch (one paper) -> /batches/{batch_id}
@@ -20,6 +22,7 @@ from starlette.routing import Route
 from ...errors import SeedgraphError
 from ..app import Flash, get_web
 from ..views import paper as paper_view
+from ..views import spotcheck as spotcheck_view
 from ._paperkit import done, form, not_found, paper_id_or_none
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
@@ -31,7 +34,9 @@ def paper_page(request: Request) -> Response:
     pid = request.path_params["paper_id"]
     layout = request.query_params.get("layout", "split")
     show_hidden = request.query_params.get("show_hidden") == "1"
-    view = paper_view.page(web.library(), pid, layout=layout, show_hidden=show_hidden)
+    view = paper_view.page(web.library(), pid, layout=layout, show_hidden=show_hidden,
+                           edit=request.query_params.get("edit") or None,
+                           back_sample=spotcheck_view.back_sample(request.query_params.get("from")))
     if view is None:
         return not_found()
     return web.render(request, "paper/page.html", {"view": view, "page_title": view.header.display_title},
