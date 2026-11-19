@@ -107,7 +107,7 @@ def test_start_creates_a_sample_with_the_filters_and_goes_to_it(sx, c):
     assert {i.claim_type for i in s.items} == {"method"}
     assert s.filters == {"claim_type": "method"}
     page = c.get(r.headers["location"])
-    assert page.status_code == 200 and "started a sample of 2 claims" in page.text
+    assert page.status_code == 200 and "started a sample of 4 claims" in page.text
 
 
 def test_start_defaults_the_size_to_twenty_and_applies_graph_and_model_filters(sx, c):

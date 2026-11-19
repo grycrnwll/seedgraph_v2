@@ -41,11 +41,6 @@ KEEP = {
     "seedgraph.migrate.v2_schema": "frozen v2 schema, package data read by the migrate test fixtures",
     "seedgraph.library._calibrate_textquality": "calibration script, run by hand",
     "seedgraph.library._calibrate_titlecheck": "calibration script, run by hand",
-    # Stage 5 cores built before their wiring; the wiring slice removes each entry (docs/V3_RECORDS_DESIGN.md §11).
-    "seedgraph.spotcheck": "stage 5 spot-check core (R4), wired to the screens by R6",
-    "seedgraph.spotcheck.sample": "stage 5 spot-check core (R4), wired to the screens by R6",
-    "seedgraph.spotcheck.marks": "stage 5 spot-check core (R4), wired to the screens by R6",
-    "seedgraph.spotcheck.accuracy": "stage 5 spot-check core (R4), wired to the screens by R6",
 }
 
 
