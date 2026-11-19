@@ -13,7 +13,7 @@ import typer
 
 def register(app: typer.Typer) -> None:
     from ..golden.cli import golden_app
-    from . import concepts, concepts_work, convert, library, mcp, migrate, serve, setup, work
+    from . import concepts, concepts_work, convert, library, mcp, migrate, records, serve, setup, work
 
     concepts_work.register(concepts.concepts_app)
     setup.setup_app.command("agents")(mcp.agents)
@@ -24,5 +24,6 @@ def register(app: typer.Typer) -> None:
     app.add_typer(library.library_app, name="library")
     app.add_typer(work.work_app, name="work")
     app.add_typer(concepts.concepts_app, name="concepts")
+    app.add_typer(records.records_app, name="records")
     app.command("serve")(serve.serve)
     app.add_typer(golden_app, name="golden")

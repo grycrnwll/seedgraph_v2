@@ -43,6 +43,10 @@ SERVER_NAME = MCP_SERVER_NAME  # 'seedgraph_v3' during stages 2-6
 READ_SKILL_NAME = "seedgraph-v3"
 SKILL_SOURCES = {READ_SKILL_NAME: "seedgraph_v3_skill.md", WORK_SKILL_NAME: "seedgraph_v3_work_skill.md"}
 CODEX_STARTUP_TIMEOUT_S = 60
+#: design §13 Q12: Seedgraph never edits Claude Code's permission settings.
+RECORD_ANSWER_HINT = (
+    "Claude Code asks permission the first time an agent calls `record_answer` (it saves a record, so it is not "
+    "read-only). Approve it once with \"always allow\"; Seedgraph does not edit Claude Code's permission settings.")
 OUR_ENV_KEYS = ("SEEDGRAPH_HOME", "PYTHONUTF8", "PYTHONIOENCODING")
 REDACTED = "<redacted>"
 
@@ -580,6 +584,8 @@ class SetupPlan:
         parts = [c.render() for c in self.changes]
         if self.skills:
             parts.append("\n".join(s.render() for s in self.skills) + "\n")
+        if any(c.client == "claude" for c in self.changes):
+            parts.append(RECORD_ANSWER_HINT + "\n")
         parts.append("Nothing has been written. Re-run with --write to apply exactly this.\n")
         return "\n".join(parts)
 
